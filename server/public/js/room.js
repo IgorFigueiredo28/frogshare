@@ -142,11 +142,8 @@ socket.on('ice-candidate', async ({ from, candidate }) => {
 function toggleFullscreen() {
   if (document.fullscreenElement) {
     document.exitFullscreen();
-    btnFullscreen.textContent = 'Tela Cheia';
   } else {
-    document.documentElement.requestFullscreen().then(() => {
-      btnFullscreen.textContent = 'Sair Tela Cheia';
-    }).catch(() => {});
+    videoArea.requestFullscreen().catch(() => {});
   }
 }
 
