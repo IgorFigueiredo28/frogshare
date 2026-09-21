@@ -78,25 +78,55 @@ async function loadSources() {
   sourceGrid.innerHTML = '<div class="loading">Carregando janelas...</div>';
   const sources = await window.electronAPI.getSources();
 
+  const screens = sources.filter(s => s.isScreen);
+  const windows = sources.filter(s => !s.isScreen);
+
   sourceGrid.innerHTML = '';
-  sources.forEach(source => {
-    const item = document.createElement('div');
-    item.className = 'source-item' + (source.id === selectedSourceId ? ' selected' : '');
-    item.innerHTML = `
-      <img class="source-thumb" src="${source.thumbnail}" alt="${source.name}">
-      <div class="source-label">
-        ${source.appIcon ? `<img src="${source.appIcon}">` : ''}
-        <span title="${source.name}">${source.name}</span>
-      </div>
-    `;
+
+  if (screens.length > 0) {
+    const screenLabel = document.createElement('div');
+    screenLabel.className = 'source-section-label';
+    screenLabel.textContent = 'Telas (captura jogos em tela cheia)';
+    sourceGrid.appendChild(screenLabel);
+
+    screens.forEach(source => {
+      const item = createSourceItem(source);
+      sourceGrid.appendChild(item);
+    });
+
+    const windowLabel = document.createElement('div');
+    windowLabel.className = 'source-section-label';
+    windowLabel.textContent = 'Janelas';
+    sourceGrid.appendChild(windowLabel);
+  }
+
+  windows.forEach(source => {
+    const item = createSourceItem(source);
+    sourceGrid.appendChild(item);
+  });
+}
+
+function createSourceItem(source, onClick) {
+  const item = document.createElement('div');
+  item.className = 'source-item' + (source.id === selectedSourceId ? ' selected' : '');
+  item.innerHTML = `
+    <img class="source-thumb" src="${source.thumbnail}" alt="${source.name}">
+    <div class="source-label">
+      ${source.appIcon ? `<img src="${source.appIcon}">` : ''}
+      <span title="${source.name}">${source.name}</span>
+    </div>
+  `;
+  if (onClick) {
+    item.addEventListener('click', onClick);
+  } else {
     item.addEventListener('click', () => {
-      document.querySelectorAll('.source-item.selected').forEach(el => el.classList.remove('selected'));
+      document.querySelectorAll('#source-grid .source-item.selected').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
       selectedSourceId = source.id;
       updateStartButton();
     });
-    sourceGrid.appendChild(item);
-  });
+  }
+  return item;
 }
 
 // ======== Audio Sessions ========
@@ -458,18 +488,28 @@ btnSwitchSource.addEventListener('click', async () => {
   switchSourceGrid.innerHTML = '<div class="loading">Carregando janelas...</div>';
   const sources = await window.electronAPI.getSources();
 
+  const screens = sources.filter(s => s.isScreen);
+  const windows = sources.filter(s => !s.isScreen);
+
   switchSourceGrid.innerHTML = '';
-  sources.forEach(source => {
-    const item = document.createElement('div');
-    item.className = 'source-item' + (source.id === selectedSourceId ? ' selected' : '');
-    item.innerHTML = `
-      <img class="source-thumb" src="${source.thumbnail}" alt="${source.name}">
-      <div class="source-label">
-        ${source.appIcon ? `<img src="${source.appIcon}">` : ''}
-        <span title="${source.name}">${source.name}</span>
-      </div>
-    `;
-    item.addEventListener('click', () => switchToSource(source));
+
+  if (screens.length > 0) {
+    const screenLabel = document.createElement('div');
+    screenLabel.className = 'source-section-label';
+    screenLabel.textContent = 'Telas (captura jogos em tela cheia)';
+    switchSourceGrid.appendChild(screenLabel);
+    screens.forEach(source => {
+      const item = createSourceItem(source, () => switchToSource(source));
+      switchSourceGrid.appendChild(item);
+    });
+    const windowLabel = document.createElement('div');
+    windowLabel.className = 'source-section-label';
+    windowLabel.textContent = 'Janelas';
+    switchSourceGrid.appendChild(windowLabel);
+  }
+
+  windows.forEach(source => {
+    const item = createSourceItem(source, () => switchToSource(source));
     switchSourceGrid.appendChild(item);
   });
 });

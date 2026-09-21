@@ -129,6 +129,17 @@ h1 {
   white-space: nowrap;
 }
 
+/* Source section labels */
+.source-section-label {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 0;
+}
+
 /* Audio mode toggle */
 .audio-mode-toggle {
   display: flex;
