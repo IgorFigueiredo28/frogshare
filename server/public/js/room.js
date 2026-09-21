@@ -122,9 +122,11 @@ socket.on('offer', async ({ from, offer }) => {
       showToast('Clique em "Desmutar" para ouvir o audio');
     });
 
-    const receiver = e.receiver;
-    if (receiver && receiver.jitterBufferTarget !== undefined) {
-      receiver.jitterBufferTarget = 50;
+    const receivers = pc.getReceivers();
+    for (const receiver of receivers) {
+      if (receiver.jitterBufferTarget !== undefined) {
+        receiver.jitterBufferTarget = 0;
+      }
     }
   };
 

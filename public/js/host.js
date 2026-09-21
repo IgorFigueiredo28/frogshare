@@ -395,9 +395,11 @@ async function createOfferForViewer(viewerId) {
     if (!params.encodings || params.encodings.length === 0) {
       params.encodings = [{}];
     }
-    params.encodings[0].maxBitrate = 4000000;
-    params.encodings[0].maxFramerate = 30;
-    params.degradationPreference = 'maintain-resolution';
+    params.encodings[0].maxBitrate = 6000000;
+    params.encodings[0].maxFramerate = 60;
+    params.encodings[0].networkPriority = 'high';
+    params.encodings[0].priority = 'high';
+    params.degradationPreference = 'maintain-framerate';
     await videoSender.setParameters(params);
   }
 
