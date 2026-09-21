@@ -263,7 +263,9 @@ async function ensureRoom() {
   roomId = data.roomId;
 
   socket = io(signalServer);
-  socket.emit('join-room', { roomId, asHost: true });
+  socket.on('connect', () => {
+    socket.emit('join-room', { roomId, asHost: true });
+  });
 
   socket.on('viewer-joined', async ({ viewerId }) => {
     if (isStreaming && localStream) {

@@ -56,6 +56,9 @@ io.on('connection', (socket) => {
       room.host = socket.id;
       role = 'host';
       socket.to(roomId).emit('host-joined');
+      for (const viewerId of room.viewers) {
+        socket.emit('viewer-joined', { viewerId });
+      }
     } else {
       room.viewers.add(socket.id);
       role = 'viewer';

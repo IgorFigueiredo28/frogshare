@@ -55,8 +55,10 @@ function showToast(msg) {
   setTimeout(() => el.remove(), 3000);
 }
 
-// Join room as viewer
-socket.emit('join-room', { roomId, asHost: false });
+// Join room as viewer (re-joins automatically on reconnection)
+socket.on('connect', () => {
+  socket.emit('join-room', { roomId, asHost: false });
+});
 
 socket.on('room-update', ({ hasHost, viewerCount: count }) => {
   viewerCount.textContent = `${count} assistindo`;
