@@ -26,6 +26,8 @@ setInterval(() => {
   }
 }, 600000);
 
+app.get('/health', (req, res) => res.send('ok'));
+
 app.get('/api/room/create', (req, res) => {
   const roomId = uuidv4().slice(0, 8);
   rooms.set(roomId, { host: null, viewers: new Set(), createdAt: Date.now() });

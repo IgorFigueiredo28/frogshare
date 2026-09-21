@@ -17,9 +17,13 @@ class AudioCapture
     const uint AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000;
     const uint AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM = 0x80000000;
     const uint AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY = 0x08000000;
+    const uint AUDCLNT_STREAMFLAGS_EVENTCALLBACK = 0x00040000;
+    const uint AUDCLNT_BUFFERFLAGS_SILENT = 0x2;
     static volatile bool capturing = false;
 
     // ======== P/Invoke ========
+    [DllImport("winmm.dll")]
+    static extern uint timeBeginPeriod(uint uPeriod);
     [DllImport("ole32.dll")]
     static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
     [DllImport("ole32.dll")]
@@ -212,7 +216,8 @@ class AudioCapture
             ac.GetMixFormat(out formatPtr);
             var fmt = Marshal.PtrToStructure<WAVEFORMATEX>(formatPtr);
 
-            int hr = ac.Initialize(0, AUDCLNT_STREAMFLAGS_LOOPBACK, 200000, 0, formatPtr, IntPtr.Zero);
+            AutoResetEvent evt;
+            int hr = InitializeClient(ac, formatPtr, out evt);
             if (hr != 0) { WriteJson("{\"error\":\"Initialize loopback failed: 0x" + hr.ToString("X8") + "\"}"); return; }
 
             IntPtr ccPtr;
@@ -223,7 +228,7 @@ class AudioCapture
 
             WriteJson("{\"started\":true,\"sampleRate\":" + fmt.nSamplesPerSec + ",\"channels\":" + fmt.nChannels + ",\"bitsPerSample\":" + fmt.wBitsPerSample + ",\"mode\":\"system\"}");
 
-            CaptureLoop(cc, fmt);
+            CaptureLoop(cc, fmt, evt);
             ac.Stop();
             Marshal.Release(device);
         }
@@ -300,7 +305,8 @@ class AudioCapture
             Marshal.ReleaseComObject(sysAc);
             Marshal.Release(sysDevice);
 
-            hr = ac.Initialize(0, AUDCLNT_STREAMFLAGS_LOOPBACK, 200000, 0, formatPtr, IntPtr.Zero);
+            AutoResetEvent evt;
+            hr = InitializeClient(ac, formatPtr, out evt);
             if (hr != 0) { WriteJson("{\"error\":\"Initialize failed: 0x" + hr.ToString("X8") + "\"}"); return; }
 
             IntPtr ccPtr;
@@ -311,7 +317,7 @@ class AudioCapture
 
             WriteJson("{\"started\":true,\"sampleRate\":" + fmt.nSamplesPerSec + ",\"channels\":" + fmt.nChannels + ",\"bitsPerSample\":" + fmt.wBitsPerSample + ",\"mode\":\"process\",\"pid\":" + targetPid + "}");
 
-            CaptureLoop(cc, fmt);
+            CaptureLoop(cc, fmt, evt);
             ac.Stop();
             Marshal.FreeHGlobal(paramsPtr);
             Marshal.FreeHGlobal(propVarPtr);
@@ -319,41 +325,57 @@ class AudioCapture
         finally { CoUninitialize(); }
     }
 
+    // Event-driven when supported; falls back to polling if the event flag is rejected
+    static int InitializeClient(IAudioClient ac, IntPtr formatPtr, out AutoResetEvent evt)
+    {
+        evt = null;
+        int hr = ac.Initialize(0, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 200000, 0, formatPtr, IntPtr.Zero);
+        if (hr == 0)
+        {
+            var e = new AutoResetEvent(false);
+            if (ac.SetEventHandle(e.SafeWaitHandle.DangerousGetHandle()) == 0) evt = e;
+            return 0;
+        }
+        return ac.Initialize(0, AUDCLNT_STREAMFLAGS_LOOPBACK, 200000, 0, formatPtr, IntPtr.Zero);
+    }
+
     // ======== Capture Loop ========
-    static void CaptureLoop(IAudioCaptureClient cc, WAVEFORMATEX fmt)
+    static void CaptureLoop(IAudioCaptureClient cc, WAVEFORMATEX fmt, AutoResetEvent evt)
     {
         capturing = true;
+        timeBeginPeriod(1);
         var binaryOut = Console.OpenStandardOutput();
+        byte[] buf = new byte[4 + 4096];
 
         while (capturing)
         {
-            uint packetSize;
-            cc.GetNextPacketSize(out packetSize);
+            // Timeout keeps the loop alive even if the device never signals the event
+            if (evt != null) evt.WaitOne(10); else Thread.Sleep(2);
 
-            while (packetSize > 0)
+            uint packetSize;
+            if (cc.GetNextPacketSize(out packetSize) != 0) break;
+
+            while (packetSize > 0 && capturing)
             {
                 IntPtr data; uint numFrames, flags; ulong dp, qp;
                 int hr = cc.GetBuffer(out data, out numFrames, out flags, out dp, out qp);
+                if (hr != 0) break;
 
-                if (hr == 0 && numFrames > 0)
+                int bytes = (int)(numFrames * fmt.nBlockAlign);
+                if (bytes > 0)
                 {
-                    int bytes = (int)(numFrames * fmt.nBlockAlign);
-                    byte[] buf = new byte[bytes];
-                    Marshal.Copy(data, buf, 0, bytes);
-                    try
-                    {
-                        byte[] len = BitConverter.GetBytes(bytes);
-                        binaryOut.Write(len, 0, 4);
-                        binaryOut.Write(buf, 0, bytes);
-                        binaryOut.Flush();
-                    }
-                    catch { capturing = false; break; }
+                    if (buf.Length < 4 + bytes) buf = new byte[4 + bytes];
+                    buf[0] = (byte)bytes; buf[1] = (byte)(bytes >> 8);
+                    buf[2] = (byte)(bytes >> 16); buf[3] = (byte)(bytes >> 24);
+                    if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0) Array.Clear(buf, 4, bytes);
+                    else Marshal.Copy(data, buf, 4, bytes);
+                    try { binaryOut.Write(buf, 0, 4 + bytes); }
+                    catch { capturing = false; }
                 }
 
                 cc.ReleaseBuffer(numFrames);
-                cc.GetNextPacketSize(out packetSize);
+                if (cc.GetNextPacketSize(out packetSize) != 0) { capturing = false; break; }
             }
-            Thread.Sleep(5);
         }
     }
 

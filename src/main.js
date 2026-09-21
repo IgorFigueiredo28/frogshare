@@ -35,14 +35,17 @@ async function createWindow() {
     autoHideMenuBar: true
   });
 
-  mainWindow.loadURL(`http://localhost:${serverInstance.port}/host.html`);
+  mainWindow.loadURL(`http://127.0.0.1:${serverInstance.port}/host.html`);
 }
 
 app.whenReady().then(async () => {
   serverInstance = await createServer(3030);
 
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
-    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+    const sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 0, height: 0 }
+    });
     const source = pendingCaptureSourceId
       ? sources.find(s => s.id === pendingCaptureSourceId)
       : sources[0];
@@ -119,12 +122,12 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       ? ['capture-system']
       : ['capture', pidOrMode.toString()];
 
-    audioCaptureProcess = spawn(AUDIO_CAPTURE_EXE, args);
+    const proc = spawn(AUDIO_CAPTURE_EXE, args);
+    audioCaptureProcess = proc;
 
     let started = false;
-    let headerBuffer = Buffer.alloc(0);
 
-    audioCaptureProcess.stderr.on('data', (data) => {
+    proc.stderr.on('data', (data) => {
       const msg = data.toString().trim();
       try {
         const json = JSON.parse(msg);
@@ -141,36 +144,30 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       } catch {}
     });
 
-    // Read binary audio data: [4 bytes length LE][audio data]
-    let pendingLength = -1;
-    let accumulated = Buffer.alloc(0);
+    // Framing: [uint32 LE length][float32 PCM]
+    let pending = Buffer.alloc(0);
 
-    audioCaptureProcess.stdout.on('data', (chunk) => {
-      accumulated = Buffer.concat([accumulated, chunk]);
+    proc.stdout.on('data', (chunk) => {
+      pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+      let offset = 0;
 
-      while (accumulated.length >= 4) {
-        if (pendingLength === -1) {
-          pendingLength = accumulated.readUInt32LE(0);
-          accumulated = accumulated.slice(4);
-        }
-
-        if (accumulated.length >= pendingLength) {
-          const audioData = accumulated.slice(0, pendingLength);
-          accumulated = accumulated.slice(pendingLength);
-          pendingLength = -1;
-
-          // Convert to Float32Array and send to renderer
-          const float32 = new Float32Array(audioData.buffer, audioData.byteOffset, audioData.length / 4);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('audio-data', Array.from(float32));
-          }
-        } else {
-          break;
+      while (pending.length - offset >= 4) {
+        const len = pending.readUInt32LE(offset);
+        if (pending.length - offset - 4 < len) break;
+        const start = pending.byteOffset + offset + 4;
+        // Copy into a fresh aligned ArrayBuffer (pooled Buffers can have unaligned offsets)
+        const samples = new Float32Array(pending.buffer.slice(start, start + len));
+        offset += 4 + len;
+        if (audioCaptureProcess === proc && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('audio-data', samples);
         }
       }
+
+      pending = pending.subarray(offset);
     });
 
-    audioCaptureProcess.on('close', () => {
+    proc.on('close', () => {
+      if (audioCaptureProcess !== proc) return;
       audioCaptureProcess = null;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('audio-capture-stopped');
@@ -178,7 +175,7 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       if (!started) resolve({ error: 'Process exited' });
     });
 
-    audioCaptureProcess.on('error', (err) => {
+    proc.on('error', (err) => {
       if (!started) resolve({ error: err.message });
     });
 
@@ -194,19 +191,14 @@ ipcMain.handle('stop-audio-capture', () => {
 });
 
 function stopAudioCapture() {
-  if (audioCaptureProcess) {
-    try {
-      audioCaptureProcess.stdin.write('stop\n');
-      setTimeout(() => {
-        if (audioCaptureProcess) {
-          audioCaptureProcess.kill();
-          audioCaptureProcess = null;
-        }
-      }, 1000);
-    } catch {
-      try { audioCaptureProcess.kill(); } catch {}
-      audioCaptureProcess = null;
-    }
+  const proc = audioCaptureProcess;
+  if (!proc) return;
+  audioCaptureProcess = null;
+  try {
+    proc.stdin.write('stop\n');
+    setTimeout(() => { try { proc.kill(); } catch {} }, 1000);
+  } catch {
+    try { proc.kill(); } catch {}
   }
 }
 

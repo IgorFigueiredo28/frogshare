@@ -96,10 +96,15 @@ function createServer(port = 3030) {
   });
 
   return new Promise((resolve) => {
-    server.listen(port, () => {
-      console.log(`Server running on http://localhost:${port}`);
-      resolve({ server, io, port });
+    server.once('listening', () => {
+      const actualPort = server.address().port;
+      console.log(`Server running on http://localhost:${actualPort}`);
+      resolve({ server, io, port: actualPort });
     });
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') server.listen(0, '127.0.0.1');
+    });
+    server.listen(port, '127.0.0.1');
   });
 }
 

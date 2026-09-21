@@ -106,6 +106,8 @@ socket.on('offer', async ({ from, offer }) => {
 
   hostPaused = false;
   pc = new RTCPeerConnection(ICE_SERVERS);
+  pc.pendingIce = [];
+  const thisPc = pc;
 
   pc.ontrack = (e) => {
     remoteVideo.srcObject = e.streams[0];
@@ -161,17 +163,23 @@ socket.on('offer', async ({ from, offer }) => {
     }
   };
 
-  await pc.setRemoteDescription(new RTCSessionDescription(offer));
-  const answer = await pc.createAnswer();
-  const h264Answer = { type: answer.type, sdp: preferH264(answer.sdp) };
-  await pc.setLocalDescription(h264Answer);
-  socket.emit('answer', { to: from, answer: h264Answer });
+  try {
+    await thisPc.setRemoteDescription(offer);
+    for (const c of thisPc.pendingIce.splice(0)) thisPc.addIceCandidate(c).catch(() => {});
+    const answer = await thisPc.createAnswer();
+    const h264Answer = { type: answer.type, sdp: preferH264(answer.sdp) };
+    await thisPc.setLocalDescription(h264Answer);
+    if (pc !== thisPc) return;
+    socket.emit('answer', { to: from, answer: h264Answer });
+  } catch (err) {
+    console.error('Negotiation failed', err);
+  }
 });
 
-socket.on('ice-candidate', async ({ from, candidate }) => {
-  if (pc) {
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-  }
+socket.on('ice-candidate', ({ candidate }) => {
+  if (!pc) return;
+  if (pc.remoteDescription) pc.addIceCandidate(candidate).catch(() => {});
+  else pc.pendingIce.push(candidate);
 });
 
 // Fullscreen

@@ -43,6 +43,33 @@ function preferH264(sdp) {
   return lines.join('\r\n');
 }
 
+// Applied to the remote answer: the sender's encoder reads these from the remote description.
+// Without a start bitrate WebRTC ramps up from ~300kbps and the first seconds look blurry.
+function tuneAnswerSdp(sdp) {
+  const lines = sdp.split('\r\n');
+  const videoPts = new Set();
+  const opusPts = new Set();
+  let section = '';
+  for (const l of lines) {
+    if (l.startsWith('m=')) section = l.slice(2, 7);
+    const m = l.match(/^a=rtpmap:(\d+) ([\w-]+)\//);
+    if (!m) continue;
+    if (section === 'video' && /^(H264|VP8|VP9|AV1)$/i.test(m[2])) videoPts.add(m[1]);
+    if (section === 'audio' && /^opus$/i.test(m[2])) opusPts.add(m[1]);
+  }
+  return lines.map(l => {
+    const m = l.match(/^a=fmtp:(\d+) (.*)$/);
+    if (!m) return l;
+    if (videoPts.has(m[1]) && !m[2].includes('x-google-start-bitrate')) {
+      return l + ';x-google-start-bitrate=2500;x-google-min-bitrate=500;x-google-max-bitrate=6000';
+    }
+    if (opusPts.has(m[1]) && !m[2].includes('stereo=')) {
+      return l + ';stereo=1;sprop-stereo=1;maxaveragebitrate=128000';
+    }
+    return l;
+  }).join('\r\n');
+}
+
 // ======== DOM ========
 const panelSetup = document.getElementById('panel-setup');
 const panelStreaming = document.getElementById('panel-streaming');
@@ -113,13 +140,25 @@ async function loadSources() {
 function createSourceItem(source, onClick) {
   const item = document.createElement('div');
   item.className = 'source-item' + (source.id === selectedSourceId ? ' selected' : '');
-  item.innerHTML = `
-    <img class="source-thumb" src="${source.thumbnail}" alt="${source.name}">
-    <div class="source-label">
-      ${source.appIcon ? `<img src="${source.appIcon}">` : ''}
-      <span title="${source.name}">${source.name}</span>
-    </div>
-  `;
+
+  const thumb = document.createElement('img');
+  thumb.className = 'source-thumb';
+  thumb.src = source.thumbnail;
+  thumb.alt = source.name;
+
+  const label = document.createElement('div');
+  label.className = 'source-label';
+  if (source.appIcon) {
+    const icon = document.createElement('img');
+    icon.src = source.appIcon;
+    label.appendChild(icon);
+  }
+  const name = document.createElement('span');
+  name.title = source.name;
+  name.textContent = source.name;
+  label.appendChild(name);
+
+  item.append(thumb, label);
   if (onClick) {
     item.addEventListener('click', onClick);
   } else {
@@ -187,42 +226,65 @@ function updateStartButton() {
 }
 
 // ======== AudioWorklet for process audio ========
+// Ring buffer with a latency cap: capture and AudioContext clocks drift apart,
+// so without dropping old samples the audio slowly falls behind the video.
 const WORKLET_CODE = `
 class PCMProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this.buffer = new Float32Array(0);
-    this.port.onmessage = (e) => {
-      const newData = new Float32Array(e.data);
-      const combined = new Float32Array(this.buffer.length + newData.length);
-      combined.set(this.buffer);
-      combined.set(newData, this.buffer.length);
-      if (combined.length > 48000 * 2) {
-        this.buffer = combined.slice(combined.length - 48000 * 2);
-      } else {
-        this.buffer = combined;
-      }
-    };
+    const ch = options.processorOptions.channels;
+    this.channels = ch;
+    this.capacity = Math.ceil(sampleRate * 0.5) * ch;
+    this.ring = new Float32Array(this.capacity);
+    this.readPos = 0;
+    this.available = 0;
+    this.target = Math.ceil(sampleRate * 0.03) * ch;
+    this.max = Math.ceil(sampleRate * 0.08) * ch;
+    this.primed = false;
+    this.port.onmessage = (e) => this.push(e.data);
+  }
+
+  skip(n) {
+    n = Math.min(this.available, Math.ceil(n / this.channels) * this.channels);
+    this.readPos = (this.readPos + n) % this.capacity;
+    this.available -= n;
+  }
+
+  push(data) {
+    let len = data.length;
+    let src = 0;
+    if (len > this.capacity) { src = len - this.capacity; len = this.capacity; }
+    if (this.available + len > this.capacity) this.skip(this.available + len - this.capacity);
+
+    const writePos = (this.readPos + this.available) % this.capacity;
+    const first = Math.min(len, this.capacity - writePos);
+    this.ring.set(data.subarray(src, src + first), writePos);
+    if (first < len) this.ring.set(data.subarray(src + first, src + len), 0);
+    this.available += len;
+
+    if (this.available > this.max) this.skip(this.available - this.target);
   }
 
   process(inputs, outputs) {
-    const output = outputs[0];
-    const numChannels = output.length;
-    const frameSize = output[0].length;
-    const samplesNeeded = frameSize * numChannels;
+    const out = outputs[0];
+    const frames = out[0].length;
+    const ch = this.channels;
 
-    if (this.buffer.length >= samplesNeeded) {
-      for (let i = 0; i < frameSize; i++) {
-        for (let ch = 0; ch < numChannels; ch++) {
-          output[ch][i] = this.buffer[i * numChannels + ch] || 0;
-        }
-      }
-      this.buffer = this.buffer.slice(samplesNeeded);
-    } else {
-      for (let ch = 0; ch < numChannels; ch++) {
-        output[ch].fill(0);
+    if (!this.primed && this.available >= this.target) this.primed = true;
+    const n = this.primed ? Math.min(frames, Math.floor(this.available / ch)) : 0;
+
+    let r = this.readPos;
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < ch; c++) {
+        if (c < out.length) out[c][i] = this.ring[r];
+        if (++r === this.capacity) r = 0;
       }
     }
+    for (let c = 0; c < out.length; c++) out[c].fill(0, n);
+
+    this.readPos = r;
+    this.available -= n * ch;
+    if (n < frames) this.primed = false;
     return true;
   }
 }
@@ -230,7 +292,7 @@ registerProcessor('pcm-processor', PCMProcessor);
 `;
 
 async function createAudioTrackFromProcess(sampleRate, channels) {
-  audioContext = new AudioContext({ sampleRate });
+  audioContext = new AudioContext({ sampleRate, latencyHint: 'interactive' });
 
   const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
   const url = URL.createObjectURL(blob);
@@ -238,7 +300,9 @@ async function createAudioTrackFromProcess(sampleRate, channels) {
   URL.revokeObjectURL(url);
 
   audioWorkletNode = new AudioWorkletNode(audioContext, 'pcm-processor', {
-    outputChannelCount: [channels]
+    numberOfInputs: 0,
+    outputChannelCount: [channels],
+    processorOptions: { channels }
   });
 
   const destination = audioContext.createMediaStreamDestination();
@@ -246,16 +310,19 @@ async function createAudioTrackFromProcess(sampleRate, channels) {
 
   window.electronAPI.onAudioData((data) => {
     if (audioWorkletNode) {
-      audioWorkletNode.port.postMessage(data);
+      audioWorkletNode.port.postMessage(data, [data.buffer]);
     }
   });
 
-  return destination.stream.getAudioTracks()[0];
+  const track = destination.stream.getAudioTracks()[0];
+  track.contentHint = 'music';
+  return track;
 }
 
 // ======== Room Management (persistent) ========
 async function ensureRoom() {
-  if (roomId && socket && socket.connected) return;
+  // Socket.IO reconnects on its own; recreating here would orphan viewers in the old room
+  if (roomId && socket) return;
 
   signalServer = await window.electronAPI.getSignalServer();
   const res = await fetch(`${signalServer}/api/room/create`);
@@ -281,14 +348,20 @@ async function ensureRoom() {
 
   socket.on('answer', async ({ from, answer }) => {
     const pc = peerConnections.get(from);
-    if (pc && pc.signalingState === 'have-local-offer') {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    if (!pc || pc.signalingState !== 'have-local-offer') return;
+    try {
+      await pc.setRemoteDescription({ type: answer.type, sdp: tuneAnswerSdp(answer.sdp) });
+      for (const c of pc.pendingIce.splice(0)) pc.addIceCandidate(c).catch(() => {});
+    } catch (err) {
+      console.error('setRemoteDescription failed', err);
     }
   });
 
-  socket.on('ice-candidate', async ({ from, candidate }) => {
+  socket.on('ice-candidate', ({ from, candidate }) => {
     const pc = peerConnections.get(from);
-    if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    if (!pc) return;
+    if (pc.remoteDescription) pc.addIceCandidate(candidate).catch(() => {});
+    else pc.pendingIce.push(candidate);
   });
 
   socket.on('room-update', ({ viewerCount: count }) => {
@@ -304,9 +377,11 @@ async function ensureRoom() {
 async function captureVideo(sourceId) {
   await window.electronAPI.setCaptureSource(sourceId);
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { cursor: 'never' },
+    video: { cursor: 'never', frameRate: { ideal: 60, max: 60 } },
     audio: false
   });
+  // 'detail' puts the encoder in screencast mode, which drops frames to keep text sharp
+  stream.getVideoTracks()[0].contentHint = 'motion';
   return stream;
 }
 
@@ -322,7 +397,6 @@ btnStart.addEventListener('click', async () => {
     // 1. Capture video with cursor hidden
     const videoStream = await captureVideo(selectedSourceId);
     const videoTrack = videoStream.getVideoTracks()[0];
-    videoTrack.contentHint = 'detail';
     const tracks = [videoTrack];
 
     // 2. Handle audio based on mode
@@ -382,7 +456,11 @@ btnStart.addEventListener('click', async () => {
 
 // ======== WebRTC ========
 async function createOfferForViewer(viewerId) {
+  const existing = peerConnections.get(viewerId);
+  if (existing) existing.close();
+
   const pc = new RTCPeerConnection(ICE_SERVERS);
+  pc.pendingIce = [];
   peerConnections.set(viewerId, pc);
 
   localStream.getTracks().forEach(track => {
@@ -391,16 +469,20 @@ async function createOfferForViewer(viewerId) {
 
   const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
   if (videoSender) {
-    const params = videoSender.getParameters();
-    if (!params.encodings || params.encodings.length === 0) {
-      params.encodings = [{}];
+    try {
+      const params = videoSender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+      params.encodings[0].maxBitrate = 6000000;
+      params.encodings[0].maxFramerate = 60;
+      params.encodings[0].networkPriority = 'high';
+      params.encodings[0].priority = 'high';
+      params.degradationPreference = 'maintain-framerate';
+      await videoSender.setParameters(params);
+    } catch (err) {
+      console.warn('setParameters failed, using defaults', err);
     }
-    params.encodings[0].maxBitrate = 6000000;
-    params.encodings[0].maxFramerate = 60;
-    params.encodings[0].networkPriority = 'high';
-    params.encodings[0].priority = 'high';
-    params.degradationPreference = 'maintain-framerate';
-    await videoSender.setParameters(params);
   }
 
   pc.onicecandidate = (e) => {
@@ -409,10 +491,11 @@ async function createOfferForViewer(viewerId) {
     }
   };
 
+  // 'disconnected' is often a transient blip that recovers; only tear down on failure
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
       pc.close();
-      peerConnections.delete(viewerId);
+      if (peerConnections.get(viewerId) === pc) peerConnections.delete(viewerId);
     }
   };
 
@@ -647,7 +730,6 @@ async function switchToSource(source) {
     if (videoChanged) {
       const newStream = await captureVideo(source.id);
       const newVideoTrack = newStream.getVideoTracks()[0];
-      newVideoTrack.contentHint = 'detail';
 
       for (const [, pc] of peerConnections) {
         const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -684,3 +766,8 @@ btnRefreshAudio.addEventListener('click', loadAudioSessions);
 // ======== Init ========
 loadSources();
 loadAudioSessions();
+
+// Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start
+window.electronAPI.getSignalServer().then(url => {
+  fetch(`${url}/health`).catch(() => {});
+});
