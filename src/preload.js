@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getSources: () => ipcRenderer.invoke('get-sources'),
+  setCaptureSource: (sourceId) => ipcRenderer.invoke('set-capture-source', sourceId),
   listAudioSessions: () => ipcRenderer.invoke('list-audio-sessions'),
   startAudioCapture: (pidOrMode) => ipcRenderer.invoke('start-audio-capture', pidOrMode),
   stopAudioCapture: () => ipcRenderer.invoke('stop-audio-capture'),

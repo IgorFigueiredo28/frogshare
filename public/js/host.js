@@ -7,8 +7,8 @@ let audioWorkletNode = null;
 let socket = null;
 const peerConnections = new Map();
 let roomId = null;
-let serverPort = 3030;
 let signalServer = '';
+let isStreaming = false;
 
 const ICE_SERVERS = {
   iceServers: [
@@ -60,6 +60,10 @@ const roomCodeEl = document.getElementById('room-code');
 const viewerCountEl = document.getElementById('viewer-count');
 const streamStatsEl = document.getElementById('stream-stats');
 const audioModeRadios = document.querySelectorAll('input[name="audio-mode"]');
+const roomBar = document.getElementById('room-bar');
+const roomCodeBar = document.getElementById('room-code-bar');
+const viewerCountBar = document.getElementById('viewer-count-bar');
+const btnCopyCodeBar = document.getElementById('btn-copy-code-bar');
 
 function showToast(msg) {
   const el = document.createElement('div');
@@ -193,7 +197,6 @@ class PCMProcessor extends AudioWorkletProcessor {
       const combined = new Float32Array(this.buffer.length + newData.length);
       combined.set(this.buffer);
       combined.set(newData, this.buffer.length);
-      // Keep max 1 second of buffer to prevent unbounded growth
       if (combined.length > 48000 * 2) {
         this.buffer = combined.slice(combined.length - 48000 * 2);
       } else {
@@ -209,7 +212,6 @@ class PCMProcessor extends AudioWorkletProcessor {
     const samplesNeeded = frameSize * numChannels;
 
     if (this.buffer.length >= samplesNeeded) {
-      // Deinterleave: input is [L,R,L,R,...], output is separate channels
       for (let i = 0; i < frameSize; i++) {
         for (let ch = 0; ch < numChannels; ch++) {
           output[ch][i] = this.buffer[i * numChannels + ch] || 0;
@@ -217,7 +219,6 @@ class PCMProcessor extends AudioWorkletProcessor {
       }
       this.buffer = this.buffer.slice(samplesNeeded);
     } else {
-      // Not enough data, output silence
       for (let ch = 0; ch < numChannels; ch++) {
         output[ch].fill(0);
       }
@@ -252,6 +253,61 @@ async function createAudioTrackFromProcess(sampleRate, channels) {
   return destination.stream.getAudioTracks()[0];
 }
 
+// ======== Room Management (persistent) ========
+async function ensureRoom() {
+  if (roomId && socket && socket.connected) return;
+
+  signalServer = await window.electronAPI.getSignalServer();
+  const res = await fetch(`${signalServer}/api/room/create`);
+  const data = await res.json();
+  roomId = data.roomId;
+
+  socket = io(signalServer);
+  socket.emit('join-room', { roomId, asHost: true });
+
+  socket.on('viewer-joined', async ({ viewerId }) => {
+    if (isStreaming && localStream) {
+      await createOfferForViewer(viewerId);
+    }
+  });
+
+  socket.on('viewer-left', ({ viewerId }) => {
+    const pc = peerConnections.get(viewerId);
+    if (pc) pc.close();
+    peerConnections.delete(viewerId);
+  });
+
+  socket.on('answer', async ({ from, answer }) => {
+    const pc = peerConnections.get(from);
+    if (pc && pc.signalingState === 'have-local-offer') {
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    }
+  });
+
+  socket.on('ice-candidate', async ({ from, candidate }) => {
+    const pc = peerConnections.get(from);
+    if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
+  });
+
+  socket.on('room-update', ({ viewerCount: count }) => {
+    viewerCountEl.textContent = `${count} assistindo`;
+    viewerCountBar.textContent = `${count} assistindo`;
+  });
+
+  roomCodeBar.textContent = roomId;
+  roomBar.style.display = '';
+}
+
+// ======== Capture video (cursor hidden) ========
+async function captureVideo(sourceId) {
+  await window.electronAPI.setCaptureSource(sourceId);
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: { cursor: 'never' },
+    audio: false
+  });
+  return stream;
+}
+
 // ======== Start Streaming ========
 btnStart.addEventListener('click', async () => {
   btnStart.disabled = true;
@@ -259,21 +315,10 @@ btnStart.addEventListener('click', async () => {
 
   try {
     const mode = getAudioMode();
+    const isResume = !!roomId;
 
-    // 1. Capture video from selected window
-    const videoStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: selectedSourceId,
-          maxFrameRate: 30,
-          maxWidth: 1280,
-          maxHeight: 720
-        }
-      }
-    });
-
+    // 1. Capture video with cursor hidden
+    const videoStream = await captureVideo(selectedSourceId);
     const videoTrack = videoStream.getVideoTracks()[0];
     videoTrack.contentHint = 'detail';
     const tracks = [videoTrack];
@@ -308,43 +353,16 @@ btnStart.addEventListener('click', async () => {
     localStream = new MediaStream(tracks);
     localPreview.srcObject = localStream;
 
-    // 3. Create room on remote signaling server
-    signalServer = await window.electronAPI.getSignalServer();
-    const res = await fetch(`${signalServer}/api/room/create`);
-    const data = await res.json();
-    roomId = data.roomId;
+    // 3. Create or reuse room
+    await ensureRoom();
+    isStreaming = true;
 
-    // 4. Connect signaling to remote server
-    socket = io(signalServer);
-    socket.emit('join-room', { roomId, asHost: true });
+    // 4. If resuming, notify server — it re-sends viewer-joined for each viewer
+    if (isResume) {
+      socket.emit('host-resume');
+    }
 
-    socket.on('viewer-joined', async ({ viewerId }) => {
-      await createOfferForViewer(viewerId);
-    });
-
-    socket.on('viewer-left', ({ viewerId }) => {
-      const pc = peerConnections.get(viewerId);
-      if (pc) pc.close();
-      peerConnections.delete(viewerId);
-    });
-
-    socket.on('answer', async ({ from, answer }) => {
-      const pc = peerConnections.get(from);
-      if (pc && pc.signalingState === 'have-local-offer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      }
-    });
-
-    socket.on('ice-candidate', async ({ from, candidate }) => {
-      const pc = peerConnections.get(from);
-      if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-
-    socket.on('room-update', ({ viewerCount: count }) => {
-      viewerCountEl.textContent = `${count} assistindo`;
-    });
-
-    videoTrack.addEventListener('ended', stopStreaming);
+    videoTrack.addEventListener('ended', pauseStreaming);
 
     // 5. Switch to streaming panel
     roomCodeEl.textContent = roomId;
@@ -356,7 +374,7 @@ btnStart.addEventListener('click', async () => {
   } catch (err) {
     showToast('Erro: ' + err.message);
     btnStart.disabled = false;
-    btnStart.textContent = 'Iniciar Compartilhamento';
+    btnStart.textContent = roomId ? 'Retomar Compartilhamento' : 'Iniciar Compartilhamento';
   }
 });
 
@@ -400,10 +418,12 @@ async function createOfferForViewer(viewerId) {
   socket.emit('offer', { to: viewerId, offer: h264Offer });
 }
 
-// ======== Stop ========
-btnStop.addEventListener('click', stopStreaming);
+// ======== Pause Streaming (room stays alive) ========
+btnStop.addEventListener('click', pauseStreaming);
 
-async function stopStreaming() {
+async function pauseStreaming() {
+  isStreaming = false;
+
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop());
     localStream = null;
@@ -427,21 +447,23 @@ async function stopStreaming() {
   peerConnections.clear();
 
   if (socket) {
-    socket.disconnect();
-    socket = null;
+    socket.emit('host-pause');
   }
 
-  roomId = null;
   localPreview.srcObject = null;
 
   panelStreaming.style.display = 'none';
   panelSetup.style.display = '';
-  btnStart.textContent = 'Iniciar Compartilhamento';
+  btnStart.textContent = 'Retomar Compartilhamento';
   updateStartButton();
 }
 
 // ======== Copy buttons ========
 btnCopyCode.addEventListener('click', () => {
+  navigator.clipboard.writeText(roomId).then(() => showToast('Codigo copiado!'));
+});
+
+btnCopyCodeBar.addEventListener('click', () => {
   navigator.clipboard.writeText(roomId).then(() => showToast('Codigo copiado!'));
 });
 
@@ -527,23 +549,10 @@ async function switchToSource(source) {
   if (source.id === selectedSourceId) return;
 
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: source.id,
-          maxFrameRate: 30,
-          maxWidth: 1280,
-          maxHeight: 720
-        }
-      }
-    });
-
+    const newStream = await captureVideo(source.id);
     const newVideoTrack = newStream.getVideoTracks()[0];
     newVideoTrack.contentHint = 'detail';
 
-    // Replace track on all peer connections
     for (const [, pc] of peerConnections) {
       const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
       if (videoSender) {
@@ -551,7 +560,6 @@ async function switchToSource(source) {
       }
     }
 
-    // Stop old video track and update local stream
     const oldVideoTrack = localStream.getVideoTracks()[0];
     if (oldVideoTrack) oldVideoTrack.stop();
     localStream.removeTrack(oldVideoTrack);
@@ -559,7 +567,7 @@ async function switchToSource(source) {
 
     localPreview.srcObject = localStream;
     selectedSourceId = source.id;
-    newVideoTrack.addEventListener('ended', stopStreaming);
+    newVideoTrack.addEventListener('ended', pauseStreaming);
 
     showToast(`Janela trocada: ${source.name}`);
   } catch (err) {

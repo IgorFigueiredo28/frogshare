@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, Tray, Menu } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const { createServer } = require('./server');
@@ -15,6 +15,7 @@ let mainWindow;
 let tray;
 let serverInstance;
 let audioCaptureProcess = null;
+let pendingCaptureSourceId = null;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -38,7 +39,22 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   serverInstance = await createServer(3030);
+
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+    const source = pendingCaptureSourceId
+      ? sources.find(s => s.id === pendingCaptureSourceId)
+      : sources[0];
+    pendingCaptureSourceId = null;
+    callback({ video: source || sources[0] });
+  }, { useSystemPicker: false });
+
   await createWindow();
+});
+
+ipcMain.handle('set-capture-source', (event, sourceId) => {
+  pendingCaptureSourceId = sourceId;
+  return true;
 });
 
 app.on('before-quit', () => {

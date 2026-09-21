@@ -25,6 +25,9 @@ const ICE_SERVERS = {
   ]
 };
 
+let pc = null;
+let hostPaused = false;
+
 function preferH264(sdp) {
   const lines = sdp.split('\r\n');
   const videoMLine = lines.findIndex(l => l.startsWith('m=video'));
@@ -63,25 +66,43 @@ socket.on('room-update', ({ hasHost, viewerCount: count }) => {
 });
 
 socket.on('host-joined', () => {
+  hostPaused = false;
   statusText.textContent = 'Host conectado, aguardando tela...';
+  placeholder.style.display = '';
 });
 
 socket.on('host-left', () => {
+  hostPaused = false;
   statusText.textContent = 'Host desconectou.';
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
+  btnMute.style.display = 'none';
   if (pc) {
     pc.close();
     pc = null;
   }
 });
 
-let pc = null;
+socket.on('host-paused', () => {
+  hostPaused = true;
+  statusText.textContent = 'Host pausou a transmissao...';
+  remoteVideo.style.display = 'none';
+  placeholder.style.display = '';
+  btnFullscreen.style.display = 'none';
+  btnMute.style.display = 'none';
+  if (pc) {
+    pc.close();
+    pc = null;
+  }
+});
 
 socket.on('offer', async ({ from, offer }) => {
-  if (pc) pc.close();
+  if (pc) {
+    try { pc.close(); } catch {}
+  }
 
+  hostPaused = false;
   pc = new RTCPeerConnection(ICE_SERVERS);
 
   pc.ontrack = (e) => {
@@ -104,9 +125,11 @@ socket.on('offer', async ({ from, offer }) => {
   };
 
   pc.onconnectionstatechange = () => {
+    if (!pc) return;
     if (pc.connectionState === 'connected') {
       statusText.textContent = '';
     } else if (pc.connectionState === 'disconnected') {
+      if (hostPaused) return;
       statusText.textContent = 'Reconectando...';
       setTimeout(() => {
         if (pc && pc.connectionState === 'disconnected') {
@@ -118,6 +141,7 @@ socket.on('offer', async ({ from, offer }) => {
     } else if (pc.connectionState === 'failed') {
       remoteVideo.style.display = 'none';
       placeholder.style.display = '';
+      if (hostPaused) return;
       statusText.textContent = 'Conexao perdida. Reconectando...';
       pc.close();
       pc = null;

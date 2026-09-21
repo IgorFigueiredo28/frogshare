@@ -82,6 +82,21 @@ io.on('connection', (socket) => {
     io.to(to).emit('ice-candidate', { from: socket.id, candidate });
   });
 
+  socket.on('host-pause', () => {
+    if (!currentRoom || role !== 'host') return;
+    socket.to(currentRoom).emit('host-paused');
+  });
+
+  socket.on('host-resume', () => {
+    if (!currentRoom || role !== 'host') return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    socket.to(currentRoom).emit('host-joined');
+    for (const viewerId of room.viewers) {
+      socket.emit('viewer-joined', { viewerId });
+    }
+  });
+
   socket.on('disconnect', () => {
     if (!currentRoom) return;
     const room = rooms.get(currentRoom);
