@@ -10,6 +10,7 @@ const AUDIO_CAPTURE_EXE = isDev
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-features', 'WGCCapturerWin,WGCScreenCapturer');
 
 let mainWindow;
 let tray;
