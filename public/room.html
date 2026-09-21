@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sala - Screen Share</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="room-container">
+    <header class="room-header">
+      <a href="/" class="logo">Screen Share</a>
+      <div class="room-info">
+        <span class="room-code" id="room-code"></span>
+        <button id="btn-copy" class="btn btn-small" title="Copiar codigo">Copiar</button>
+        <span class="viewer-count" id="viewer-count">0 assistindo</span>
+      </div>
+      <div class="room-controls">
+        <button id="btn-share" class="btn btn-primary">Compartilhar Tela</button>
+        <button id="btn-stop" class="btn btn-danger" style="display:none">Parar</button>
+        <button id="btn-fullscreen" class="btn btn-small" style="display:none">Tela Cheia</button>
+      </div>
+    </header>
+
+    <div class="audio-setup" id="audio-setup">
+      <div class="audio-setup-inner">
+        <h3>Fonte de Audio</h3>
+        <p class="audio-hint">Selecione de onde capturar o audio. Use "Audio do sistema" para capturar tudo, ou selecione um dispositivo virtual (ex: VB-Cable) para capturar so o audio do jogo.</p>
+        <div class="audio-options">
+          <label class="audio-option">
+            <input type="radio" name="audio-source" value="system" checked>
+            <span class="audio-option-label">
+              <strong>Audio do sistema (padrao)</strong>
+              <small>Captura todo audio do PC</small>
+            </span>
+          </label>
+          <label class="audio-option">
+            <input type="radio" name="audio-source" value="none">
+            <span class="audio-option-label">
+              <strong>Sem audio</strong>
+              <small>Compartilha so o video</small>
+            </span>
+          </label>
+          <label class="audio-option" id="device-option" style="display:none">
+            <input type="radio" name="audio-source" value="device">
+            <span class="audio-option-label">
+              <strong>Dispositivo virtual</strong>
+              <small>Audio isolado do app (requer VB-Cable)</small>
+            </span>
+          </label>
+        </div>
+        <select id="audio-device-select" style="display:none"></select>
+        <button id="btn-refresh-devices" class="btn btn-small">Atualizar dispositivos</button>
+        <div class="vbcable-help" id="vbcable-help">
+          <details>
+            <summary>Como transmitir so o audio do jogo?</summary>
+            <div class="help-section">
+              <h4>Jeito rapido (sem instalar nada)</h4>
+              <ol>
+                <li>Clique direito no <strong>icone de som</strong> (barra de tarefas) > <strong>Mixer de volume</strong></li>
+                <li><strong>Mute tudo</strong> que voce nao quer transmitir (Discord, navegador, musica)</li>
+                <li>Deixe so o <strong>League of Legends</strong> (ou o jogo) com volume</li>
+                <li>Use a opcao <strong>"Audio do sistema"</strong> acima</li>
+              </ol>
+              <p class="help-note">Como so o jogo esta fazendo som, so ele sera transmitido. Simples e funciona sem instalar nada.</p>
+            </div>
+            <div class="help-divider"></div>
+            <div class="help-section">
+              <h4>Jeito avancado (audio 100% isolado)</h4>
+              <p class="help-desc">Se voce quer continuar ouvindo Discord/musica nos fones enquanto transmite so o jogo:</p>
+              <ol>
+                <li>Baixe e instale o <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener">VB-CABLE Virtual Audio</a> (gratuito, instala em 10 seg)</li>
+                <li>Abra <strong>Configuracoes > Sistema > Som > Mixer de volume</strong></li>
+                <li>Em "Apps", mude a <strong>saida</strong> do jogo para <strong>"CABLE Input (VB-Audio)"</strong></li>
+                <li>Volte aqui, selecione <strong>"Dispositivo virtual"</strong> e escolha <strong>"CABLE Output"</strong></li>
+              </ol>
+              <p class="help-note help-note-ok">Assim o jogo vai por um canal separado. Voce ouve tudo, quem assiste ouve so o jogo.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <main class="room-main">
+      <div class="video-area" id="video-area">
+        <div class="placeholder" id="placeholder">
+          <p id="status-text">Aguardando compartilhamento...</p>
+        </div>
+        <video id="remote-video" autoplay playsinline disablepictureinpicture style="display:none"></video>
+        <video id="local-preview" autoplay playsinline muted style="display:none"></video>
+      </div>
+
+      <div class="controls-bar" id="controls-bar" style="display:none">
+        <div class="stream-stats" id="stream-stats"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/room.js"></script>
+</body>
+</html>

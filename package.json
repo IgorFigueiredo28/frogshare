@@ -1,0 +1,59 @@
+{
+  "name": "screen-share-app",
+  "version": "1.0.0",
+  "description": "Screen sharing with per-process audio capture",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node src/server-standalone.js",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.screenshare.app",
+    "productName": "Screen Share",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    },
+    "files": [
+      "src/**/*",
+      "public/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/AudioCapture.exe",
+        "to": "native/AudioCapture.exe"
+      }
+    ],
+    "asar": true
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "socket.io": "^4.7.5",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

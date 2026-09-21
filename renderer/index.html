@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' ws://localhost:* http://localhost:*; connect-src 'self' ws://localhost:* http://localhost:*; media-src 'self' mediastream:; img-src 'self' data:;">
+  <title>Screen Share</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Step 1: Setup -->
+    <div class="panel" id="panel-setup">
+      <h1>Screen Share</h1>
+      <p class="subtitle">Escolha a janela e o audio para compartilhar</p>
+
+      <!-- Window Selection -->
+      <section class="section">
+        <div class="section-header">
+          <h2>Janela</h2>
+          <button id="btn-refresh-sources" class="btn btn-small">Atualizar</button>
+        </div>
+        <div class="source-grid" id="source-grid">
+          <div class="loading">Carregando janelas...</div>
+        </div>
+      </section>
+
+      <!-- Audio Selection -->
+      <section class="section">
+        <div class="section-header">
+          <h2>Audio</h2>
+          <button id="btn-refresh-audio" class="btn btn-small">Atualizar</button>
+        </div>
+        <div class="audio-mode-toggle">
+          <label class="toggle-option">
+            <input type="radio" name="audio-mode" value="process" checked>
+            <span>Audio do app</span>
+          </label>
+          <label class="toggle-option">
+            <input type="radio" name="audio-mode" value="system">
+            <span>Audio do sistema</span>
+          </label>
+          <label class="toggle-option">
+            <input type="radio" name="audio-mode" value="none">
+            <span>Sem audio</span>
+          </label>
+        </div>
+        <div id="audio-sessions-container">
+          <div class="session-list" id="session-list">
+            <div class="loading">Carregando sessoes de audio...</div>
+          </div>
+        </div>
+      </section>
+
+      <button id="btn-start" class="btn btn-primary btn-large" disabled>Iniciar Compartilhamento</button>
+    </div>
+
+    <!-- Step 2: Streaming -->
+    <div class="panel" id="panel-streaming" style="display:none">
+      <div class="stream-header">
+        <div class="stream-info">
+          <span class="badge badge-live">AO VIVO</span>
+          <span class="room-code" id="room-code"></span>
+          <button id="btn-copy-code" class="btn btn-small">Copiar</button>
+          <span class="viewer-count" id="viewer-count">0 assistindo</span>
+        </div>
+        <div class="stream-actions">
+          <button id="btn-copy-link" class="btn btn-small">Copiar Link</button>
+          <button id="btn-stop" class="btn btn-danger">Parar</button>
+        </div>
+      </div>
+
+      <div class="preview-area">
+        <video id="local-preview" autoplay muted playsinline></video>
+      </div>
+
+      <div class="stream-stats" id="stream-stats"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
