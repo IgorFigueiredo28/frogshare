@@ -432,6 +432,17 @@ h1 {
   font-weight: 600;
 }
 
+/* Switch audio section in modal */
+.switch-audio-section {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.switch-audio-section .session-list {
+  max-height: 150px;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

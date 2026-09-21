@@ -499,20 +499,29 @@ function startStatsUpdate() {
   }, 2000);
 }
 
-// ======== Hot-swap window switching ========
+// ======== Hot-swap window + audio switching ========
 const btnSwitchSource = document.getElementById('btn-switch-source');
 const switchModal = document.getElementById('switch-modal');
 const switchSourceGrid = document.getElementById('switch-source-grid');
+const switchAudioList = document.getElementById('switch-audio-list');
 const btnCloseModal = document.getElementById('btn-close-modal');
+let switchAudioPid = null;
 
 btnSwitchSource.addEventListener('click', async () => {
   switchModal.style.display = '';
-  switchSourceGrid.innerHTML = '<div class="loading">Carregando janelas...</div>';
-  const sources = await window.electronAPI.getSources();
+  switchAudioPid = null;
 
+  switchSourceGrid.innerHTML = '<div class="loading">Carregando janelas...</div>';
+  switchAudioList.innerHTML = '<div class="loading">Carregando audio...</div>';
+
+  const [sources, audioResult] = await Promise.all([
+    window.electronAPI.getSources(),
+    window.electronAPI.listAudioSessions()
+  ]);
+
+  // Build source grid
   const screens = sources.filter(s => s.isScreen);
   const windows = sources.filter(s => !s.isScreen);
-
   switchSourceGrid.innerHTML = '';
 
   if (screens.length > 0) {
@@ -534,6 +543,43 @@ btnSwitchSource.addEventListener('click', async () => {
     const item = createSourceItem(source, () => switchToSource(source));
     switchSourceGrid.appendChild(item);
   });
+
+  // Build audio list
+  switchAudioList.innerHTML = '';
+  const sessions = (audioResult && audioResult.sessions) || [];
+
+  const keepItem = document.createElement('div');
+  keepItem.className = 'session-item selected';
+  keepItem.innerHTML = '<span class="session-name">Manter audio atual</span>';
+  keepItem.addEventListener('click', () => {
+    switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
+    keepItem.classList.add('selected');
+    switchAudioPid = null;
+  });
+  switchAudioList.appendChild(keepItem);
+
+  sessions.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'session-item';
+    item.innerHTML = `
+      <span class="session-name">${s.name}</span>
+      <span class="session-pid">PID ${s.pid}</span>
+      <span class="session-state ${s.state}">${s.state === 'active' ? 'Ativo' : 'Inativo'}</span>
+    `;
+    item.addEventListener('click', () => {
+      switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
+      item.classList.add('selected');
+      switchAudioPid = s.pid;
+    });
+    switchAudioList.appendChild(item);
+  });
+
+  if (sessions.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Nenhum processo com audio encontrado';
+    switchAudioList.appendChild(empty);
+  }
 });
 
 btnCloseModal.addEventListener('click', () => {
@@ -544,34 +590,86 @@ switchModal.addEventListener('click', (e) => {
   if (e.target === switchModal) switchModal.style.display = 'none';
 });
 
+async function switchAudio(newPid) {
+  // Stop old audio
+  await window.electronAPI.stopAudioCapture();
+  window.electronAPI.removeAudioListeners();
+  if (audioWorkletNode) { audioWorkletNode.disconnect(); audioWorkletNode = null; }
+  if (audioContext) { audioContext.close(); audioContext = null; }
+
+  // Remove old audio track from stream and PCs
+  const oldAudioTrack = localStream.getAudioTracks()[0];
+  if (oldAudioTrack) {
+    oldAudioTrack.stop();
+    localStream.removeTrack(oldAudioTrack);
+  }
+
+  // Start new audio capture
+  const result = await window.electronAPI.startAudioCapture(newPid);
+  if (result.error) {
+    showToast('Erro ao trocar audio: ' + result.error);
+    return;
+  }
+
+  const newAudioTrack = await createAudioTrackFromProcess(
+    result.sampleRate || 48000,
+    result.channels || 2
+  );
+  localStream.addTrack(newAudioTrack);
+
+  // Replace audio track on all peer connections
+  for (const [, pc] of peerConnections) {
+    const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
+    if (audioSender) {
+      await audioSender.replaceTrack(newAudioTrack);
+    }
+  }
+
+  selectedPid = newPid;
+  showToast(`Audio trocado: PID ${newPid}`);
+}
+
 async function switchToSource(source) {
+  const newAudioPid = switchAudioPid;
   switchModal.style.display = 'none';
-  if (source.id === selectedSourceId) return;
+
+  const videoChanged = source.id !== selectedSourceId;
+  const audioChanged = newAudioPid && newAudioPid !== selectedPid;
+
+  if (!videoChanged && !audioChanged) return;
 
   try {
-    const newStream = await captureVideo(source.id);
-    const newVideoTrack = newStream.getVideoTracks()[0];
-    newVideoTrack.contentHint = 'detail';
+    // Switch video
+    if (videoChanged) {
+      const newStream = await captureVideo(source.id);
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      newVideoTrack.contentHint = 'detail';
 
-    for (const [, pc] of peerConnections) {
-      const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
-      if (videoSender) {
-        await videoSender.replaceTrack(newVideoTrack);
+      for (const [, pc] of peerConnections) {
+        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (videoSender) {
+          await videoSender.replaceTrack(newVideoTrack);
+        }
       }
+
+      const oldVideoTrack = localStream.getVideoTracks()[0];
+      if (oldVideoTrack) oldVideoTrack.stop();
+      localStream.removeTrack(oldVideoTrack);
+      localStream.addTrack(newVideoTrack);
+
+      localPreview.srcObject = localStream;
+      selectedSourceId = source.id;
+      newVideoTrack.addEventListener('ended', pauseStreaming);
     }
 
-    const oldVideoTrack = localStream.getVideoTracks()[0];
-    if (oldVideoTrack) oldVideoTrack.stop();
-    localStream.removeTrack(oldVideoTrack);
-    localStream.addTrack(newVideoTrack);
+    // Switch audio
+    if (audioChanged) {
+      await switchAudio(newAudioPid);
+    }
 
-    localPreview.srcObject = localStream;
-    selectedSourceId = source.id;
-    newVideoTrack.addEventListener('ended', pauseStreaming);
-
-    showToast(`Janela trocada: ${source.name}`);
+    showToast(`Trocado: ${source.name}`);
   } catch (err) {
-    showToast('Erro ao trocar janela: ' + err.message);
+    showToast('Erro ao trocar: ' + err.message);
   }
 }
 

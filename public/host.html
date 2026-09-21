@@ -67,7 +67,7 @@
           <span class="viewer-count" id="viewer-count">0 assistindo</span>
         </div>
         <div class="stream-actions">
-          <button id="btn-switch-source" class="btn btn-small">Trocar Janela</button>
+          <button id="btn-switch-source" class="btn btn-small">Trocar Janela/Audio</button>
           <button id="btn-copy-link" class="btn btn-small">Copiar Link</button>
           <button id="btn-stop" class="btn btn-danger">Parar</button>
         </div>
@@ -84,11 +84,15 @@
   <div class="modal-overlay" id="switch-modal" style="display:none">
     <div class="modal">
       <div class="modal-header">
-        <h2>Trocar Janela</h2>
+        <h2>Trocar Janela e Audio</h2>
         <button id="btn-close-modal" class="btn btn-small">Fechar</button>
       </div>
       <div class="source-grid" id="switch-source-grid">
         <div class="loading">Carregando janelas...</div>
+      </div>
+      <div class="switch-audio-section">
+        <div class="source-section-label">Audio (clique para trocar junto)</div>
+        <div class="session-list" id="switch-audio-list"></div>
       </div>
     </div>
   </div>
