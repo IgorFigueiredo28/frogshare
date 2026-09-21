@@ -8,13 +8,13 @@
   --bg: #0a0a0f;
   --bg-card: #12121a;
   --bg-hover: #1a1a28;
-  --bg-selected: rgba(108, 92, 231, 0.12);
-  --border: #2a2a3a;
-  --border-selected: #6c5ce7;
-  --text: #e4e4ef;
-  --text-muted: #8888a0;
-  --primary: #6c5ce7;
-  --primary-hover: #7c6cf7;
+  --bg-selected: rgba(46, 204, 113, 0.12);
+  --border: #2a3a2a;
+  --border-selected: #2ecc71;
+  --text: #e4efe4;
+  --text-muted: #88a088;
+  --primary: #2ecc71;
+  --primary-hover: #27ae60;
   --danger: #e74c3c;
   --success: #2ecc71;
   --radius: 10px;
@@ -38,7 +38,7 @@ body {
 h1 {
   font-size: 1.8rem;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--primary), #a29bfe);
+  background: linear-gradient(135deg, var(--primary), #a8e6cf);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
