@@ -13,6 +13,7 @@ const remoteVideo = document.getElementById('remote-video');
 const placeholder = document.getElementById('placeholder');
 const statusText = document.getElementById('status-text');
 const btnFullscreen = document.getElementById('btn-fullscreen');
+const btnMute = document.getElementById('btn-mute');
 const videoArea = document.getElementById('video-area');
 
 const ICE_SERVERS = {
@@ -88,6 +89,7 @@ socket.on('offer', async ({ from, offer }) => {
     remoteVideo.style.display = 'block';
     placeholder.style.display = 'none';
     btnFullscreen.style.display = '';
+    btnMute.style.display = '';
 
     const receiver = e.receiver;
     if (receiver && receiver.jitterBufferTarget !== undefined) {
@@ -137,23 +139,26 @@ socket.on('ice-candidate', async ({ from, candidate }) => {
 });
 
 // Fullscreen
-btnFullscreen.addEventListener('click', () => {
-  if (videoArea.requestFullscreen) {
-    videoArea.requestFullscreen();
-  }
-});
-
-videoArea.addEventListener('dblclick', () => {
+function toggleFullscreen() {
   if (document.fullscreenElement) {
     document.exitFullscreen();
+    btnFullscreen.textContent = 'Tela Cheia';
   } else {
-    videoArea.requestFullscreen().catch(() => {});
+    document.documentElement.requestFullscreen().then(() => {
+      btnFullscreen.textContent = 'Sair Tela Cheia';
+    }).catch(() => {});
   }
+}
+
+document.addEventListener('fullscreenchange', () => {
+  btnFullscreen.textContent = document.fullscreenElement ? 'Sair Tela Cheia' : 'Tela Cheia';
 });
 
-// Unmute on click
-remoteVideo.addEventListener('click', () => {
-  if (remoteVideo.muted) {
-    remoteVideo.muted = false;
-  }
+btnFullscreen.addEventListener('click', toggleFullscreen);
+videoArea.addEventListener('dblclick', toggleFullscreen);
+
+// Mute toggle
+btnMute.addEventListener('click', () => {
+  remoteVideo.muted = !remoteVideo.muted;
+  btnMute.textContent = remoteVideo.muted ? 'Desmutar' : 'Mutar';
 });
