@@ -113,6 +113,14 @@ socket.on('offer', async ({ from, offer }) => {
     placeholder.style.display = 'none';
     btnFullscreen.style.display = '';
     btnMute.style.display = '';
+    btnMute.textContent = 'Desmutar';
+
+    remoteVideo.play().then(() => {
+      remoteVideo.muted = false;
+      btnMute.textContent = 'Mutar';
+    }).catch(() => {
+      showToast('Clique em "Desmutar" para ouvir o audio');
+    });
 
     const receiver = e.receiver;
     if (receiver && receiver.jitterBufferTarget !== undefined) {
@@ -182,6 +190,12 @@ videoArea.addEventListener('dblclick', toggleFullscreen);
 
 // Mute toggle
 btnMute.addEventListener('click', () => {
-  remoteVideo.muted = !remoteVideo.muted;
-  btnMute.textContent = remoteVideo.muted ? 'Desmutar' : 'Mutar';
+  if (remoteVideo.muted) {
+    remoteVideo.muted = false;
+    remoteVideo.play().catch(() => {});
+    btnMute.textContent = 'Mutar';
+  } else {
+    remoteVideo.muted = true;
+    btnMute.textContent = 'Desmutar';
+  }
 });
