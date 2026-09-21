@@ -8,6 +8,7 @@ let socket = null;
 const peerConnections = new Map();
 let roomId = null;
 let serverPort = 3030;
+let signalServer = '';
 
 const ICE_SERVERS = {
   iceServers: [
@@ -277,15 +278,14 @@ btnStart.addEventListener('click', async () => {
     localStream = new MediaStream(tracks);
     localPreview.srcObject = localStream;
 
-    // 3. Create room
-    const port = await window.electronAPI.getServerPort();
-    serverPort = port;
-    const res = await fetch(`http://localhost:${port}/api/room/create`);
+    // 3. Create room on remote signaling server
+    signalServer = await window.electronAPI.getSignalServer();
+    const res = await fetch(`${signalServer}/api/room/create`);
     const data = await res.json();
     roomId = data.roomId;
 
-    // 4. Connect signaling
-    socket = io(`http://localhost:${port}`);
+    // 4. Connect signaling to remote server
+    socket = io(signalServer);
     socket.emit('join-room', { roomId, asHost: true });
 
     socket.on('viewer-joined', async ({ viewerId }) => {
@@ -415,9 +415,10 @@ btnCopyCode.addEventListener('click', () => {
   navigator.clipboard.writeText(roomId).then(() => showToast('Codigo copiado!'));
 });
 
-btnCopyLink.addEventListener('click', () => {
-  const link = `http://localhost:${serverPort}/room.html?room=${roomId}`;
-  navigator.clipboard.writeText(link).then(() => showToast('Link copiado! (funciona na rede local)'));
+btnCopyLink.addEventListener('click', async () => {
+  const url = signalServer || await window.electronAPI.getSignalServer();
+  const link = `${url}/room.html?room=${roomId}`;
+  navigator.clipboard.writeText(link).then(() => showToast('Link copiado!'));
 });
 
 // ======== Stats ========

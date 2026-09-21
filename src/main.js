@@ -187,3 +187,7 @@ function stopAudioCapture() {
 ipcMain.handle('get-server-port', () => {
   return serverInstance?.port || 3030;
 });
+
+ipcMain.handle('get-signal-server', () => {
+  return process.env.SIGNAL_SERVER || 'https://telaskzpetentes.onrender.com';
+});
