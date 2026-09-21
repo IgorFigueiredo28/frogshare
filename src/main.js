@@ -41,8 +41,11 @@ app.whenReady().then(async () => {
   await createWindow();
 });
 
-app.on('window-all-closed', () => {
+app.on('before-quit', () => {
   stopAudioCapture();
+});
+
+app.on('window-all-closed', () => {
   app.quit();
 });
 
@@ -114,7 +117,9 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
         }
         if (json.error) {
           if (!started) resolve(json);
-          mainWindow?.webContents.send('audio-capture-error', json.error);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('audio-capture-error', json.error);
+          }
         }
       } catch {}
     });
@@ -139,7 +144,9 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
 
           // Convert to Float32Array and send to renderer
           const float32 = new Float32Array(audioData.buffer, audioData.byteOffset, audioData.length / 4);
-          mainWindow?.webContents.send('audio-data', Array.from(float32));
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('audio-data', Array.from(float32));
+          }
         } else {
           break;
         }
@@ -148,7 +155,9 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
 
     audioCaptureProcess.on('close', () => {
       audioCaptureProcess = null;
-      mainWindow?.webContents.send('audio-capture-stopped');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('audio-capture-stopped');
+      }
       if (!started) resolve({ error: 'Process exited' });
     });
 
