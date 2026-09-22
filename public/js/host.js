@@ -1,3 +1,37 @@
+// ======== Error Reporting ========
+let _signalUrl = null;
+async function getSignalUrl() {
+  if (!_signalUrl) _signalUrl = await window.electronAPI.getSignalServer();
+  return _signalUrl;
+}
+
+function reportError(message, stack, context) {
+  getSignalUrl().then(url => {
+    fetch(`${url}/api/errors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'host',
+        level: 'error',
+        message: String(message).slice(0, 2000),
+        stack: stack ? String(stack).slice(0, 5000) : null,
+        context: context || null,
+        room_id: roomId,
+        app_version: '1.1.1',
+        user_agent: navigator.userAgent
+      })
+    }).catch(() => {});
+  }).catch(() => {});
+}
+
+window.onerror = (msg, src, line, col, err) => {
+  reportError(`${msg} at ${src}:${line}:${col}`, err?.stack);
+};
+window.onunhandledrejection = (e) => {
+  const err = e.reason;
+  reportError(err?.message || String(err), err?.stack, { type: 'unhandledrejection' });
+};
+
 // ======== State ========
 let selectedSourceId = null;
 let selectedPid = null;
@@ -357,6 +391,7 @@ async function ensureRoom() {
       for (const c of pc.pendingIce.splice(0)) pc.addIceCandidate(c).catch(() => {});
     } catch (err) {
       console.error('setRemoteDescription failed', err);
+      reportError('setRemoteDescription failed: ' + err.message, err.stack, { from });
     }
   });
 
@@ -452,6 +487,7 @@ btnStart.addEventListener('click', async () => {
 
   } catch (err) {
     showToast('Erro: ' + err.message);
+    reportError('Start streaming failed: ' + err.message, err.stack);
     btnStart.disabled = false;
     btnStart.textContent = roomId ? 'Retomar Compartilhamento' : 'Iniciar Compartilhamento';
   }
@@ -486,6 +522,7 @@ async function createOfferForViewer(viewerId) {
       await videoSender.setParameters(params);
     } catch (err) {
       console.warn('setParameters failed, using defaults', err);
+      reportError('setParameters failed: ' + err.message, err.stack, { viewerId });
     }
   }
 
@@ -497,8 +534,11 @@ async function createOfferForViewer(viewerId) {
 
   // 'disconnected' is often a transient blip that recovers; only tear down on failure
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+    if (pc.connectionState === 'failed') {
+      reportError('PeerConnection failed', null, { viewerId, sid: pc.sid });
       pc.close();
+      if (peerConnections.get(viewerId) === pc) peerConnections.delete(viewerId);
+    } else if (pc.connectionState === 'closed') {
       if (peerConnections.get(viewerId) === pc) peerConnections.delete(viewerId);
     }
   };
@@ -762,6 +802,7 @@ async function switchToSource(source) {
     showToast(`Trocado: ${source.name}`);
   } catch (err) {
     showToast('Erro ao trocar: ' + err.message);
+    reportError('Switch source failed: ' + err.message, err.stack);
   }
 }
 

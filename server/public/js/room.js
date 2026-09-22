@@ -5,6 +5,34 @@ if (!roomId) {
   window.location.href = '/';
 }
 
+// ======== Error Reporting ========
+function reportError(message, stack, context) {
+  try {
+    fetch('/api/errors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'viewer',
+        level: 'error',
+        message: String(message).slice(0, 2000),
+        stack: stack ? String(stack).slice(0, 5000) : null,
+        context: context || null,
+        room_id: roomId,
+        app_version: '1.1.1',
+        user_agent: navigator.userAgent
+      })
+    }).catch(() => {});
+  } catch {}
+}
+
+window.onerror = (msg, src, line, col, err) => {
+  reportError(`${msg} at ${src}:${line}:${col}`, err?.stack);
+};
+window.onunhandledrejection = (e) => {
+  const err = e.reason;
+  reportError(err?.message || String(err), err?.stack, { type: 'unhandledrejection' });
+};
+
 document.getElementById('room-code').textContent = roomId;
 
 const socket = io();
@@ -118,9 +146,9 @@ socket.on('offer', async ({ from, offer, sid }) => {
   pc.sid = sid;
   const thisPc = pc;
 
-  // Self-heal: if ICE never completes, ask the host for a fresh offer
   setTimeout(() => {
     if (pc === thisPc && thisPc.connectionState !== 'connected') {
+      reportError('ICE timeout 10s', null, { state: thisPc.connectionState, sid });
       requestNewOffer('Conexao demorando, tentando de novo...');
     }
   }, 10000);
@@ -168,6 +196,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
         }
       }, 3000);
     } else if (state === 'failed') {
+      reportError('PeerConnection failed', null, { sid: thisPc.sid });
       remoteVideo.style.display = 'none';
       placeholder.style.display = '';
       requestNewOffer('Conexao perdida. Reconectando...');
@@ -184,6 +213,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
     socket.emit('answer', { to: from, answer: h264Answer, sid });
   } catch (err) {
     console.error('Negotiation failed', err);
+    reportError('Negotiation failed: ' + err.message, err.stack, { from });
   }
 });
 

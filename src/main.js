@@ -8,6 +8,34 @@ const AUDIO_CAPTURE_EXE = isDev
   ? path.join(__dirname, '..', 'native', 'AudioCapture.exe')
   : path.join(process.resourcesPath, 'native', 'AudioCapture.exe');
 
+const SIGNAL_SERVER = process.env.SIGNAL_SERVER || 'https://telaskzpetentes.onrender.com';
+
+function reportMainError(message, stack, context) {
+  try {
+    fetch(`${SIGNAL_SERVER}/api/errors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'main',
+        level: 'error',
+        message: String(message).slice(0, 2000),
+        stack: stack ? String(stack).slice(0, 5000) : null,
+        context: context || null,
+        app_version: '1.1.1'
+      })
+    }).catch(() => {});
+  } catch {}
+}
+
+process.on('uncaughtException', (err) => {
+  reportMainError('uncaughtException: ' + err.message, err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : null;
+  reportMainError('unhandledRejection: ' + msg, stack);
+});
+
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-features', 'WGCCapturerWin,WGCScreenCapturer');
@@ -166,16 +194,20 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       pending = pending.subarray(offset);
     });
 
-    proc.on('close', () => {
+    proc.on('close', (code) => {
       if (audioCaptureProcess !== proc) return;
       audioCaptureProcess = null;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('audio-capture-stopped');
       }
-      if (!started) resolve({ error: 'Process exited' });
+      if (!started) {
+        reportMainError('Audio capture process exited', null, { code, args });
+        resolve({ error: 'Process exited' });
+      }
     });
 
     proc.on('error', (err) => {
+      reportMainError('Audio capture spawn error: ' + err.message, err.stack, { args });
       if (!started) resolve({ error: err.message });
     });
 

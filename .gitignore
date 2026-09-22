@@ -3,3 +3,4 @@ dist/
 *.exe
 !native/AudioCapture.exe
 .env
+.env.local

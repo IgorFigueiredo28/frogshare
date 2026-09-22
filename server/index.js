@@ -6,9 +6,12 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
 const PORT = process.env.PORT || 3030;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const app = express();
 app.use(cors());
+app.use(express.json({ limit: '16kb' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
@@ -27,6 +30,41 @@ setInterval(() => {
 }, 600000);
 
 app.get('/health', (req, res) => res.send('ok'));
+
+// Error logging proxy — clients POST here, server forwards to Supabase
+app.post('/api/errors', async (req, res) => {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return res.status(503).json({ error: 'Logging not configured' });
+  }
+  const { source, level, message, stack, context, room_id, app_version, user_agent } = req.body;
+  if (!source || !message) {
+    return res.status(400).json({ error: 'source and message required' });
+  }
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
+        source: String(source).slice(0, 50),
+        level: String(level || 'error').slice(0, 20),
+        message: String(message).slice(0, 5000),
+        stack: stack ? String(stack).slice(0, 10000) : null,
+        context: context || null,
+        room_id: room_id ? String(room_id).slice(0, 50) : null,
+        app_version: app_version ? String(app_version).slice(0, 20) : null,
+        user_agent: user_agent ? String(user_agent).slice(0, 500) : null
+      })
+    });
+    res.status(resp.ok ? 200 : 502).json({ ok: resp.ok });
+  } catch {
+    res.status(502).json({ error: 'Supabase request failed' });
+  }
+});
 
 app.get('/api/room/create', (req, res) => {
   const roomId = uuidv4().slice(0, 8);
