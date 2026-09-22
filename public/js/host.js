@@ -6,6 +6,7 @@ let audioContext = null;
 let audioWorkletNode = null;
 let socket = null;
 const peerConnections = new Map();
+let offerSeq = 0;
 let roomId = null;
 let signalServer = '';
 let isStreaming = false;
@@ -346,9 +347,11 @@ async function ensureRoom() {
     peerConnections.delete(viewerId);
   });
 
-  socket.on('answer', async ({ from, answer }) => {
+  socket.on('answer', async ({ from, answer, sid }) => {
     const pc = peerConnections.get(from);
     if (!pc || pc.signalingState !== 'have-local-offer') return;
+    // An answer to a superseded offer carries the wrong ICE credentials and would wedge the new peer
+    if (sid !== undefined && sid !== pc.sid) return;
     try {
       await pc.setRemoteDescription({ type: answer.type, sdp: tuneAnswerSdp(answer.sdp) });
       for (const c of pc.pendingIce.splice(0)) pc.addIceCandidate(c).catch(() => {});
@@ -357,9 +360,9 @@ async function ensureRoom() {
     }
   });
 
-  socket.on('ice-candidate', ({ from, candidate }) => {
+  socket.on('ice-candidate', ({ from, candidate, sid }) => {
     const pc = peerConnections.get(from);
-    if (!pc) return;
+    if (!pc || (sid !== undefined && sid !== pc.sid)) return;
     if (pc.remoteDescription) pc.addIceCandidate(candidate).catch(() => {});
     else pc.pendingIce.push(candidate);
   });
@@ -461,6 +464,7 @@ async function createOfferForViewer(viewerId) {
 
   const pc = new RTCPeerConnection(ICE_SERVERS);
   pc.pendingIce = [];
+  pc.sid = ++offerSeq;
   peerConnections.set(viewerId, pc);
 
   localStream.getTracks().forEach(track => {
@@ -487,7 +491,7 @@ async function createOfferForViewer(viewerId) {
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
-      socket.emit('ice-candidate', { to: viewerId, candidate: e.candidate });
+      socket.emit('ice-candidate', { to: viewerId, candidate: e.candidate, sid: pc.sid });
     }
   };
 
@@ -499,10 +503,12 @@ async function createOfferForViewer(viewerId) {
     }
   };
 
+  if (peerConnections.get(viewerId) !== pc) return;
   const offer = await pc.createOffer();
   const h264Offer = { type: offer.type, sdp: preferH264(offer.sdp) };
   await pc.setLocalDescription(h264Offer);
-  socket.emit('offer', { to: viewerId, offer: h264Offer });
+  if (peerConnections.get(viewerId) !== pc) return;
+  socket.emit('offer', { to: viewerId, offer: h264Offer, sid: pc.sid });
 }
 
 // ======== Pause Streaming (room stays alive) ========

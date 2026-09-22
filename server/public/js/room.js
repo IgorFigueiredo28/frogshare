@@ -99,7 +99,15 @@ socket.on('host-paused', () => {
   }
 });
 
-socket.on('offer', async ({ from, offer }) => {
+function requestNewOffer(message) {
+  if (pc) { try { pc.close(); } catch {} }
+  pc = null;
+  if (hostPaused) return;
+  statusText.textContent = message;
+  socket.emit('join-room', { roomId, asHost: false });
+}
+
+socket.on('offer', async ({ from, offer, sid }) => {
   if (pc) {
     try { pc.close(); } catch {}
   }
@@ -107,7 +115,15 @@ socket.on('offer', async ({ from, offer }) => {
   hostPaused = false;
   pc = new RTCPeerConnection(ICE_SERVERS);
   pc.pendingIce = [];
+  pc.sid = sid;
   const thisPc = pc;
+
+  // Self-heal: if ICE never completes, ask the host for a fresh offer
+  setTimeout(() => {
+    if (pc === thisPc && thisPc.connectionState !== 'connected') {
+      requestNewOffer('Conexao demorando, tentando de novo...');
+    }
+  }, 10000);
 
   pc.ontrack = (e) => {
     remoteVideo.srcObject = e.streams[0];
@@ -134,32 +150,27 @@ socket.on('offer', async ({ from, offer }) => {
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
-      socket.emit('ice-candidate', { to: from, candidate: e.candidate });
+      socket.emit('ice-candidate', { to: from, candidate: e.candidate, sid });
     }
   };
 
   pc.onconnectionstatechange = () => {
-    if (!pc) return;
-    if (pc.connectionState === 'connected') {
+    if (pc !== thisPc) return;
+    const state = thisPc.connectionState;
+    if (state === 'connected') {
       statusText.textContent = '';
-    } else if (pc.connectionState === 'disconnected') {
+    } else if (state === 'disconnected') {
       if (hostPaused) return;
       statusText.textContent = 'Reconectando...';
       setTimeout(() => {
-        if (pc && pc.connectionState === 'disconnected') {
-          pc.close();
-          pc = null;
-          socket.emit('join-room', { roomId, asHost: false });
+        if (pc === thisPc && thisPc.connectionState === 'disconnected') {
+          requestNewOffer('Reconectando...');
         }
       }, 3000);
-    } else if (pc.connectionState === 'failed') {
+    } else if (state === 'failed') {
       remoteVideo.style.display = 'none';
       placeholder.style.display = '';
-      if (hostPaused) return;
-      statusText.textContent = 'Conexao perdida. Reconectando...';
-      pc.close();
-      pc = null;
-      socket.emit('join-room', { roomId, asHost: false });
+      requestNewOffer('Conexao perdida. Reconectando...');
     }
   };
 
@@ -170,14 +181,14 @@ socket.on('offer', async ({ from, offer }) => {
     const h264Answer = { type: answer.type, sdp: preferH264(answer.sdp) };
     await thisPc.setLocalDescription(h264Answer);
     if (pc !== thisPc) return;
-    socket.emit('answer', { to: from, answer: h264Answer });
+    socket.emit('answer', { to: from, answer: h264Answer, sid });
   } catch (err) {
     console.error('Negotiation failed', err);
   }
 });
 
-socket.on('ice-candidate', ({ candidate }) => {
-  if (!pc) return;
+socket.on('ice-candidate', ({ candidate, sid }) => {
+  if (!pc || (sid !== undefined && sid !== pc.sid)) return;
   if (pc.remoteDescription) pc.addIceCandidate(candidate).catch(() => {});
   else pc.pendingIce.push(candidate);
 });

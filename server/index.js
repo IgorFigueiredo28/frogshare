@@ -75,16 +75,16 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('offer', ({ to, offer }) => {
-    io.to(to).emit('offer', { from: socket.id, offer });
+  socket.on('offer', ({ to, offer, sid }) => {
+    io.to(to).emit('offer', { from: socket.id, offer, sid });
   });
 
-  socket.on('answer', ({ to, answer }) => {
-    io.to(to).emit('answer', { from: socket.id, answer });
+  socket.on('answer', ({ to, answer, sid }) => {
+    io.to(to).emit('answer', { from: socket.id, answer, sid });
   });
 
-  socket.on('ice-candidate', ({ to, candidate }) => {
-    io.to(to).emit('ice-candidate', { from: socket.id, candidate });
+  socket.on('ice-candidate', ({ to, candidate, sid }) => {
+    io.to(to).emit('ice-candidate', { from: socket.id, candidate, sid });
   });
 
   socket.on('host-pause', () => {
@@ -108,8 +108,11 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     if (role === 'host') {
-      room.host = null;
-      socket.to(currentRoom).emit('host-left');
+      // A reconnected host may already own the room under a new socket id
+      if (room.host === socket.id) {
+        room.host = null;
+        socket.to(currentRoom).emit('host-left');
+      }
     } else {
       room.viewers.delete(socket.id);
       if (room.host) {
