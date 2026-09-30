@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.1',
+        app_version: '1.1.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -44,14 +44,38 @@ const btnFullscreen = document.getElementById('btn-fullscreen');
 const btnMute = document.getElementById('btn-mute');
 const videoArea = document.getElementById('video-area');
 
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' }
-  ]
+const FALLBACK_ICE = {
+  iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
 };
+let iceCache = { config: null, fetchedAt: 0 };
+
+async function getIceConfig() {
+  if (iceCache.config && Date.now() - iceCache.fetchedAt < 3600000) return iceCache.config;
+  try {
+    const res = await fetch('/api/ice-servers');
+    const data = await res.json();
+    iceCache = { config: { iceServers: data.iceServers }, fetchedAt: Date.now() };
+    return iceCache.config;
+  } catch {
+    return FALLBACK_ICE;
+  }
+}
+getIceConfig();
+
+async function iceDiagnostics(peer) {
+  const out = { local: [], remote: [], pairs: [] };
+  try {
+    const stats = await peer.getStats();
+    for (const r of stats.values()) {
+      if (r.type === 'local-candidate') out.local.push(`${r.candidateType}/${r.protocol}`);
+      else if (r.type === 'remote-candidate') out.remote.push(`${r.candidateType}/${r.protocol}`);
+      else if (r.type === 'candidate-pair') out.pairs.push(r.state);
+    }
+  } catch {}
+  for (const k of Object.keys(out)) out[k] = [...new Set(out[k])];
+  out.hasTurn = !!iceCache.config?.iceServers.some(s => [].concat(s.urls).some(u => u.startsWith('turn')));
+  return out;
+}
 
 let pc = null;
 let hostPaused = false;
@@ -107,7 +131,7 @@ socket.on('host-left', () => {
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
-  btnMute.style.display = 'none';
+  volumeControl.style.display = 'none';
   if (pc) {
     pc.close();
     pc = null;
@@ -120,7 +144,7 @@ socket.on('host-paused', () => {
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
-  btnMute.style.display = 'none';
+  volumeControl.style.display = 'none';
   if (pc) {
     pc.close();
     pc = null;
@@ -135,40 +159,45 @@ function requestNewOffer(message) {
   socket.emit('join-room', { roomId, asHost: false });
 }
 
+// Candidates that arrive while the offer handler is still awaiting the ICE config
+let earlyIce = [];
+let offerToken = 0;
+
 socket.on('offer', async ({ from, offer, sid }) => {
   if (pc) {
     try { pc.close(); } catch {}
   }
 
   hostPaused = false;
-  pc = new RTCPeerConnection(ICE_SERVERS);
-  pc.pendingIce = [];
+  pc = null;
+  const myToken = ++offerToken;
+  const iceConfig = await getIceConfig();
+  if (myToken !== offerToken) return;
+
+  pc = new RTCPeerConnection(iceConfig);
+  pc.pendingIce = earlyIce.filter(e => e.sid === sid).map(e => e.candidate);
+  earlyIce = [];
   pc.sid = sid;
   const thisPc = pc;
 
-  setTimeout(() => {
+  setTimeout(async () => {
     if (pc === thisPc && thisPc.connectionState !== 'connected') {
-      reportError('ICE timeout 10s', null, { state: thisPc.connectionState, sid });
-      requestNewOffer('Conexao demorando, tentando de novo...');
+      const diag = await iceDiagnostics(thisPc);
+      reportError('ICE timeout 10s', null, { state: thisPc.connectionState, sid, ...diag });
+      if (pc === thisPc) requestNewOffer('Conexao demorando, tentando de novo...');
     }
   }, 10000);
 
   pc.ontrack = (e) => {
+    const isNewStream = remoteVideo.srcObject !== e.streams[0];
     remoteVideo.srcObject = e.streams[0];
     remoteVideo.style.display = 'block';
     placeholder.style.display = 'none';
     btnFullscreen.style.display = '';
-    btnMute.style.display = '';
-    btnMute.textContent = 'Desmutar';
+    volumeControl.style.display = '';
+    if (isNewStream) applyInitialAudio();
 
-    remoteVideo.play().then(() => {
-      remoteVideo.muted = false;
-      btnMute.textContent = 'Mutar';
-    }).catch(() => {
-      showToast('Clique em "Desmutar" para ouvir o audio');
-    });
-
-    const receivers = pc.getReceivers();
+    const receivers = thisPc.getReceivers();
     for (const receiver of receivers) {
       if (receiver.jitterBufferTarget !== undefined) {
         receiver.jitterBufferTarget = 0;
@@ -196,7 +225,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
         }
       }, 3000);
     } else if (state === 'failed') {
-      reportError('PeerConnection failed', null, { sid: thisPc.sid });
+      iceDiagnostics(thisPc).then(diag => reportError('PeerConnection failed', null, { sid, ...diag }));
       remoteVideo.style.display = 'none';
       placeholder.style.display = '';
       requestNewOffer('Conexao perdida. Reconectando...');
@@ -218,7 +247,11 @@ socket.on('offer', async ({ from, offer, sid }) => {
 });
 
 socket.on('ice-candidate', ({ candidate, sid }) => {
-  if (!pc || (sid !== undefined && sid !== pc.sid)) return;
+  if (!pc) {
+    if (earlyIce.length < 100) earlyIce.push({ sid, candidate });
+    return;
+  }
+  if (sid !== undefined && sid !== pc.sid) return;
   if (pc.remoteDescription) pc.addIceCandidate(candidate).catch(() => {});
   else pc.pendingIce.push(candidate);
 });
@@ -239,14 +272,120 @@ document.addEventListener('fullscreenchange', () => {
 btnFullscreen.addEventListener('click', toggleFullscreen);
 videoArea.addEventListener('dblclick', toggleFullscreen);
 
-// Mute toggle
-btnMute.addEventListener('click', () => {
-  if (remoteVideo.muted) {
+// ======== Volume ========
+const volumeControl = document.getElementById('volume-control');
+const volumeSlider = document.getElementById('volume-slider');
+const volumeValue = document.getElementById('volume-value');
+const iconWave1 = document.getElementById('icon-vol-wave1');
+const iconWave2 = document.getElementById('icon-vol-wave2');
+const iconX = document.getElementById('icon-vol-x');
+
+const VOL_KEY = 'ss-volume';
+const MUTED_KEY = 'ss-muted';
+let wantMuted = false;
+
+try {
+  const v = parseFloat(localStorage.getItem(VOL_KEY));
+  if (v >= 0 && v <= 1) remoteVideo.volume = v;
+  wantMuted = localStorage.getItem(MUTED_KEY) === '1';
+} catch {}
+
+function saveVolume() {
+  try {
+    localStorage.setItem(VOL_KEY, String(remoteVideo.volume));
+    localStorage.setItem(MUTED_KEY, wantMuted ? '1' : '0');
+  } catch {}
+}
+
+function updateVolumeUI() {
+  const silent = remoteVideo.muted || remoteVideo.volume === 0;
+  const pct = silent ? 0 : Math.round(remoteVideo.volume * 100);
+  volumeSlider.value = pct;
+  volumeSlider.style.setProperty('--fill', pct + '%');
+  volumeValue.textContent = pct + '%';
+  iconX.style.display = silent ? '' : 'none';
+  iconWave1.style.display = silent ? 'none' : '';
+  iconWave2.style.display = !silent && remoteVideo.volume > 0.5 ? '' : 'none';
+  const label = silent ? 'Desmutar' : 'Mutar';
+  btnMute.setAttribute('aria-label', label);
+  btnMute.title = label + ' (M)';
+}
+
+remoteVideo.addEventListener('volumechange', updateVolumeUI);
+updateVolumeUI();
+
+let osdEl = null;
+let osdTimer = null;
+function showVolumeOsd() {
+  if (!osdEl) {
+    osdEl = document.createElement('div');
+    osdEl.className = 'volume-osd';
+    videoArea.appendChild(osdEl);
+  }
+  const silent = remoteVideo.muted || remoteVideo.volume === 0;
+  osdEl.textContent = silent ? 'Mudo' : `Volume ${Math.round(remoteVideo.volume * 100)}%`;
+  osdEl.classList.add('visible');
+  clearTimeout(osdTimer);
+  osdTimer = setTimeout(() => osdEl.classList.remove('visible'), 900);
+}
+
+function setVolume(v) {
+  v = Math.min(1, Math.max(0, v));
+  remoteVideo.volume = v;
+  wantMuted = v === 0;
+  remoteVideo.muted = wantMuted;
+  if (!wantMuted) remoteVideo.play().catch(() => {});
+  saveVolume();
+}
+
+function toggleMute() {
+  if (remoteVideo.muted || remoteVideo.volume === 0) {
+    if (remoteVideo.volume === 0) remoteVideo.volume = 0.5;
+    wantMuted = false;
     remoteVideo.muted = false;
     remoteVideo.play().catch(() => {});
-    btnMute.textContent = 'Mutar';
   } else {
+    wantMuted = true;
     remoteVideo.muted = true;
-    btnMute.textContent = 'Desmutar';
   }
+  saveVolume();
+}
+
+// Browsers only allow autoplay while muted; unmuting without a click can pause the video
+function applyInitialAudio() {
+  remoteVideo.play().then(() => {
+    if (wantMuted) return;
+    remoteVideo.muted = false;
+    if (remoteVideo.paused) {
+      remoteVideo.muted = true;
+      remoteVideo.play().catch(() => {});
+      showToast('Toque no alto-falante para ativar o som');
+    }
+  }).catch(() => {
+    showToast('Toque no alto-falante para ativar o som');
+  });
+}
+
+volumeSlider.addEventListener('input', () => setVolume(volumeSlider.value / 100));
+btnMute.addEventListener('click', toggleMute);
+
+videoArea.addEventListener('wheel', (e) => {
+  if (volumeControl.style.display === 'none') return;
+  e.preventDefault();
+  const base = remoteVideo.muted ? 0 : remoteVideo.volume;
+  setVolume(base + (e.deltaY < 0 ? 0.05 : -0.05));
+  showVolumeOsd();
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (volumeControl.style.display === 'none') return;
+  if (e.target instanceof HTMLInputElement || e.ctrlKey || e.metaKey || e.altKey) return;
+  const base = remoteVideo.muted ? 0 : remoteVideo.volume;
+  if (e.key === 'ArrowUp') setVolume(base + 0.05);
+  else if (e.key === 'ArrowDown') setVolume(base - 0.05);
+  else if (e.key === 'm' || e.key === 'M') toggleMute();
+  else if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); return; }
+  else return;
+  e.preventDefault();
+  showVolumeOsd();
 });

@@ -31,6 +31,53 @@ setInterval(() => {
 
 app.get('/health', (req, res) => res.send('ok'));
 
+// STUN alone can't traverse symmetric NAT / mobile CGNAT; TURN relays those peers
+const STUN_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+];
+let turnCache = { servers: null, expires: 0 };
+
+async function getTurnServers() {
+  if (turnCache.servers && Date.now() < turnCache.expires) return turnCache.servers;
+
+  const { CF_TURN_KEY_ID, CF_TURN_API_TOKEN, TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL } = process.env;
+  let servers = [];
+
+  if (CF_TURN_KEY_ID && CF_TURN_API_TOKEN) {
+    const resp = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${CF_TURN_API_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttl: 86400 })
+      }
+    );
+    if (!resp.ok) throw new Error(`Cloudflare TURN ${resp.status}`);
+    const data = await resp.json();
+    const list = Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
+    // Browsers time out on port-53 TURN URLs, which delays ICE gathering
+    servers = list
+      .map(s => ({ ...s, urls: [].concat(s.urls).filter(u => !/:53(\?|$)/.test(u)) }))
+      .filter(s => s.urls.length > 0);
+  } else if (TURN_URLS && TURN_USERNAME && TURN_CREDENTIAL) {
+    servers = [{ urls: TURN_URLS.split(',').map(u => u.trim()), username: TURN_USERNAME, credential: TURN_CREDENTIAL }];
+  }
+
+  turnCache = { servers, expires: Date.now() + 12 * 3600 * 1000 };
+  return servers;
+}
+
+app.get('/api/ice-servers', async (req, res) => {
+  let turn = [];
+  try {
+    turn = await getTurnServers();
+  } catch (err) {
+    console.error('TURN credentials failed:', err.message);
+  }
+  res.set('Cache-Control', 'no-store');
+  res.json({ iceServers: [...STUN_SERVERS, ...turn], hasTurn: turn.length > 0 });
+});
+
 // Error logging proxy — clients POST here, server forwards to Supabase
 app.post('/api/errors', async (req, res) => {
   if (!SUPABASE_URL || !SUPABASE_KEY) {

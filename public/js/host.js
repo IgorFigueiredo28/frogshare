@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.1',
+        app_version: '1.1.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -45,14 +45,38 @@ let roomId = null;
 let signalServer = '';
 let isStreaming = false;
 
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' }
-  ]
+const FALLBACK_ICE = {
+  iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
 };
+let iceCache = { config: null, fetchedAt: 0 };
+
+// TURN credentials come from the signaling server so they can rotate without an app update
+async function getIceConfig() {
+  if (iceCache.config && Date.now() - iceCache.fetchedAt < 3600000) return iceCache.config;
+  try {
+    const url = await getSignalUrl();
+    const res = await fetch(`${url}/api/ice-servers`);
+    const data = await res.json();
+    iceCache = { config: { iceServers: data.iceServers }, fetchedAt: Date.now() };
+    return iceCache.config;
+  } catch {
+    return iceCache.config || FALLBACK_ICE;
+  }
+}
+
+async function iceDiagnostics(peer) {
+  const out = { local: [], remote: [], pairs: [] };
+  try {
+    const stats = await peer.getStats();
+    for (const r of stats.values()) {
+      if (r.type === 'local-candidate') out.local.push(`${r.candidateType}/${r.protocol}`);
+      else if (r.type === 'remote-candidate') out.remote.push(`${r.candidateType}/${r.protocol}`);
+      else if (r.type === 'candidate-pair') out.pairs.push(r.state);
+    }
+  } catch {}
+  for (const k of Object.keys(out)) out[k] = [...new Set(out[k])];
+  return out;
+}
 
 function preferH264(sdp) {
   const lines = sdp.split('\r\n');
@@ -497,8 +521,11 @@ btnStart.addEventListener('click', async () => {
 async function createOfferForViewer(viewerId) {
   const existing = peerConnections.get(viewerId);
   if (existing) existing.close();
+  peerConnections.delete(viewerId);
 
-  const pc = new RTCPeerConnection(ICE_SERVERS);
+  const iceConfig = await getIceConfig();
+  if (peerConnections.has(viewerId) || !localStream) return;
+  const pc = new RTCPeerConnection(iceConfig);
   pc.pendingIce = [];
   pc.sid = ++offerSeq;
   peerConnections.set(viewerId, pc);
@@ -535,7 +562,7 @@ async function createOfferForViewer(viewerId) {
   // 'disconnected' is often a transient blip that recovers; only tear down on failure
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') {
-      reportError('PeerConnection failed', null, { viewerId, sid: pc.sid });
+      iceDiagnostics(pc).then(diag => reportError('PeerConnection failed', null, { viewerId, sid: pc.sid, ...diag }));
       pc.close();
       if (peerConnections.get(viewerId) === pc) peerConnections.delete(viewerId);
     } else if (pc.connectionState === 'closed') {
@@ -815,6 +842,7 @@ loadSources();
 loadAudioSessions();
 
 // Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start
-window.electronAPI.getSignalServer().then(url => {
+getSignalUrl().then(url => {
   fetch(`${url}/health`).catch(() => {});
+  getIceConfig();
 });
