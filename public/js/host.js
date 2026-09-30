@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.3',
+        app_version: '1.1.4',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -156,6 +156,20 @@ const btnRefreshAudio = document.getElementById('btn-refresh-audio');
 const btnCopyCode = document.getElementById('btn-copy-code');
 const btnCopyLink = document.getElementById('btn-copy-link');
 const localPreview = document.getElementById('local-preview');
+
+// A live preview repainting next to a game makes G-SYNC/FreeSync refresh swing, which VA panels
+// show as whole-screen brightness flicker; only render it while this window has focus.
+// document.hasFocus() stays true while a game is in the foreground, so focus comes from BrowserWindow events
+let windowFocused = true;
+function syncPreview() {
+  const want = localStream && windowFocused && !document.hidden ? localStream : null;
+  if (localPreview.srcObject !== want) localPreview.srcObject = want;
+}
+window.electronAPI.onWindowFocus((focused) => {
+  windowFocused = focused;
+  syncPreview();
+});
+document.addEventListener('visibilitychange', syncPreview);
 const roomCodeEl = document.getElementById('room-code');
 const viewerCountEl = document.getElementById('viewer-count');
 const streamStatsEl = document.getElementById('stream-stats');
@@ -553,7 +567,7 @@ btnStart.addEventListener('click', async () => {
     }
 
     localStream = new MediaStream(tracks);
-    localPreview.srcObject = localStream;
+    syncPreview();
 
     // 3. Create or reuse room
     await ensureRoom();
@@ -675,7 +689,7 @@ async function pauseStreaming() {
     socket.emit('host-pause');
   }
 
-  localPreview.srcObject = null;
+  syncPreview();
 
   panelStreaming.style.display = 'none';
   panelSetup.style.display = '';
@@ -751,7 +765,7 @@ async function reportQuality() {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context: { viewers }, room_id: roomId, app_version: '1.1.3', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context: { viewers }, room_id: roomId, app_version: '1.1.4', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -913,7 +927,7 @@ async function switchToSource(source) {
       }
       localStream.addTrack(newVideoTrack);
 
-      localPreview.srcObject = localStream;
+      syncPreview();
       selectedSourceId = source.id;
       (newVideoTrack.sourceTrack || newVideoTrack).addEventListener('ended', pauseStreaming);
     }

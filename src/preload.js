@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAudioCaptureError: (callback) => {
     ipcRenderer.on('audio-capture-error', (_, error) => callback(error));
   },
+  onWindowFocus: (callback) => {
+    ipcRenderer.on('window-focus', (_, focused) => callback(focused));
+  },
   onAudioCaptureStopped: (callback) => {
     ipcRenderer.on('audio-capture-stopped', () => callback());
   },

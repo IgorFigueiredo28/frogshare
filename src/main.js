@@ -21,7 +21,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.1.3'
+        app_version: '1.1.4'
       })
     }).catch(() => {});
   } catch {}
@@ -62,6 +62,13 @@ async function createWindow() {
     backgroundColor: '#0a0a0f',
     autoHideMenuBar: true
   });
+
+  const sendFocus = () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window-focus', mainWindow.isFocused() && !mainWindow.isMinimized());
+    }
+  };
+  for (const evt of ['focus', 'blur', 'minimize', 'restore']) mainWindow.on(evt, sendFocus);
 
   mainWindow.loadURL(`http://127.0.0.1:${serverInstance.port}/host.html`);
 }

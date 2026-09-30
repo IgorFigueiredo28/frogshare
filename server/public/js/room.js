@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.3',
+        app_version: '1.1.4',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
