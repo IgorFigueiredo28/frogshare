@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.2',
+        app_version: '1.1.3',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -80,17 +80,29 @@ async function iceDiagnostics(peer) {
 let pc = null;
 let hostPaused = false;
 
+// Main first: it's the only H264 profile the host's GPU encoder accepts; others fall back to CPU
 function preferH264(sdp) {
   const lines = sdp.split('\r\n');
   const videoMLine = lines.findIndex(l => l.startsWith('m=video'));
   if (videoMLine === -1) return sdp;
+  let end = lines.length;
   const h264Payloads = [];
   for (let i = videoMLine + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('m=')) break;
+    if (lines[i].startsWith('m=')) { end = i; break; }
     const match = lines[i].match(/^a=rtpmap:(\d+)\s+H264\//i);
     if (match) h264Payloads.push(match[1]);
   }
   if (h264Payloads.length === 0) return sdp;
+  const rank = {};
+  for (const pt of h264Payloads) rank[pt] = 2;
+  for (let i = videoMLine + 1; i < end; i++) {
+    const f = lines[i].match(/^a=fmtp:(\d+) .*profile-level-id=([0-9a-f]{2})/i);
+    if (f && f[1] in rank) {
+      const profile = f[2].toLowerCase();
+      rank[f[1]] = profile === '4d' ? 0 : profile === '64' ? 1 : 2;
+    }
+  }
+  h264Payloads.sort((a, b) => rank[a] - rank[b]);
   const parts = lines[videoMLine].split(' ');
   const header = parts.slice(0, 3);
   const payloads = parts.slice(3);

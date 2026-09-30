@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.2',
+        app_version: '1.1.3',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -78,18 +78,32 @@ async function iceDiagnostics(peer) {
   return out;
 }
 
+// Measured on Electron 33/Windows: only H264 Main reaches the GPU encoder (Media Foundation/NVENC);
+// Constrained Baseline and High fall back to OpenH264 on the CPU, which competes with the game.
 function preferH264(sdp) {
   const lines = sdp.split('\r\n');
   const videoMLine = lines.findIndex(l => l.startsWith('m=video'));
   if (videoMLine === -1) return sdp;
 
+  let end = lines.length;
   const h264Payloads = [];
   for (let i = videoMLine + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('m=')) break;
+    if (lines[i].startsWith('m=')) { end = i; break; }
     const match = lines[i].match(/^a=rtpmap:(\d+)\s+H264\//i);
     if (match) h264Payloads.push(match[1]);
   }
   if (h264Payloads.length === 0) return sdp;
+
+  const rank = {};
+  for (const pt of h264Payloads) rank[pt] = 2;
+  for (let i = videoMLine + 1; i < end; i++) {
+    const f = lines[i].match(/^a=fmtp:(\d+) .*profile-level-id=([0-9a-f]{2})/i);
+    if (f && f[1] in rank) {
+      const profile = f[2].toLowerCase();
+      rank[f[1]] = profile === '4d' ? 0 : profile === '64' ? 1 : 2;
+    }
+  }
+  h264Payloads.sort((a, b) => rank[a] - rank[b]);
 
   const parts = lines[videoMLine].split(' ');
   const header = parts.slice(0, 3);
@@ -120,7 +134,7 @@ function tuneAnswerSdp(sdp) {
     const m = l.match(/^a=fmtp:(\d+) (.*)$/);
     if (!m) return l;
     if (videoPts.has(m[1]) && !m[2].includes('x-google-start-bitrate')) {
-      return l + ';x-google-start-bitrate=2500;x-google-min-bitrate=500;x-google-max-bitrate=6000';
+      return l + ';x-google-start-bitrate=4000;x-google-min-bitrate=1000;x-google-max-bitrate=12000';
     }
     if (opusPts.has(m[1]) && !m[2].includes('stereo=')) {
       return l + ';stereo=1;sprop-stereo=1;maxaveragebitrate=128000';
@@ -442,9 +456,60 @@ async function captureVideo(sourceId) {
     video: { cursor: 'never', frameRate: { ideal: 60, max: 60 } },
     audio: false
   });
+  const source = stream.getVideoTracks()[0];
   // 'detail' puts the encoder in screencast mode, which drops frames to keep text sharp
-  stream.getVideoTracks()[0].contentHint = 'motion';
-  return stream;
+  source.contentHint = 'motion';
+  return gpuBackedTrack(source);
+}
+
+// Desktop capture yields CPU-side ARGB frames, which Chromium's hardware encoder rejects,
+// so WebRTC silently falls back to OpenH264 (~50ms/frame at 1080p, stealing CPU from the game).
+// Redrawing each frame on a GPU canvas produces texture-backed frames that NVENC/AMF/QSV accept.
+// Stream-based (not requestAnimationFrame) so it keeps running while the window is minimized.
+function gpuBackedTrack(source) {
+  if (typeof MediaStreamTrackProcessor === 'undefined' || typeof MediaStreamTrackGenerator === 'undefined') {
+    return source;
+  }
+  const processor = new MediaStreamTrackProcessor({ track: source, maxBufferSize: 2 });
+  const generator = new MediaStreamTrackGenerator({ kind: 'video' });
+  generator.contentHint = 'motion';
+  generator.sourceTrack = source;
+
+  const settings = source.getSettings();
+  const canvas = new OffscreenCanvas(settings.width || 1920, settings.height || 1080);
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const reader = processor.readable.getReader();
+  const writer = generator.writable.getWriter();
+
+  (async () => {
+    try {
+      for (;;) {
+        const { value: frame, done } = await reader.read();
+        if (done) break;
+        if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+          canvas.width = frame.displayWidth;
+          canvas.height = frame.displayHeight;
+        }
+        ctx.drawImage(frame, 0, 0);
+        const out = new VideoFrame(canvas, { timestamp: frame.timestamp });
+        frame.close();
+        await writer.write(out);
+      }
+    } catch (err) {
+      if (generator.readyState === 'live') reportError('GPU frame pipeline failed: ' + err.message, err.stack);
+    } finally {
+      try { reader.releaseLock(); } catch {}
+      try { await writer.close(); } catch {}
+    }
+  })();
+
+  return generator;
+}
+
+function stopVideoTrack(track) {
+  if (!track) return;
+  track.stop();
+  if (track.sourceTrack) track.sourceTrack.stop();
 }
 
 // ======== Start Streaming ========
@@ -457,8 +522,7 @@ btnStart.addEventListener('click', async () => {
     const isResume = !!roomId;
 
     // 1. Capture video with cursor hidden
-    const videoStream = await captureVideo(selectedSourceId);
-    const videoTrack = videoStream.getVideoTracks()[0];
+    const videoTrack = await captureVideo(selectedSourceId);
     const tracks = [videoTrack];
 
     // 2. Handle audio based on mode
@@ -500,7 +564,7 @@ btnStart.addEventListener('click', async () => {
       socket.emit('host-resume');
     }
 
-    videoTrack.addEventListener('ended', pauseStreaming);
+    (videoTrack.sourceTrack || videoTrack).addEventListener('ended', pauseStreaming);
 
     // 5. Switch to streaming panel
     roomCodeEl.textContent = roomId;
@@ -541,11 +605,12 @@ async function createOfferForViewer(viewerId) {
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
       }
-      params.encodings[0].maxBitrate = 6000000;
+      params.encodings[0].maxBitrate = 12000000;
       params.encodings[0].maxFramerate = 60;
       params.encodings[0].networkPriority = 'high';
       params.encodings[0].priority = 'high';
-      params.degradationPreference = 'maintain-framerate';
+      // maintain-framerate collapses resolution under bandwidth pressure, which is what makes it look blocky
+      params.degradationPreference = 'balanced';
       await videoSender.setParameters(params);
     } catch (err) {
       console.warn('setParameters failed, using defaults', err);
@@ -585,7 +650,7 @@ async function pauseStreaming() {
   isStreaming = false;
 
   if (localStream) {
-    localStream.getTracks().forEach(t => t.stop());
+    localStream.getTracks().forEach(t => t.kind === 'video' ? stopVideoTrack(t) : t.stop());
     localStream = null;
   }
 
@@ -651,12 +716,43 @@ function startStatsUpdate() {
           const fps = report.framesPerSecond || '-';
           const w = report.frameWidth || '-';
           const h = report.frameHeight || '-';
-          streamStatsEl.textContent = `${w}x${h} @ ${fps}fps | ${peerConnections.size} viewer(s)`;
+          const hw = report.powerEfficientEncoder ? 'GPU' : 'CPU';
+          streamStatsEl.textContent = `${w}x${h} @ ${fps}fps | ${hw} | ${peerConnections.size} viewer(s)`;
           break;
         }
       }
     } catch {}
+    if (++statsTicks % 30 === 0) reportQuality();
   }, 2000);
+}
+
+let statsTicks = 0;
+async function reportQuality() {
+  const viewers = [];
+  for (const [viewerId, pc] of peerConnections) {
+    try {
+      const stats = await pc.getStats();
+      for (const r of stats.values()) {
+        if (r.type === 'outbound-rtp' && r.kind === 'video') {
+          viewers.push({
+            viewer: viewerId.slice(0, 6),
+            enc: r.encoderImplementation,
+            fps: r.framesPerSecond,
+            res: `${r.frameWidth}x${r.frameHeight}`,
+            kbps: Math.round((r.targetBitrate || 0) / 1000),
+            limit: r.qualityLimitationReason,
+            encMs: r.framesEncoded ? +(1000 * r.totalEncodeTime / r.framesEncoded).toFixed(1) : null
+          });
+        }
+      }
+    } catch {}
+  }
+  if (viewers.length === 0) return;
+  getSignalUrl().then(url => fetch(`${url}/api/errors`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context: { viewers }, room_id: roomId, app_version: '1.1.3', user_agent: navigator.userAgent })
+  })).catch(() => {});
 }
 
 // ======== Hot-swap window + audio switching ========
@@ -801,8 +897,7 @@ async function switchToSource(source) {
   try {
     // Switch video
     if (videoChanged) {
-      const newStream = await captureVideo(source.id);
-      const newVideoTrack = newStream.getVideoTracks()[0];
+      const newVideoTrack = await captureVideo(source.id);
 
       for (const [, pc] of peerConnections) {
         const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -812,13 +907,15 @@ async function switchToSource(source) {
       }
 
       const oldVideoTrack = localStream.getVideoTracks()[0];
-      if (oldVideoTrack) oldVideoTrack.stop();
-      localStream.removeTrack(oldVideoTrack);
+      if (oldVideoTrack) {
+        stopVideoTrack(oldVideoTrack);
+        localStream.removeTrack(oldVideoTrack);
+      }
       localStream.addTrack(newVideoTrack);
 
       localPreview.srcObject = localStream;
       selectedSourceId = source.id;
-      newVideoTrack.addEventListener('ended', pauseStreaming);
+      (newVideoTrack.sourceTrack || newVideoTrack).addEventListener('ended', pauseStreaming);
     }
 
     // Switch audio
