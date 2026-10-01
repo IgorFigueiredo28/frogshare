@@ -22,7 +22,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.3.1'
+        app_version: '1.3.2'
       })
     }).catch(() => {});
   } catch {}

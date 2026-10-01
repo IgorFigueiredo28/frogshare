@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.3.1',
+        app_version: '1.3.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -513,7 +513,9 @@ document.querySelectorAll('input[name="q-res"], input[name="q-fps"]').forEach(in
     if (input.name === 'q-res') quality.res = input.value;
     else quality.fps = Number(input.value);
     try { localStorage.setItem(QUALITY_KEY, JSON.stringify(quality)); } catch {}
-    const source = localStream?.getVideoTracks()[0]?.sourceTrack;
+    const videoTrack = localStream?.getVideoTracks()[0];
+    videoTrack?.pipelineWorker?.postMessage({ quality: { ...quality } });
+    const source = videoTrack?.sourceTrack;
     if (source) await source.applyConstraints({ frameRate: { ideal: quality.fps, max: quality.fps } }).catch(() => {});
     renderQualityControls();
     applySenderLimits();
@@ -538,7 +540,121 @@ async function captureVideo(sourceId) {
 // Redrawing each frame on a GPU canvas produces texture-backed frames that NVENC/AMF/QSV accept.
 // Stream-based (not requestAnimationFrame) so it keeps running while the window is minimized.
 // Downscaling and the fps cap happen here too, so the encoder never sees frames it would discard.
-const pipe = { inFrames: 0, outFrames: 0, busyMs: 0, srcW: 0, srcH: 0, outW: 0, outH: 0 };
+const pipe = {
+  inFrames: 0, outFrames: 0, busyMs: 0, srcW: 0, srcH: 0, outW: 0, outH: 0,
+  bursts: 0, pacerDropped: 0, maxGapMs: 0, longGaps: 0, maxQueue: 0
+};
+
+// With a game holding the GPU this pipeline stalls for tens of ms and then hands over the
+// frames it buffered almost at once. The encoder is still busy with the first, so libwebrtc
+// silently discards the rest: a live session captured 55fps but encoded ~30 with no limitation
+// reported. Measured on synthetic bursts of 4 frames: 29.5fps unpaced, 54-60fps paced.
+// Frames pass straight through when they arrive evenly; only bursts are spread out.
+function createPacer(writer) {
+  const queue = [];
+  let pumping = false;
+  let nextAt = 0;
+  let lastWrite = 0;
+  // Roughly one hardware encode; two frames closer than this and the second is discarded
+  const MIN_SPACING_MS = 9;
+
+  async function pump() {
+    if (pumping) return;
+    pumping = true;
+    try {
+      while (queue.length) {
+        const slot = 1000 / quality.fps;
+        // Drain faster when frames are piling up so the queue never becomes standing latency
+        const gap = queue.length > 2 ? Math.min(slot * 0.9, Math.max(10, slot * 0.5)) : slot * 0.9;
+        const now = performance.now();
+        // Absolute schedule: one late timer must not push every later frame back
+        if (nextAt < now - gap) nextAt = now;
+        // ...but catching up after a late timer must not put two frames back to back either
+        const wait = Math.max(nextAt, lastWrite + MIN_SPACING_MS) - now;
+        if (wait > 1) await new Promise(r => setTimeout(r, wait));
+        const frame = queue.shift();
+        if (!frame) break;
+        nextAt += gap;
+        lastWrite = performance.now();
+        const out = new VideoFrame(frame, { timestamp: Math.round(lastWrite * 1000) });
+        frame.close();
+        await writer.write(out);
+        pipe.outFrames++;
+      }
+    } finally {
+      pumping = false;
+    }
+  }
+
+  return {
+    push(frame) {
+      queue.push(frame);
+      pipe.maxQueue = Math.max(pipe.maxQueue, queue.length);
+      while (queue.length > 4) {
+        queue.shift().close();
+        pipe.pacerDropped++;
+      }
+      pump().catch(() => {});
+    },
+    clear() {
+      while (queue.length) queue.shift().close();
+    }
+  };
+}
+
+// The redraw runs in a worker so that a GPU stall blocks that thread, not this one: the pacer
+// lives here and can keep releasing frames on time. (A pacer on the stalled thread gained nothing.)
+const PIPELINE_WORKER = `
+let quality = { res: '1080', fps: 60 };
+function targetSize(w, h) {
+  const maxH = quality.res === 'native' ? h : Math.min(h, parseInt(quality.res, 10));
+  if (maxH >= h) return { w, h };
+  return { w: Math.round((w * maxH / h) / 2) * 2, h: Math.round(maxH / 2) * 2 };
+}
+self.onmessage = async (e) => {
+  if (e.data.quality) quality = e.data.quality;
+  if (!e.data.readable) return;
+  const reader = e.data.readable.getReader();
+  const canvas = new OffscreenCanvas(e.data.width || 1920, e.data.height || 1080);
+  const ctx = canvas.getContext('2d', { alpha: false });
+  ctx.imageSmoothingQuality = 'high';
+  let lastTs = -Infinity, lastArrival = 0;
+  let read = 0, bursts = 0, longGaps = 0, maxGap = 0;
+  try {
+    for (;;) {
+      const { value: frame, done } = await reader.read();
+      if (done) break;
+      read++;
+      const t0 = performance.now();
+      if (lastArrival) {
+        const gap = t0 - lastArrival;
+        if (gap < 8) bursts++;
+        if (gap > 100) longGaps++;
+        if (gap > maxGap) maxGap = gap;
+      }
+      lastArrival = t0;
+      // 15% slack so a 60fps source isn't halved by capture jitter
+      if (frame.timestamp - lastTs < (1e6 / quality.fps) * 0.85) { frame.close(); continue; }
+      lastTs = frame.timestamp;
+      const { w, h } = targetSize(frame.displayWidth, frame.displayHeight);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        ctx.imageSmoothingQuality = 'high';
+      }
+      ctx.drawImage(frame, 0, 0, w, h);
+      const srcW = frame.displayWidth, srcH = frame.displayHeight;
+      const out = new VideoFrame(canvas, { timestamp: frame.timestamp });
+      frame.close();
+      self.postMessage({ frame: out, read, bursts, longGaps, maxGap, drawMs: performance.now() - t0, srcW, srcH, outW: w, outH: h }, [out]);
+      read = 0; bursts = 0; longGaps = 0; maxGap = 0;
+    }
+    self.postMessage({ done: true });
+  } catch (err) {
+    self.postMessage({ done: true, error: err.message });
+  }
+};
+`;
 
 function gpuBackedTrack(source) {
   if (typeof MediaStreamTrackProcessor === 'undefined' || typeof MediaStreamTrackGenerator === 'undefined') {
@@ -549,50 +665,40 @@ function gpuBackedTrack(source) {
   generator.contentHint = 'motion';
   generator.sourceTrack = source;
 
-  const settings = source.getSettings();
-  const canvas = new OffscreenCanvas(settings.width || 1920, settings.height || 1080);
-  const ctx = canvas.getContext('2d', { alpha: false });
-  ctx.imageSmoothingQuality = 'high';
-  const reader = processor.readable.getReader();
   const writer = generator.writable.getWriter();
-  let lastTs = -Infinity;
+  const pacer = createPacer(writer);
+  const url = URL.createObjectURL(new Blob([PIPELINE_WORKER], { type: 'application/javascript' }));
+  const worker = new Worker(url);
+  URL.revokeObjectURL(url);
+  generator.pipelineWorker = worker;
 
-  (async () => {
-    try {
-      for (;;) {
-        const { value: frame, done } = await reader.read();
-        if (done) break;
-        pipe.inFrames++;
-        // 15% slack so a 60fps source isn't halved by capture jitter
-        if (frame.timestamp - lastTs < (1e6 / quality.fps) * 0.85) {
-          frame.close();
-          continue;
-        }
-        lastTs = frame.timestamp;
-        const t0 = performance.now();
-        const { w, h } = targetSize(frame.displayWidth, frame.displayHeight);
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width = w;
-          canvas.height = h;
-          ctx.imageSmoothingQuality = 'high';
-        }
-        ctx.drawImage(frame, 0, 0, w, h);
-        pipe.srcW = frame.displayWidth; pipe.srcH = frame.displayHeight;
-        pipe.outW = w; pipe.outH = h;
-        const out = new VideoFrame(canvas, { timestamp: frame.timestamp });
-        frame.close();
-        await writer.write(out);
-        pipe.busyMs += performance.now() - t0;
-        pipe.outFrames++;
-      }
-    } catch (err) {
-      if (generator.readyState === 'live') reportError('GPU frame pipeline failed: ' + err.message, err.stack);
-    } finally {
-      try { reader.releaseLock(); } catch {}
-      try { await writer.close(); } catch {}
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.frame) {
+      pipe.inFrames += m.read;
+      pipe.bursts += m.bursts;
+      pipe.longGaps += m.longGaps;
+      if (m.maxGap > pipe.maxGapMs) pipe.maxGapMs = m.maxGap;
+      pipe.busyMs += m.drawMs;
+      pipe.srcW = m.srcW; pipe.srcH = m.srcH;
+      pipe.outW = m.outW; pipe.outH = m.outH;
+      pacer.push(m.frame);
+      return;
     }
-  })();
+    if (m.error && generator.readyState === 'live') reportError('GPU frame pipeline failed: ' + m.error);
+    if (m.done) {
+      pacer.clear();
+      writer.close().catch(() => {});
+      worker.terminate();
+    }
+  };
+  worker.onerror = (e) => reportError('GPU frame pipeline worker error: ' + e.message);
 
+  const settings = source.getSettings();
+  worker.postMessage(
+    { readable: processor.readable, quality: { ...quality }, width: settings.width, height: settings.height },
+    [processor.readable]
+  );
   return generator;
 }
 
@@ -1106,8 +1212,16 @@ function pipelineRates() {
     outFps: +(outDelta / secs).toFixed(1),
     drawMs: outDelta ? +((pipe.busyMs - lastPipe.busyMs) / outDelta).toFixed(2) : null,
     src: `${pipe.srcW}x${pipe.srcH}`,
-    out: `${pipe.outW}x${pipe.outH}`
+    out: `${pipe.outW}x${pipe.outH}`,
+    // Frames that arrived under 8ms after the previous one, and arrival gaps over 100ms
+    bursts: pipe.bursts - lastPipe.bursts,
+    longGaps: pipe.longGaps - lastPipe.longGaps,
+    maxGapMs: Math.round(pipe.maxGapMs),
+    pacerDropped: pipe.pacerDropped - lastPipe.pacerDropped,
+    maxQueue: pipe.maxQueue
   };
+  pipe.maxGapMs = 0;
+  pipe.maxQueue = 0;
   lastPipe = { ...pipe, at: now };
   return rates;
 }
@@ -1169,7 +1283,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.1', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.2', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
