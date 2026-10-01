@@ -61,7 +61,9 @@ async function createWindow() {
       backgroundThrottling: false
     },
     backgroundColor: '#0a0a0f',
-    autoHideMenuBar: true
+    autoHideMenuBar: true,
+    // --hidden runs the app without a window, for automated checks that must not steal focus
+    show: !process.argv.includes('--hidden')
   });
 
   const sendFocus = () => {
