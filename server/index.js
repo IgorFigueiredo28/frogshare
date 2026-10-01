@@ -40,7 +40,13 @@ let turnCache = { servers: null, expires: 0 };
 async function getTurnServers() {
   if (turnCache.servers && Date.now() < turnCache.expires) return turnCache.servers;
 
-  const { CF_TURN_KEY_ID, CF_TURN_API_TOKEN, TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL } = process.env;
+  // Values pasted into a dashboard often carry stray whitespace
+  const env = (name) => (process.env[name] || '').trim();
+  const CF_TURN_KEY_ID = env('CF_TURN_KEY_ID');
+  const CF_TURN_API_TOKEN = env('CF_TURN_API_TOKEN');
+  const TURN_URLS = env('TURN_URLS');
+  const TURN_USERNAME = env('TURN_USERNAME');
+  const TURN_CREDENTIAL = env('TURN_CREDENTIAL');
   let servers = [];
 
   if (CF_TURN_KEY_ID && CF_TURN_API_TOKEN) {
@@ -52,7 +58,7 @@ async function getTurnServers() {
         body: JSON.stringify({ ttl: 86400 })
       }
     );
-    if (!resp.ok) throw new Error(`Cloudflare TURN ${resp.status}`);
+    if (!resp.ok) throw new Error(`Cloudflare respondeu ${resp.status}`);
     const data = await resp.json();
     const list = Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
     // Browsers time out on port-53 TURN URLs, which delays ICE gathering
@@ -63,19 +69,34 @@ async function getTurnServers() {
     servers = [{ urls: TURN_URLS.split(',').map(u => u.trim()), username: TURN_USERNAME, credential: TURN_CREDENTIAL }];
   }
 
-  turnCache = { servers, expires: Date.now() + 12 * 3600 * 1000 };
+  if (servers.length > 0) turnCache = { servers, expires: Date.now() + 12 * 3600 * 1000 };
   return servers;
+}
+
+// Which TURN variables are present, without revealing their values
+function turnConfigState() {
+  const has = (name) => !!(process.env[name] || '').trim();
+  if (has('CF_TURN_KEY_ID') || has('CF_TURN_API_TOKEN')) {
+    if (!has('CF_TURN_KEY_ID')) return 'falta CF_TURN_KEY_ID';
+    if (!has('CF_TURN_API_TOKEN')) return 'falta CF_TURN_API_TOKEN';
+    return 'cloudflare';
+  }
+  if (has('TURN_URLS')) return 'static';
+  return 'nao configurado';
 }
 
 app.get('/api/ice-servers', async (req, res) => {
   let turn = [];
+  let turnStatus = turnConfigState();
   try {
     turn = await getTurnServers();
+    if (turn.length > 0) turnStatus = 'ok';
   } catch (err) {
     console.error('TURN credentials failed:', err.message);
+    turnStatus = err.message;
   }
   res.set('Cache-Control', 'no-store');
-  res.json({ iceServers: [...STUN_SERVERS, ...turn], hasTurn: turn.length > 0 });
+  res.json({ iceServers: [...STUN_SERVERS, ...turn], hasTurn: turn.length > 0, turnStatus });
 });
 
 // Error logging proxy — clients POST here, server forwards to Supabase
