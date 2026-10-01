@@ -55,7 +55,8 @@ async function getTurnServers() {
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${CF_TURN_API_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ttl: 86400 })
+        // Short-lived so the monthly cap takes effect within hours of being reached
+        body: JSON.stringify({ ttl: 43200 })
       }
     );
     if (!resp.ok) throw new Error(`Cloudflare respondeu ${resp.status}`);
@@ -69,9 +70,76 @@ async function getTurnServers() {
     servers = [{ urls: TURN_URLS.split(',').map(u => u.trim()), username: TURN_USERNAME, credential: TURN_CREDENTIAL }];
   }
 
-  if (servers.length > 0) turnCache = { servers, expires: Date.now() + 12 * 3600 * 1000 };
+  if (servers.length > 0) turnCache = { servers, expires: Date.now() + 6 * 3600 * 1000 };
   return servers;
 }
+
+// ======== TURN relay budget ========
+// Cloudflare bills relayed traffic beyond 1,000 GB/month, so stop handing out TURN before that.
+// Hosts report the bytes they pushed through a relay; the running total lives in Supabase
+// because this process restarts whenever Render redeploys or sleeps.
+const TURN_CAP_BYTES = (Number(process.env.TURN_MONTHLY_CAP_GB) || 900) * 1e9;
+const relayUsage = { month: '', base: 0, session: 0, loaded: false, lastSave: 0 };
+const currentMonth = () => new Date().toISOString().slice(0, 7);
+
+function relayTotal() {
+  if (relayUsage.month !== currentMonth()) {
+    relayUsage.month = currentMonth();
+    relayUsage.base = 0;
+    relayUsage.session = 0;
+  }
+  return relayUsage.base + relayUsage.session;
+}
+
+function supabaseHeaders() {
+  return { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
+}
+
+async function loadRelayUsage() {
+  if (relayUsage.loaded || !SUPABASE_URL || !SUPABASE_KEY) return;
+  try {
+    const resp = await fetch(
+      `${SUPABASE_URL}/rest/v1/error_logs?source=eq.turn-usage&order=created_at.desc&limit=1&select=context`,
+      { headers: supabaseHeaders() }
+    );
+    if (!resp.ok) return;
+    const rows = await resp.json();
+    const ctx = rows[0]?.context;
+    relayTotal();
+    if (ctx?.month === relayUsage.month) relayUsage.base = Number(ctx.totalBytes) || 0;
+    relayUsage.loaded = true;
+  } catch {}
+}
+
+async function saveRelayUsage() {
+  // Saving before the stored total is loaded would overwrite it with a smaller number
+  if (!relayUsage.loaded || Date.now() - relayUsage.lastSave < 60000) return;
+  relayUsage.lastSave = Date.now();
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+      method: 'POST',
+      headers: { ...supabaseHeaders(), Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        source: 'turn-usage',
+        level: 'info',
+        message: 'relay',
+        context: { month: relayUsage.month, totalBytes: relayTotal() }
+      })
+    });
+  } catch {}
+}
+
+app.post('/api/relay-usage', async (req, res) => {
+  const bytes = Number(req.body?.bytes);
+  if (!Number.isFinite(bytes) || bytes <= 0 || bytes > 5e9) {
+    return res.status(400).json({ error: 'invalid bytes' });
+  }
+  await loadRelayUsage();
+  relayTotal();
+  relayUsage.session += bytes;
+  saveRelayUsage();
+  res.json({ ok: true });
+});
 
 // Which TURN variables are present, without revealing their values
 function turnConfigState() {
@@ -88,15 +156,27 @@ function turnConfigState() {
 app.get('/api/ice-servers', async (req, res) => {
   let turn = [];
   let turnStatus = turnConfigState();
-  try {
-    turn = await getTurnServers();
-    if (turn.length > 0) turnStatus = 'ok';
-  } catch (err) {
-    console.error('TURN credentials failed:', err.message);
-    turnStatus = err.message;
+  await loadRelayUsage();
+  const usedBytes = relayTotal();
+  if (usedBytes >= TURN_CAP_BYTES) {
+    turnStatus = 'limite mensal de relay atingido';
+  } else {
+    try {
+      turn = await getTurnServers();
+      if (turn.length > 0) turnStatus = 'ok';
+    } catch (err) {
+      console.error('TURN credentials failed:', err.message);
+      turnStatus = err.message;
+    }
   }
   res.set('Cache-Control', 'no-store');
-  res.json({ iceServers: [...STUN_SERVERS, ...turn], hasTurn: turn.length > 0, turnStatus });
+  res.json({
+    iceServers: [...STUN_SERVERS, ...turn],
+    hasTurn: turn.length > 0,
+    turnStatus,
+    relayUsedGb: +(usedBytes / 1e9).toFixed(2),
+    relayCapGb: TURN_CAP_BYTES / 1e9
+  });
 });
 
 // Error logging proxy — clients POST here, server forwards to Supabase

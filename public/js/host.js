@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.2.0',
+        app_version: '1.2.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -727,6 +727,7 @@ btnStop.addEventListener('click', pauseStreaming);
 async function pauseStreaming() {
   isStreaming = false;
   window.electronAPI.setStreamingPriority(false);
+  flushRelayUsage();
   panelSetup.insertBefore(qualitySection, btnStart);
 
   if (localStream) {
@@ -872,6 +873,15 @@ async function collectSenderStats() {
       for (const r of stats.values()) {
         if (r.type === 'outbound-rtp' && r.kind === 'video') {
           const pair = [...stats.values()].find(p => p.type === 'candidate-pair' && p.nominated);
+          // Each relayed hop (ours and/or the viewer's allocation) is traffic Cloudflare meters
+          const relayHops = pair
+            ? [pair.localCandidateId, pair.remoteCandidateId].filter(id => stats.get(id)?.candidateType === 'relay').length
+            : 0;
+          if (pair) {
+            const sent = pair.bytesSent || 0;
+            if (relayHops > 0) relayBytesPending += Math.max(0, sent - (pc.lastPairBytes || 0)) * relayHops;
+            pc.lastPairBytes = sent;
+          }
           samples.push({
             id: viewerId,
             viewer: viewerId.slice(0, 6),
@@ -884,7 +894,7 @@ async function collectSenderStats() {
             limit: r.qualityLimitationReason,
             encMs: r.framesEncoded ? +(1000 * r.totalEncodeTime / r.framesEncoded).toFixed(1) : null,
             rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
-            relay: pair ? stats.get(pair.localCandidateId)?.candidateType === 'relay' : null
+            relay: pair ? relayHops > 0 : null
           });
         }
       }
@@ -926,8 +936,22 @@ function startStatsUpdate() {
     if (statsTicks % 30 === 0) {
       const pipeline = pipelineRates();
       if (samples.length) reportQuality(samples, pipeline);
+      flushRelayUsage();
     }
   }, 2000);
+}
+
+// Feeds the server's monthly TURN cap so relayed traffic can't run past the free tier
+let relayBytesPending = 0;
+function flushRelayUsage() {
+  if (relayBytesPending <= 0) return;
+  const bytes = Math.round(relayBytesPending);
+  relayBytesPending = 0;
+  getSignalUrl().then(url => fetch(`${url}/api/relay-usage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bytes })
+  })).catch(() => { relayBytesPending += bytes; });
 }
 
 function reportQuality(samples, pipeline) {
@@ -947,7 +971,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.2.0', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.2.1', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
