@@ -115,9 +115,10 @@ async function loadRelayUsage() {
 async function saveRelayUsage() {
   // Saving before the stored total is loaded would overwrite it with a smaller number
   if (!relayUsage.loaded || Date.now() - relayUsage.lastSave < 60000) return;
+  const previousSave = relayUsage.lastSave;
   relayUsage.lastSave = Date.now();
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
       method: 'POST',
       headers: { ...supabaseHeaders(), Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -127,7 +128,11 @@ async function saveRelayUsage() {
         context: { month: relayUsage.month, totalBytes: relayTotal() }
       })
     });
-  } catch {}
+    if (!resp.ok) throw new Error(`status ${resp.status}`);
+  } catch {
+    // Let the next report retry instead of waiting out the throttle with a stale stored total
+    relayUsage.lastSave = previousSave;
+  }
 }
 
 app.post('/api/relay-usage', async (req, res) => {
@@ -196,6 +201,11 @@ function sfuCredentials() {
 async function sfuState() {
   if (!sfuCredentials()) return { enabled: false, reason: 'nao configurado' };
   await loadRelayUsage();
+  // The SFU carries every viewer's video, so never run it blind: without the stored monthly
+  // total a restart would forget what was already spent and let usage run past the cap.
+  if (SUPABASE_URL && SUPABASE_KEY && !relayUsage.loaded) {
+    return { enabled: false, reason: 'contador de uso indisponivel' };
+  }
   if (relayTotal() >= TURN_CAP_BYTES) return { enabled: false, reason: 'limite mensal atingido' };
   return { enabled: true, reason: 'ok' };
 }
