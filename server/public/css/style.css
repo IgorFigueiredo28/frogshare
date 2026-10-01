@@ -346,6 +346,25 @@ body {
   opacity: 1;
 }
 
+.stats-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.stats-overlay .bad { color: #ff8a80; }
+.stats-overlay .ok { color: #9be7a8; }
+
 /* Audio setup panel */
 .audio-setup {
   padding: 16px 20px;

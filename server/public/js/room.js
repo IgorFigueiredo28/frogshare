@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.4',
+        app_version: '1.2.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -143,6 +143,8 @@ socket.on('host-left', () => {
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
+  btnInfo.style.display = 'none';
+  setInfoOpen(false);
   volumeControl.style.display = 'none';
   if (pc) {
     pc.close();
@@ -156,6 +158,8 @@ socket.on('host-paused', () => {
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
+  btnInfo.style.display = 'none';
+  setInfoOpen(false);
   volumeControl.style.display = 'none';
   if (pc) {
     pc.close();
@@ -206,6 +210,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
     remoteVideo.style.display = 'block';
     placeholder.style.display = 'none';
     btnFullscreen.style.display = '';
+    btnInfo.style.display = '';
     volumeControl.style.display = '';
     if (isNewStream) applyInitialAudio();
 
@@ -283,6 +288,130 @@ document.addEventListener('fullscreenchange', () => {
 
 btnFullscreen.addEventListener('click', toggleFullscreen);
 videoArea.addEventListener('dblclick', toggleFullscreen);
+
+// ======== Stream info & viewer telemetry ========
+const btnInfo = document.getElementById('btn-info');
+const statsOverlay = document.getElementById('stats-overlay');
+let infoOpen = false;
+let prevVideo = null;
+let prevPc = null;
+let agg = null;
+
+function resetAgg() {
+  agg = { n: 0, fpsSum: 0, fpsMin: Infinity, freezes: 0, freezeMs: 0, lost: 0, packets: 0, kbpsSum: 0, jbSum: 0, last: null };
+}
+resetAgg();
+
+async function sampleInbound() {
+  if (!pc || pc.connectionState !== 'connected') return null;
+  const stats = await pc.getStats();
+  let v, pair;
+  for (const r of stats.values()) {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') v = r;
+    else if (r.type === 'candidate-pair' && r.nominated) pair = r;
+  }
+  if (!v) return null;
+  const p = prevPc === pc ? prevVideo : null;
+  prevVideo = v;
+  prevPc = pc;
+  if (!p) return null;
+  const dt = (v.timestamp - p.timestamp) / 1000;
+  const lost = Math.max(0, v.packetsLost - p.packetsLost);
+  const recv = Math.max(0, v.packetsReceived - p.packetsReceived);
+  const emitted = v.jitterBufferEmittedCount - p.jitterBufferEmittedCount;
+  const local = pair && stats.get(pair.localCandidateId);
+  const remote = pair && stats.get(pair.remoteCandidateId);
+  return {
+    res: `${v.frameWidth || 0}x${v.frameHeight || 0}`,
+    fps: v.framesPerSecond || 0,
+    kbps: dt > 0 ? Math.round((v.bytesReceived - p.bytesReceived) * 8 / dt / 1000) : 0,
+    lost,
+    packets: lost + recv,
+    freezes: Math.max(0, (v.freezeCount || 0) - (p.freezeCount || 0)),
+    freezeMs: Math.max(0, Math.round(((v.totalFreezesDuration || 0) - (p.totalFreezesDuration || 0)) * 1000)),
+    jbMs: emitted > 0 ? Math.round((v.jitterBufferDelay - p.jitterBufferDelay) / emitted * 1000) : null,
+    rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
+    codec: (stats.get(v.codecId)?.mimeType || '').replace('video/', ''),
+    decoder: v.decoderImplementation || '',
+    relay: local?.candidateType === 'relay' || remote?.candidateType === 'relay'
+  };
+}
+
+function renderOverlay(s) {
+  statsOverlay.replaceChildren();
+  const line = (text, cls) => {
+    const el = document.createElement('div');
+    el.textContent = text;
+    if (cls) el.className = cls;
+    statsOverlay.appendChild(el);
+  };
+  if (!s) { line('Coletando dados...'); return; }
+  const lossPct = s.packets ? (100 * s.lost / s.packets) : 0;
+  const delay = s.rttMs != null && s.jbMs != null ? Math.round(s.rttMs / 2 + s.jbMs) : null;
+  line(`Resolucao   ${s.res} @ ${s.fps} fps`, s.fps && s.fps < 24 ? 'bad' : null);
+  line(`Codec       ${s.codec}${s.decoder ? ` (${s.decoder})` : ''}`);
+  line(`Bitrate     ${(s.kbps / 1000).toFixed(1)} Mbps`);
+  line(`Perda       ${lossPct.toFixed(1)}%`, lossPct > 2 ? 'bad' : 'ok');
+  line(`Travadas    ${agg.freezes} (${(agg.freezeMs / 1000).toFixed(1)}s)`, agg.freezes ? 'bad' : 'ok');
+  if (delay != null) line(`Atraso      ~${delay} ms (rede ${s.rttMs} + buffer ${s.jbMs})`, delay > 250 ? 'bad' : null);
+  line(`Conexao     ${s.relay ? 'via relay (TURN)' : 'direta (P2P)'}`);
+}
+
+function setInfoOpen(open) {
+  infoOpen = open;
+  statsOverlay.style.display = open ? '' : 'none';
+  if (open) renderOverlay(agg.last);
+}
+btnInfo.addEventListener('click', () => setInfoOpen(!infoOpen));
+
+function flushTelemetry() {
+  if (!agg.n) return;
+  reportViewerStats({
+    avgFps: +(agg.fpsSum / agg.n).toFixed(1),
+    minFps: agg.fpsMin,
+    freezes: agg.freezes,
+    freezeMs: agg.freezeMs,
+    lossPct: agg.packets ? +(100 * agg.lost / agg.packets).toFixed(2) : 0,
+    avgKbps: Math.round(agg.kbpsSum / agg.n),
+    avgJbMs: Math.round(agg.jbSum / agg.n),
+    rttMs: agg.last?.rttMs,
+    res: agg.last?.res,
+    codec: agg.last?.codec,
+    decoder: agg.last?.decoder,
+    relay: agg.last?.relay,
+    visible: !document.hidden
+  });
+  resetAgg();
+}
+
+setInterval(async () => {
+  let s = null;
+  try { s = await sampleInbound(); } catch {}
+  if (s) {
+    agg.n++;
+    agg.fpsSum += s.fps;
+    agg.fpsMin = Math.min(agg.fpsMin, s.fps);
+    agg.freezes += s.freezes;
+    agg.freezeMs += s.freezeMs;
+    agg.lost += s.lost;
+    agg.packets += s.packets;
+    agg.kbpsSum += s.kbps;
+    agg.jbSum += s.jbMs || 0;
+    agg.last = s;
+    if (agg.n >= 60) flushTelemetry();
+  }
+  if (infoOpen) renderOverlay(s || agg.last);
+}, 1000);
+
+function reportViewerStats(context) {
+  try {
+    fetch('/api/errors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.2.0', user_agent: navigator.userAgent })
+    }).catch(() => {});
+  } catch {}
+}
 
 // ======== Volume ========
 const volumeControl = document.getElementById('volume-control');
@@ -397,6 +526,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowDown') setVolume(base - 0.05);
   else if (e.key === 'm' || e.key === 'M') toggleMute();
   else if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); return; }
+  else if (e.key === 'i' || e.key === 'I') { setInfoOpen(!infoOpen); return; }
   else return;
   e.preventDefault();
   showVolumeOsd();

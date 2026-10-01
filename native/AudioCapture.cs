@@ -22,6 +22,10 @@ class AudioCapture
     static volatile bool capturing = false;
 
     // ======== P/Invoke ========
+    [DllImport("gdi32.dll")]
+    static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr hProcess, int priorityClass);
+    [DllImport("gdi32.dll")]
+    static extern int D3DKMTGetProcessSchedulingPriorityClass(IntPtr hProcess, out int priorityClass);
     [DllImport("winmm.dll")]
     static extern uint timeBeginPeriod(uint uPeriod);
     [DllImport("ole32.dll")]
@@ -379,6 +383,32 @@ class AudioCapture
         }
     }
 
+    // Same approach as OBS: a full-screen game otherwise starves capture/encode of GPU time
+    static void SetGpuPriority(string[] args)
+    {
+        int cls = int.Parse(args[args.Length - 1]);
+        var results = new List<string>();
+        for (int i = 1; i < args.Length - 1; i++)
+        {
+            int pid = int.Parse(args[i]);
+            try
+            {
+                using (var p = Process.GetProcessById(pid))
+                {
+                    int status = D3DKMTSetProcessSchedulingPriorityClass(p.Handle, cls);
+                    int now;
+                    D3DKMTGetProcessSchedulingPriorityClass(p.Handle, out now);
+                    results.Add("{\"pid\":" + pid + ",\"status\":" + status + ",\"class\":" + now + "}");
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add("{\"pid\":" + pid + ",\"error\":\"" + Esc(ex.Message) + "\"}");
+            }
+        }
+        WriteJson("{\"gpuPriority\":[" + string.Join(",", results) + "]}");
+    }
+
     static void WriteJson(string json) { Console.Error.WriteLine(json); Console.Error.Flush(); }
     static string Esc(string s) { return s.Replace("\\", "\\\\").Replace("\"", "\\\""); }
 
@@ -389,6 +419,7 @@ class AudioCapture
         try
         {
             if (args[0] == "list") { ListAudioSessions(); return; }
+            if (args[0] == "gpu-priority" && args.Length > 2) { SetGpuPriority(args); return; }
 
             var stdinThread = new Thread(() => {
                 try { while (true) { string l = Console.In.ReadLine(); if (l == null || l.Trim() == "stop") { capturing = false; break; } } }

@@ -27,6 +27,7 @@
           <input type="range" id="volume-slider" min="0" max="100" step="1" value="100" aria-label="Volume">
           <span class="volume-value" id="volume-value">100%</span>
         </div>
+        <button id="btn-info" class="btn btn-small" style="display:none" title="Informacoes da transmissao (I)">Info</button>
         <button id="btn-fullscreen" class="btn btn-small" style="display:none">Tela Cheia</button>
       </div>
     </header>
@@ -37,6 +38,7 @@
           <p id="status-text">Aguardando host compartilhar a tela...</p>
         </div>
         <video id="remote-video" autoplay playsinline muted style="display:none"></video>
+        <div class="stats-overlay" id="stats-overlay" style="display:none"></div>
       </div>
     </main>
   </div>

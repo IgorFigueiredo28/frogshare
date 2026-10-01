@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, Tray, Menu } = require('electron');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 const { createServer } = require('./server');
 
@@ -21,7 +22,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.1.4'
+        app_version: '1.2.0'
       })
     }).catch(() => {});
   } catch {}
@@ -159,6 +160,8 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
 
     const proc = spawn(AUDIO_CAPTURE_EXE, args);
     audioCaptureProcess = proc;
+    // Audio glitches are far more noticeable than a dropped video frame
+    try { os.setPriority(proc.pid, os.constants.priority.PRIORITY_HIGH); } catch {}
 
     let started = false;
 
@@ -222,6 +225,28 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       if (!started) resolve({ error: 'Timeout starting capture' });
     }, 5000);
   });
+});
+
+// Desktop capture runs in the browser process and encoding in the GPU process; without a boost
+// a GPU-bound game starves both and the stream drops to ~30fps.
+function setStreamingPriority(on) {
+  const pids = app.getAppMetrics().map(m => m.pid);
+  const cpu = on ? os.constants.priority.PRIORITY_ABOVE_NORMAL : os.constants.priority.PRIORITY_NORMAL;
+  for (const pid of pids) {
+    try { os.setPriority(pid, cpu); } catch {}
+  }
+  const proc = spawn(AUDIO_CAPTURE_EXE, ['gpu-priority', ...pids.map(String), on ? '4' : '2']);
+  let out = '';
+  proc.stderr.on('data', d => { out += d; });
+  proc.on('close', () => {
+    if (on && !out.includes('"class":4')) reportMainError('GPU priority boost failed', null, { out: out.slice(0, 500) });
+  });
+  proc.on('error', () => {});
+}
+
+ipcMain.handle('set-streaming-priority', (event, on) => {
+  setStreamingPriority(!!on);
+  return true;
 });
 
 ipcMain.handle('stop-audio-capture', () => {

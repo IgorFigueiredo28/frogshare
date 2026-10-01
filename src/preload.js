@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopAudioCapture: () => ipcRenderer.invoke('stop-audio-capture'),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
   getSignalServer: () => ipcRenderer.invoke('get-signal-server'),
+  setStreamingPriority: (on) => ipcRenderer.invoke('set-streaming-priority', on),
 
   onAudioData: (callback) => {
     ipcRenderer.on('audio-data', (_, data) => callback(data));

@@ -186,6 +186,35 @@ h1 {
 
 .toggle-option input { display: none; }
 
+/* Quality presets */
+.quality-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.quality-row .audio-mode-toggle {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.quality-label {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.quality-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+#panel-streaming #quality-section {
+  margin-top: 16px;
+}
+
 /* Session list */
 .session-list {
   display: flex;

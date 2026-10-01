@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.1.4',
+        app_version: '1.2.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -134,7 +134,7 @@ function tuneAnswerSdp(sdp) {
     const m = l.match(/^a=fmtp:(\d+) (.*)$/);
     if (!m) return l;
     if (videoPts.has(m[1]) && !m[2].includes('x-google-start-bitrate')) {
-      return l + ';x-google-start-bitrate=4000;x-google-min-bitrate=1000;x-google-max-bitrate=12000';
+      return l + ';x-google-start-bitrate=4000;x-google-min-bitrate=1000;x-google-max-bitrate=20000';
     }
     if (opusPts.has(m[1]) && !m[2].includes('stereo=')) {
       return l + ';stereo=1;sprop-stereo=1;maxaveragebitrate=128000';
@@ -463,11 +463,53 @@ async function ensureRoom() {
   roomBar.style.display = '';
 }
 
+// ======== Quality presets ========
+const QUALITY_KEY = 'ss-quality';
+const quality = { res: '1080', fps: 60 };
+try { Object.assign(quality, JSON.parse(localStorage.getItem(QUALITY_KEY)) || {}); } catch {}
+
+function targetSize(w, h) {
+  const maxH = quality.res === 'native' ? h : Math.min(h, parseInt(quality.res, 10));
+  if (maxH >= h) return { w, h };
+  return { w: Math.round((w * maxH / h) / 2) * 2, h: Math.round(maxH / 2) * 2 };
+}
+
+// Bits per pixel for fast-moving game content on H264; at 30fps each frame needs more bits
+function presetBitrate() {
+  const { w, h } = targetSize(
+    pipe.srcW || Math.round(screen.width * devicePixelRatio),
+    pipe.srcH || Math.round(screen.height * devicePixelRatio)
+  );
+  const bpp = quality.fps > 30 ? 0.075 : 0.1;
+  return Math.round(Math.min(20e6, Math.max(2.5e6, w * h * quality.fps * bpp)));
+}
+
+const qualityHint = document.getElementById('quality-hint');
+const qualitySection = document.getElementById('quality-section');
+function renderQualityControls() {
+  document.querySelectorAll('input[name="q-res"]').forEach(r => { r.checked = r.value === quality.res; });
+  document.querySelectorAll('input[name="q-fps"]').forEach(r => { r.checked = Number(r.value) === quality.fps; });
+  const mbps = (presetBitrate() / 1e6).toFixed(0);
+  qualityHint.textContent = `ate ~${mbps} Mbps de upload por viewer`;
+}
+
+document.querySelectorAll('input[name="q-res"], input[name="q-fps"]').forEach(input => {
+  input.addEventListener('change', async () => {
+    if (input.name === 'q-res') quality.res = input.value;
+    else quality.fps = Number(input.value);
+    try { localStorage.setItem(QUALITY_KEY, JSON.stringify(quality)); } catch {}
+    const source = localStream?.getVideoTracks()[0]?.sourceTrack;
+    if (source) await source.applyConstraints({ frameRate: { ideal: quality.fps, max: quality.fps } }).catch(() => {});
+    renderQualityControls();
+    applySenderLimits();
+  });
+});
+
 // ======== Capture video (cursor hidden) ========
 async function captureVideo(sourceId) {
   await window.electronAPI.setCaptureSource(sourceId);
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { cursor: 'never', frameRate: { ideal: 60, max: 60 } },
+    video: { cursor: 'never', frameRate: { ideal: quality.fps, max: quality.fps } },
     audio: false
   });
   const source = stream.getVideoTracks()[0];
@@ -480,6 +522,9 @@ async function captureVideo(sourceId) {
 // so WebRTC silently falls back to OpenH264 (~50ms/frame at 1080p, stealing CPU from the game).
 // Redrawing each frame on a GPU canvas produces texture-backed frames that NVENC/AMF/QSV accept.
 // Stream-based (not requestAnimationFrame) so it keeps running while the window is minimized.
+// Downscaling and the fps cap happen here too, so the encoder never sees frames it would discard.
+const pipe = { inFrames: 0, outFrames: 0, busyMs: 0, srcW: 0, srcH: 0, outW: 0, outH: 0 };
+
 function gpuBackedTrack(source) {
   if (typeof MediaStreamTrackProcessor === 'undefined' || typeof MediaStreamTrackGenerator === 'undefined') {
     return source;
@@ -492,22 +537,38 @@ function gpuBackedTrack(source) {
   const settings = source.getSettings();
   const canvas = new OffscreenCanvas(settings.width || 1920, settings.height || 1080);
   const ctx = canvas.getContext('2d', { alpha: false });
+  ctx.imageSmoothingQuality = 'high';
   const reader = processor.readable.getReader();
   const writer = generator.writable.getWriter();
+  let lastTs = -Infinity;
 
   (async () => {
     try {
       for (;;) {
         const { value: frame, done } = await reader.read();
         if (done) break;
-        if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-          canvas.width = frame.displayWidth;
-          canvas.height = frame.displayHeight;
+        pipe.inFrames++;
+        // 15% slack so a 60fps source isn't halved by capture jitter
+        if (frame.timestamp - lastTs < (1e6 / quality.fps) * 0.85) {
+          frame.close();
+          continue;
         }
-        ctx.drawImage(frame, 0, 0);
+        lastTs = frame.timestamp;
+        const t0 = performance.now();
+        const { w, h } = targetSize(frame.displayWidth, frame.displayHeight);
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          ctx.imageSmoothingQuality = 'high';
+        }
+        ctx.drawImage(frame, 0, 0, w, h);
+        pipe.srcW = frame.displayWidth; pipe.srcH = frame.displayHeight;
+        pipe.outW = w; pipe.outH = h;
         const out = new VideoFrame(canvas, { timestamp: frame.timestamp });
         frame.close();
         await writer.write(out);
+        pipe.busyMs += performance.now() - t0;
+        pipe.outFrames++;
       }
     } catch (err) {
       if (generator.readyState === 'live') reportError('GPU frame pipeline failed: ' + err.message, err.stack);
@@ -572,6 +633,7 @@ btnStart.addEventListener('click', async () => {
     // 3. Create or reuse room
     await ensureRoom();
     isStreaming = true;
+    window.electronAPI.setStreamingPriority(true);
 
     // 4. If resuming, notify server — it re-sends viewer-joined for each viewer
     if (isResume) {
@@ -584,6 +646,7 @@ btnStart.addEventListener('click', async () => {
     roomCodeEl.textContent = roomId;
     panelSetup.style.display = 'none';
     panelStreaming.style.display = '';
+    panelStreaming.appendChild(qualitySection);
 
     startStatsUpdate();
 
@@ -606,6 +669,7 @@ async function createOfferForViewer(viewerId) {
   const pc = new RTCPeerConnection(iceConfig);
   pc.pendingIce = [];
   pc.sid = ++offerSeq;
+  pc.createdAt = performance.now();
   peerConnections.set(viewerId, pc);
 
   localStream.getTracks().forEach(track => {
@@ -619,8 +683,8 @@ async function createOfferForViewer(viewerId) {
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
       }
-      params.encodings[0].maxBitrate = 12000000;
-      params.encodings[0].maxFramerate = 60;
+      params.encodings[0].maxBitrate = viewerBitrateCap(viewerId);
+      params.encodings[0].maxFramerate = quality.fps;
       params.encodings[0].networkPriority = 'high';
       params.encodings[0].priority = 'high';
       // maintain-framerate collapses resolution under bandwidth pressure, which is what makes it look blocky
@@ -662,6 +726,8 @@ btnStop.addEventListener('click', pauseStreaming);
 
 async function pauseStreaming() {
   isStreaming = false;
+  window.electronAPI.setStreamingPriority(false);
+  panelSetup.insertBefore(qualitySection, btnStart);
 
   if (localStream) {
     localStream.getTracks().forEach(t => t.kind === 'video' ? stopVideoTrack(t) : t.stop());
@@ -712,60 +778,176 @@ btnCopyLink.addEventListener('click', async () => {
   navigator.clipboard.writeText(link).then(() => showToast('Link copiado!'));
 });
 
-// ======== Stats ========
-let statsInterval;
-function startStatsUpdate() {
-  clearInterval(statsInterval);
-  statsInterval = setInterval(async () => {
-    if (peerConnections.size === 0) {
-      streamStatsEl.textContent = localStream ? 'Transmitindo (aguardando viewers)' : '';
-      return;
-    }
-    const [, pc] = [...peerConnections.entries()][0];
-    if (!pc) return;
-    try {
-      const stats = await pc.getStats();
-      for (const report of stats.values()) {
-        if (report.type === 'outbound-rtp' && report.kind === 'video') {
-          const fps = report.framesPerSecond || '-';
-          const w = report.frameWidth || '-';
-          const h = report.frameHeight || '-';
-          const hw = report.powerEfficientEncoder ? 'GPU' : 'CPU';
-          streamStatsEl.textContent = `${w}x${h} @ ${fps}fps | ${hw} | ${peerConnections.size} viewer(s)`;
-          break;
-        }
-      }
-    } catch {}
-    if (++statsTicks % 30 === 0) reportQuality();
-  }, 2000);
+// ======== Upload sharing ========
+// Every viewer gets its own encode and its own copy of the upload. Measured: with two viewers
+// one held 11 Mbps while the other sat at 960x540/4 Mbps, summing to a steady ~16 Mbps.
+// A throttled viewer is either behind the host's saturated uplink (fixable by sharing evenly)
+// or behind its own slow downlink (sharing would only hurt the others). A 10s trial of an even
+// split tells them apart: if the throttled viewer climbs, keep sharing; if not, exclude it.
+const share = { mode: 'off', budget: Infinity, trialStart: 0, trialIds: [], excluded: new Map() };
+
+function isExcluded(viewerId) {
+  const until = share.excluded.get(viewerId);
+  if (until && until > Date.now()) return true;
+  share.excluded.delete(viewerId);
+  return false;
 }
 
+function viewerBitrateCap(viewerId) {
+  const preset = presetBitrate();
+  if (share.mode === 'off' || (viewerId && isExcluded(viewerId))) return preset;
+  const sharing = [...peerConnections.keys()].filter(id => !isExcluded(id)).length || 1;
+  return Math.round(Math.min(preset, share.budget / sharing));
+}
+
+function applySenderLimits() {
+  for (const [viewerId, pc] of peerConnections) {
+    const cap = viewerBitrateCap(viewerId);
+    const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+    if (!sender) continue;
+    const params = sender.getParameters();
+    if (!params.encodings?.length) continue;
+    if (params.encodings[0].maxBitrate === cap && params.encodings[0].maxFramerate === quality.fps) continue;
+    params.encodings[0].maxBitrate = cap;
+    params.encodings[0].maxFramerate = quality.fps;
+    sender.setParameters(params).catch(() => {});
+  }
+}
+
+function resetShare() {
+  share.mode = 'off';
+  share.budget = Infinity;
+  share.trialIds = [];
+}
+
+function updateUploadBudget(samples) {
+  const eligible = samples.filter(s => !isExcluded(s.id));
+  // A fresh connection is still ramping up bandwidth estimation, which looks like throttling
+  if (eligible.length < 2 || samples.some(s => s.ageMs < 10000)) {
+    if (eligible.length < 2) resetShare();
+    applySenderLimits();
+    return;
+  }
+  const limited = eligible.filter(s => s.targetBitrate < viewerBitrateCap(s.id) * 0.85);
+  const total = eligible.reduce((sum, s) => sum + s.targetBitrate, 0);
+
+  if (share.mode === 'off') {
+    if (limited.length > 0 && limited.length < eligible.length) {
+      share.mode = 'trial';
+      share.budget = total;
+      share.trialStart = Date.now();
+      share.trialIds = limited.map(s => s.id);
+    }
+  } else if (share.mode === 'trial') {
+    if (Date.now() - share.trialStart >= 10000) {
+      const stillLow = eligible.filter(s => share.trialIds.includes(s.id) && s.targetBitrate < viewerBitrateCap(s.id) * 0.85);
+      if (stillLow.length === 0) {
+        share.mode = 'on';
+      } else {
+        for (const s of stillLow) share.excluded.set(s.id, Date.now() + 300000);
+        resetShare();
+      }
+    }
+  } else if (limited.length > 0) {
+    // Someone is below its share again: the uplink is full at the current total
+    share.budget = total;
+  } else {
+    // Probe back up slowly so a temporary dip doesn't cap the stream forever
+    share.budget *= 1.05;
+    if (share.budget > presetBitrate() * eligible.length * 1.2) resetShare();
+  }
+  applySenderLimits();
+}
+
+// ======== Stats ========
+let statsInterval;
 let statsTicks = 0;
-async function reportQuality() {
-  const viewers = [];
+let lastPipe = { ...pipe, at: performance.now() };
+
+async function collectSenderStats() {
+  const samples = [];
   for (const [viewerId, pc] of peerConnections) {
     try {
       const stats = await pc.getStats();
       for (const r of stats.values()) {
         if (r.type === 'outbound-rtp' && r.kind === 'video') {
-          viewers.push({
+          const pair = [...stats.values()].find(p => p.type === 'candidate-pair' && p.nominated);
+          samples.push({
+            id: viewerId,
             viewer: viewerId.slice(0, 6),
+            ageMs: Math.round(performance.now() - (pc.createdAt || 0)),
             enc: r.encoderImplementation,
-            fps: r.framesPerSecond,
-            res: `${r.frameWidth}x${r.frameHeight}`,
-            kbps: Math.round((r.targetBitrate || 0) / 1000),
+            gpu: !!r.powerEfficientEncoder,
+            fps: r.framesPerSecond || 0,
+            res: `${r.frameWidth || 0}x${r.frameHeight || 0}`,
+            targetBitrate: r.targetBitrate || 0,
             limit: r.qualityLimitationReason,
-            encMs: r.framesEncoded ? +(1000 * r.totalEncodeTime / r.framesEncoded).toFixed(1) : null
+            encMs: r.framesEncoded ? +(1000 * r.totalEncodeTime / r.framesEncoded).toFixed(1) : null,
+            rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
+            relay: pair ? stats.get(pair.localCandidateId)?.candidateType === 'relay' : null
           });
         }
       }
     } catch {}
   }
-  if (viewers.length === 0) return;
+  return samples;
+}
+
+function pipelineRates() {
+  const now = performance.now();
+  const secs = (now - lastPipe.at) / 1000 || 1;
+  const outDelta = pipe.outFrames - lastPipe.outFrames;
+  const rates = {
+    srcFps: +((pipe.inFrames - lastPipe.inFrames) / secs).toFixed(1),
+    outFps: +(outDelta / secs).toFixed(1),
+    drawMs: outDelta ? +((pipe.busyMs - lastPipe.busyMs) / outDelta).toFixed(2) : null,
+    src: `${pipe.srcW}x${pipe.srcH}`,
+    out: `${pipe.outW}x${pipe.outH}`
+  };
+  lastPipe = { ...pipe, at: now };
+  return rates;
+}
+
+function startStatsUpdate() {
+  clearInterval(statsInterval);
+  lastPipe = { ...pipe, at: performance.now() };
+  statsInterval = setInterval(async () => {
+    statsTicks++;
+    const samples = await collectSenderStats();
+    if (samples.length === 0) {
+      streamStatsEl.textContent = localStream ? 'Transmitindo (aguardando viewers)' : '';
+    } else {
+      const s = samples[0];
+      const kbps = samples.map(x => (x.targetBitrate / 1e6).toFixed(1)).join('/');
+      streamStatsEl.textContent =
+        `${s.res} @ ${s.fps}fps | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${samples.length} viewer(s)`;
+    }
+    updateUploadBudget(samples);
+    if (statsTicks % 30 === 0) {
+      const pipeline = pipelineRates();
+      if (samples.length) reportQuality(samples, pipeline);
+    }
+  }, 2000);
+}
+
+function reportQuality(samples, pipeline) {
+  const viewers = samples.map(({ id, targetBitrate, ageMs, ...rest }) => ({
+    ...rest,
+    kbps: Math.round(targetBitrate / 1000),
+    capKbps: Math.round(viewerBitrateCap(id) / 1000),
+    excluded: isExcluded(id)
+  }));
+  const context = {
+    viewers,
+    pipeline,
+    preset: `${quality.res}p${quality.fps}`,
+    share: share.mode,
+    budgetKbps: share.budget === Infinity ? null : Math.round(share.budget / 1000)
+  };
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context: { viewers }, room_id: roomId, app_version: '1.1.4', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.2.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -951,6 +1133,7 @@ btnRefreshAudio.addEventListener('click', loadAudioSessions);
 // ======== Init ========
 loadSources();
 loadAudioSessions();
+renderQualityControls();
 
 // Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start
 getSignalUrl().then(url => {
