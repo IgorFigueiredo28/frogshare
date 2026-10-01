@@ -11,7 +11,8 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '16kb' }));
+// SDP bodies for the SFU routes run to several KB
+app.use(express.json({ limit: '64kb' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
@@ -179,6 +180,64 @@ app.get('/api/ice-servers', async (req, res) => {
   });
 });
 
+// ======== SFU (Cloudflare Realtime) ========
+// With 3+ viewers the host publishes once to the SFU instead of encoding and uploading a copy
+// per viewer. The app secret never leaves this server; clients go through these routes.
+// SFU egress shares the TURN free tier, so it is gated by the same monthly cap.
+const SFU_BASE = 'https://rtc.live.cloudflare.com/v1/apps';
+const SFU_ID_RE = /^[a-f0-9]{16,64}$/i;
+
+function sfuCredentials() {
+  const appId = (process.env.CF_SFU_APP_ID || '').trim();
+  const secret = (process.env.CF_SFU_APP_SECRET || '').trim();
+  return appId && secret ? { appId, secret } : null;
+}
+
+async function sfuState() {
+  if (!sfuCredentials()) return { enabled: false, reason: 'nao configurado' };
+  await loadRelayUsage();
+  if (relayTotal() >= TURN_CAP_BYTES) return { enabled: false, reason: 'limite mensal atingido' };
+  return { enabled: true, reason: 'ok' };
+}
+
+async function sfuProxy(req, res, method, path, body) {
+  const state = await sfuState();
+  if (!state.enabled) return res.status(503).json({ errorDescription: state.reason });
+  // Only rooms that exist on this server may spend the SFU quota
+  const roomId = String(req.body?.roomId || req.query.roomId || '');
+  if (!rooms.has(roomId)) return res.status(403).json({ errorDescription: 'sala invalida' });
+  const { appId, secret } = sfuCredentials();
+  try {
+    const resp = await fetch(`${SFU_BASE}/${appId}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await resp.text();
+    res.status(resp.status).type('application/json').send(text || '{}');
+  } catch (err) {
+    res.status(502).json({ errorDescription: 'SFU inacessivel: ' + err.message });
+  }
+}
+
+app.get('/api/sfu/status', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await sfuState());
+});
+
+app.post('/api/sfu/sessions', (req, res) => sfuProxy(req, res, 'POST', '/sessions/new'));
+
+app.post('/api/sfu/sessions/:sid/tracks', (req, res) => {
+  if (!SFU_ID_RE.test(req.params.sid)) return res.status(400).json({ errorDescription: 'sessao invalida' });
+  const { sessionDescription, tracks } = req.body || {};
+  sfuProxy(req, res, 'POST', `/sessions/${req.params.sid}/tracks/new`, { sessionDescription, tracks });
+});
+
+app.put('/api/sfu/sessions/:sid/renegotiate', (req, res) => {
+  if (!SFU_ID_RE.test(req.params.sid)) return res.status(400).json({ errorDescription: 'sessao invalida' });
+  sfuProxy(req, res, 'PUT', `/sessions/${req.params.sid}/renegotiate`, { sessionDescription: req.body?.sessionDescription });
+});
+
 // Error logging proxy — clients POST here, server forwards to Supabase
 app.post('/api/errors', async (req, res) => {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -253,6 +312,7 @@ io.on('connection', (socket) => {
       if (room.host) {
         io.to(room.host).emit('viewer-joined', { viewerId: socket.id });
       }
+      if (room.sfu) socket.emit('sfu-start', room.sfu);
     }
 
     io.to(roomId).emit('room-update', {
@@ -273,8 +333,34 @@ io.on('connection', (socket) => {
     io.to(to).emit('ice-candidate', { from: socket.id, candidate, sid });
   });
 
+  // Host switched the room to the SFU: viewers pull the published tracks instead of a P2P offer
+  socket.on('sfu-start', ({ sessionId, tracks }) => {
+    if (!currentRoom || role !== 'host') return;
+    const room = rooms.get(currentRoom);
+    if (!room || !SFU_ID_RE.test(String(sessionId)) || !Array.isArray(tracks)) return;
+    room.sfu = { sessionId, tracks: tracks.slice(0, 4).map(t => String(t).slice(0, 32)) };
+    socket.to(currentRoom).emit('sfu-start', room.sfu);
+  });
+
+  socket.on('sfu-stop', () => {
+    if (!currentRoom || role !== 'host') return;
+    const room = rooms.get(currentRoom);
+    if (!room || !room.sfu) return;
+    room.sfu = null;
+    socket.to(currentRoom).emit('sfu-stop');
+  });
+
+  // A viewer that can't reach the SFU asks the host for a direct connection instead
+  socket.on('sfu-fallback', () => {
+    if (!currentRoom || role !== 'viewer') return;
+    const room = rooms.get(currentRoom);
+    if (room?.host) io.to(room.host).emit('viewer-needs-p2p', { viewerId: socket.id });
+  });
+
   socket.on('host-pause', () => {
     if (!currentRoom || role !== 'host') return;
+    const room = rooms.get(currentRoom);
+    if (room) room.sfu = null;
     socket.to(currentRoom).emit('host-paused');
   });
 
@@ -297,6 +383,7 @@ io.on('connection', (socket) => {
       // A reconnected host may already own the room under a new socket id
       if (room.host === socket.id) {
         room.host = null;
+        room.sfu = null;
         socket.to(currentRoom).emit('host-left');
       }
     } else {

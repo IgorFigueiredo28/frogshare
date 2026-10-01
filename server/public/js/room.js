@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.2.1',
+        app_version: '1.3.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -175,6 +175,121 @@ function requestNewOffer(message) {
   socket.emit('join-room', { roomId, asHost: false });
 }
 
+function showStream(stream, peer) {
+  const isNewStream = remoteVideo.srcObject !== stream;
+  remoteVideo.srcObject = stream;
+  remoteVideo.style.display = 'block';
+  placeholder.style.display = 'none';
+  btnFullscreen.style.display = '';
+  btnInfo.style.display = '';
+  volumeControl.style.display = '';
+  if (isNewStream) applyInitialAudio();
+
+  for (const receiver of peer.getReceivers()) {
+    if (receiver.jitterBufferTarget !== undefined) {
+      receiver.jitterBufferTarget = 0;
+    }
+  }
+}
+
+// ======== SFU mode ========
+// With 3+ viewers the host publishes once to a media server and everyone pulls from it.
+let sfuToken = 0;
+
+async function sfuFetch(method, path, body) {
+  const res = await fetch(`/api/sfu${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomId, ...body })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.errorCode) throw new Error(data.errorDescription || data.errorCode || `SFU HTTP ${res.status}`);
+  return data;
+}
+
+function waitConnected(peer, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    const check = () => {
+      if (peer.connectionState === 'connected') { clearTimeout(timer); resolve(); }
+      else if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+        clearTimeout(timer);
+        reject(new Error(peer.connectionState));
+      }
+    };
+    peer.addEventListener('connectionstatechange', check);
+    check();
+  });
+}
+
+socket.on('sfu-start', async ({ sessionId, tracks }) => {
+  const myToken = ++sfuToken;
+  offerToken++;
+  hostPaused = false;
+  let sfuPc = null;
+  try {
+    const iceConfig = await getIceConfig();
+    const session = await sfuFetch('POST', '/sessions');
+    if (myToken !== sfuToken) return;
+
+    sfuPc = new RTCPeerConnection({ ...iceConfig, bundlePolicy: 'max-bundle' });
+    sfuPc.isSfu = true;
+    sfuPc.pendingIce = [];
+    const stream = new MediaStream();
+    sfuPc.ontrack = (e) => {
+      stream.addTrack(e.track);
+      if (pc === sfuPc) showStream(stream, sfuPc);
+    };
+
+    const pulled = await sfuFetch('POST', `/sessions/${session.sessionId}/tracks`, {
+      tracks: tracks.map(trackName => ({ location: 'remote', sessionId, trackName }))
+    });
+    const ok = (pulled.tracks || []).filter(t => !t.errorCode);
+    if (ok.length === 0) throw new Error(pulled.tracks?.[0]?.errorDescription || 'no tracks');
+    if (pulled.requiresImmediateRenegotiation) {
+      await sfuPc.setRemoteDescription(pulled.sessionDescription);
+      const answer = await sfuPc.createAnswer();
+      await sfuPc.setLocalDescription(answer);
+      await sfuFetch('PUT', `/sessions/${session.sessionId}/renegotiate`, {
+        sessionDescription: { type: 'answer', sdp: answer.sdp }
+      });
+    }
+    await waitConnected(sfuPc, 10000);
+    if (myToken !== sfuToken) { sfuPc.close(); return; }
+
+    // The previous direct connection kept playing until now, so the swap has no black gap
+    const previous = pc;
+    pc = sfuPc;
+    if (previous) { try { previous.close(); } catch {} }
+    statusText.textContent = '';
+    if (stream.getTracks().length) showStream(stream, sfuPc);
+
+    sfuPc.onconnectionstatechange = () => {
+      if (pc !== sfuPc || hostPaused) return;
+      const state = sfuPc.connectionState;
+      if (state === 'failed') {
+        reportError('SFU connection failed', null, { sessionId });
+        requestNewOffer('Conexao perdida. Reconectando...');
+      } else if (state === 'disconnected') {
+        setTimeout(() => {
+          if (pc === sfuPc && sfuPc.connectionState === 'disconnected') requestNewOffer('Reconectando...');
+        }, 3000);
+      }
+    };
+  } catch (err) {
+    if (sfuPc) sfuPc.close();
+    if (myToken !== sfuToken) return;
+    reportError('SFU pull failed: ' + err.message, err.stack, { sessionId });
+    // Ask the host for a direct connection instead; the 'offer' handler takes it from there
+    socket.emit('sfu-fallback');
+  }
+});
+
+socket.on('sfu-stop', () => {
+  sfuToken++;
+  if (pc && pc.isSfu) requestNewOffer('Reconectando...');
+});
+
 // Candidates that arrive while the offer handler is still awaiting the ICE config
 let earlyIce = [];
 let offerToken = 0;
@@ -186,6 +301,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
 
   hostPaused = false;
   pc = null;
+  sfuToken++;
   const myToken = ++offerToken;
   const iceConfig = await getIceConfig();
   if (myToken !== offerToken) return;
@@ -204,23 +320,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
     }
   }, 10000);
 
-  pc.ontrack = (e) => {
-    const isNewStream = remoteVideo.srcObject !== e.streams[0];
-    remoteVideo.srcObject = e.streams[0];
-    remoteVideo.style.display = 'block';
-    placeholder.style.display = 'none';
-    btnFullscreen.style.display = '';
-    btnInfo.style.display = '';
-    volumeControl.style.display = '';
-    if (isNewStream) applyInitialAudio();
-
-    const receivers = thisPc.getReceivers();
-    for (const receiver of receivers) {
-      if (receiver.jitterBufferTarget !== undefined) {
-        receiver.jitterBufferTarget = 0;
-      }
-    }
-  };
+  pc.ontrack = (e) => showStream(e.streams[0], thisPc);
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
@@ -333,7 +433,8 @@ async function sampleInbound() {
     rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
     codec: (stats.get(v.codecId)?.mimeType || '').replace('video/', ''),
     decoder: v.decoderImplementation || '',
-    relay: local?.candidateType === 'relay' || remote?.candidateType === 'relay'
+    relay: local?.candidateType === 'relay' || remote?.candidateType === 'relay',
+    sfu: !!pc.isSfu
   };
 }
 
@@ -354,7 +455,7 @@ function renderOverlay(s) {
   line(`Perda       ${lossPct.toFixed(1)}%`, lossPct > 2 ? 'bad' : 'ok');
   line(`Travadas    ${agg.freezes} (${(agg.freezeMs / 1000).toFixed(1)}s)`, agg.freezes ? 'bad' : 'ok');
   if (delay != null) line(`Atraso      ~${delay} ms (rede ${s.rttMs} + buffer ${s.jbMs})`, delay > 250 ? 'bad' : null);
-  line(`Conexao     ${s.relay ? 'via relay (TURN)' : 'direta (P2P)'}`);
+  line(`Conexao     ${s.sfu ? 'servidor (SFU)' : s.relay ? 'via relay (TURN)' : 'direta (P2P)'}`);
 }
 
 function setInfoOpen(open) {
@@ -379,6 +480,7 @@ function flushTelemetry() {
     codec: agg.last?.codec,
     decoder: agg.last?.decoder,
     relay: agg.last?.relay,
+    sfu: agg.last?.sfu,
     visible: !document.hidden
   });
   resetAgg();
@@ -408,7 +510,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.2.1', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.0', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

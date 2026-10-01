@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.2.1',
+        app_version: '1.3.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -419,12 +419,26 @@ async function ensureRoom() {
   socket = io(signalServer);
   socket.on('connect', () => {
     socket.emit('join-room', { roomId, asHost: true });
+    // The server forgets the SFU session when the host socket drops
+    if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
   });
 
   socket.on('viewer-joined', async ({ viewerId }) => {
-    if (isStreaming && localStream) {
+    // In SFU mode the server points the viewer at the published tracks instead
+    if (isStreaming && localStream && !sfu.active) {
       await createOfferForViewer(viewerId);
     }
+  });
+
+  socket.on('viewer-needs-p2p', async ({ viewerId }) => {
+    if (!isStreaming || !localStream) return;
+    // Its direct connection from before the switch may still be live: keep it rather than renegotiate
+    const existing = peerConnections.get(viewerId);
+    if (existing && existing.connectionState === 'connected') {
+      existing.keepDirect = true;
+      return;
+    }
+    await createOfferForViewer(viewerId);
   });
 
   socket.on('viewer-left', ({ viewerId }) => {
@@ -455,6 +469,7 @@ async function ensureRoom() {
   });
 
   socket.on('room-update', ({ viewerCount: count }) => {
+    roomViewerCount = count;
     viewerCountEl.textContent = `${count} assistindo`;
     viewerCountBar.textContent = `${count} assistindo`;
   });
@@ -659,6 +674,27 @@ btnStart.addEventListener('click', async () => {
 });
 
 // ======== WebRTC ========
+async function configureVideoSender(pc, maxBitrate, label) {
+  const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+  if (!videoSender) return;
+  try {
+    const params = videoSender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) {
+      params.encodings = [{}];
+    }
+    params.encodings[0].maxBitrate = maxBitrate;
+    params.encodings[0].maxFramerate = quality.fps;
+    params.encodings[0].networkPriority = 'high';
+    params.encodings[0].priority = 'high';
+    // maintain-framerate collapses resolution under bandwidth pressure, which is what makes it look blocky
+    params.degradationPreference = 'balanced';
+    await videoSender.setParameters(params);
+  } catch (err) {
+    console.warn('setParameters failed, using defaults', err);
+    reportError('setParameters failed: ' + err.message, err.stack, { viewerId: label });
+  }
+}
+
 async function createOfferForViewer(viewerId) {
   const existing = peerConnections.get(viewerId);
   if (existing) existing.close();
@@ -676,25 +712,7 @@ async function createOfferForViewer(viewerId) {
     pc.addTrack(track, localStream);
   });
 
-  const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
-  if (videoSender) {
-    try {
-      const params = videoSender.getParameters();
-      if (!params.encodings || params.encodings.length === 0) {
-        params.encodings = [{}];
-      }
-      params.encodings[0].maxBitrate = viewerBitrateCap(viewerId);
-      params.encodings[0].maxFramerate = quality.fps;
-      params.encodings[0].networkPriority = 'high';
-      params.encodings[0].priority = 'high';
-      // maintain-framerate collapses resolution under bandwidth pressure, which is what makes it look blocky
-      params.degradationPreference = 'balanced';
-      await videoSender.setParameters(params);
-    } catch (err) {
-      console.warn('setParameters failed, using defaults', err);
-      reportError('setParameters failed: ' + err.message, err.stack, { viewerId });
-    }
-  }
+  await configureVideoSender(pc, viewerBitrateCap(viewerId), viewerId);
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
@@ -751,6 +769,8 @@ async function pauseStreaming() {
     pc.close();
   }
   peerConnections.clear();
+  // 'host-pause' below already tells the server and viewers the stream is gone
+  stopSfu(false);
 
   if (socket) {
     socket.emit('host-pause');
@@ -779,6 +799,148 @@ btnCopyLink.addEventListener('click', async () => {
   navigator.clipboard.writeText(link).then(() => showToast('Link copiado!'));
 });
 
+// ======== SFU mode ========
+// P2P costs one encode and one upload per viewer. From 3 viewers on, publish once to the SFU
+// and let it fan out; with 1-2 viewers stay direct, which is free and has the lowest latency.
+const SFU_MIN_VIEWERS = 3;
+const sfu = {
+  active: false, starting: false, pc: null, sessionId: null, tracks: [],
+  cooldownUntil: 0, lowSince: 0, enabled: false, checkedAt: 0
+};
+let roomViewerCount = 0;
+
+function sendingPcs() {
+  return sfu.pc ? [...peerConnections.values(), sfu.pc] : [...peerConnections.values()];
+}
+
+async function sfuFetch(method, path, body) {
+  const url = await getSignalUrl();
+  const res = await fetch(`${url}/api/sfu${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomId, ...body })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.errorCode) throw new Error(data.errorDescription || data.errorCode || `SFU HTTP ${res.status}`);
+  return data;
+}
+
+async function refreshSfuEnabled() {
+  if (Date.now() - sfu.checkedAt < 60000) return sfu.enabled;
+  sfu.checkedAt = Date.now();
+  try {
+    const url = await getSignalUrl();
+    sfu.enabled = (await (await fetch(`${url}/api/sfu/status`)).json()).enabled === true;
+  } catch {
+    sfu.enabled = false;
+  }
+  return sfu.enabled;
+}
+
+function waitConnected(pc, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('SFU connection timeout')), timeoutMs);
+    const check = () => {
+      if (pc.connectionState === 'connected') { clearTimeout(timer); resolve(); }
+      else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        clearTimeout(timer);
+        reject(new Error('SFU connection ' + pc.connectionState));
+      }
+    };
+    pc.addEventListener('connectionstatechange', check);
+    check();
+  });
+}
+
+async function startSfu() {
+  if (sfu.active || sfu.starting || !localStream) return;
+  sfu.starting = true;
+  let pc;
+  try {
+    const { sessionId } = await sfuFetch('POST', '/sessions');
+    const iceConfig = await getIceConfig();
+    pc = new RTCPeerConnection({ ...iceConfig, bundlePolicy: 'max-bundle' });
+    const published = localStream.getTracks().map(track => ({
+      transceiver: pc.addTransceiver(track, { direction: 'sendonly' }),
+      trackName: track.kind
+    }));
+    await configureVideoSender(pc, presetBitrate(), 'sfu');
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription({ type: 'offer', sdp: preferH264(offer.sdp) });
+    const data = await sfuFetch('POST', `/sessions/${sessionId}/tracks`, {
+      sessionDescription: { type: 'offer', sdp: pc.localDescription.sdp },
+      tracks: published.map(p => ({ location: 'local', mid: p.transceiver.mid, trackName: p.trackName }))
+    });
+    const failed = (data.tracks || []).find(t => t.errorCode);
+    if (failed) throw new Error(failed.errorDescription || failed.errorCode);
+    await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswerSdp(preferH264(data.sessionDescription.sdp)) });
+    await waitConnected(pc, 10000);
+    if (!isStreaming || !localStream) throw new Error('stream stopped during SFU start');
+
+    sfu.pc = pc;
+    sfu.sessionId = sessionId;
+    sfu.tracks = published.map(p => p.trackName);
+    sfu.active = true;
+    sfu.lowSince = 0;
+    pc.addEventListener('connectionstatechange', () => {
+      if (sfu.pc === pc && pc.connectionState === 'failed') {
+        reportError('SFU connection failed', null, { sessionId });
+        sfu.cooldownUntil = Date.now() + 300000;
+        stopSfu();
+      }
+    });
+    socket.emit('sfu-start', { sessionId, tracks: sfu.tracks });
+
+    // Viewers swap over on their own; drop the direct connections they no longer use.
+    // A viewer that fell back to P2P gets a fresh entry, which the identity check spares.
+    const previous = [...peerConnections];
+    setTimeout(() => {
+      for (const [id, old] of previous) {
+        if (sfu.active && !old.keepDirect && peerConnections.get(id) === old) {
+          old.close();
+          peerConnections.delete(id);
+        }
+      }
+    }, 6000);
+  } catch (err) {
+    if (pc) pc.close();
+    sfu.cooldownUntil = Date.now() + 300000;
+    reportError('SFU start failed: ' + err.message, err.stack, { viewers: roomViewerCount });
+  } finally {
+    sfu.starting = false;
+  }
+}
+
+// Viewers answer 'sfu-stop' by re-joining, which brings back one P2P offer each
+function stopSfu(notify = true) {
+  const pc = sfu.pc;
+  if (!pc && !sfu.active) return;
+  sfu.active = false;
+  sfu.pc = null;
+  sfu.sessionId = null;
+  sfu.tracks = [];
+  sfu.lowSince = 0;
+  if (notify && socket) socket.emit('sfu-stop');
+  if (pc) pc.close();
+}
+
+async function updateSfuMode() {
+  if (!isStreaming || !localStream) return;
+  if (sfu.active) {
+    if (!(await refreshSfuEnabled())) { stopSfu(); return; }
+    if (roomViewerCount < SFU_MIN_VIEWERS) {
+      // Wait out someone refreshing the page before paying for another switch
+      if (!sfu.lowSince) sfu.lowSince = Date.now();
+      else if (Date.now() - sfu.lowSince > 30000) stopSfu();
+    } else {
+      sfu.lowSince = 0;
+    }
+  } else if (!sfu.starting && roomViewerCount >= SFU_MIN_VIEWERS && Date.now() > sfu.cooldownUntil) {
+    if (await refreshSfuEnabled()) startSfu();
+  }
+}
+
 // ======== Upload sharing ========
 // Every viewer gets its own encode and its own copy of the upload. Measured: with two viewers
 // one held 11 Mbps while the other sat at 960x540/4 Mbps, summing to a steady ~16 Mbps.
@@ -802,8 +964,11 @@ function viewerBitrateCap(viewerId) {
 }
 
 function applySenderLimits() {
-  for (const [viewerId, pc] of peerConnections) {
-    const cap = viewerBitrateCap(viewerId);
+  const entries = [...peerConnections];
+  if (sfu.pc) entries.push([null, sfu.pc]);
+  for (const [viewerId, pc] of entries) {
+    // The SFU link carries the one copy everybody watches, so it always gets the full preset
+    const cap = pc === sfu.pc ? presetBitrate() : viewerBitrateCap(viewerId);
     const sender = pc.getSenders().find(s => s.track?.kind === 'video');
     if (!sender) continue;
     const params = sender.getParameters();
@@ -867,7 +1032,10 @@ let lastPipe = { ...pipe, at: performance.now() };
 
 async function collectSenderStats() {
   const samples = [];
-  for (const [viewerId, pc] of peerConnections) {
+  const entries = [...peerConnections];
+  if (sfu.active && sfu.pc) entries.push(['sfu', sfu.pc]);
+  for (const [viewerId, pc] of entries) {
+    const isSfu = pc === sfu.pc;
     try {
       const stats = await pc.getStats();
       for (const r of stats.values()) {
@@ -877,13 +1045,16 @@ async function collectSenderStats() {
           const relayHops = pair
             ? [pair.localCandidateId, pair.remoteCandidateId].filter(id => stats.get(id)?.candidateType === 'relay').length
             : 0;
+          // The SFU bills what it sends out: one copy of our upload per viewer it serves
+          const billedCopies = relayHops + (isSfu ? Math.max(0, roomViewerCount - peerConnections.size) : 0);
           if (pair) {
             const sent = pair.bytesSent || 0;
-            if (relayHops > 0) relayBytesPending += Math.max(0, sent - (pc.lastPairBytes || 0)) * relayHops;
+            if (billedCopies > 0) relayBytesPending += Math.max(0, sent - (pc.lastPairBytes || 0)) * billedCopies;
             pc.lastPairBytes = sent;
           }
           samples.push({
             id: viewerId,
+            sfu: isSfu,
             viewer: viewerId.slice(0, 6),
             ageMs: Math.round(performance.now() - (pc.createdAt || 0)),
             enc: r.encoderImplementation,
@@ -927,12 +1098,14 @@ function startStatsUpdate() {
     if (samples.length === 0) {
       streamStatsEl.textContent = localStream ? 'Transmitindo (aguardando viewers)' : '';
     } else {
-      const s = samples[0];
+      const s = samples.find(x => x.sfu) || samples[0];
       const kbps = samples.map(x => (x.targetBitrate / 1e6).toFixed(1)).join('/');
+      const mode = sfu.active ? 'servidor (SFU)' : 'direto';
       streamStatsEl.textContent =
-        `${s.res} @ ${s.fps}fps | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${samples.length} viewer(s)`;
+        `${s.res} @ ${s.fps}fps | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${mode} | ${roomViewerCount} viewer(s)`;
     }
-    updateUploadBudget(samples);
+    updateUploadBudget(samples.filter(x => !x.sfu));
+    updateSfuMode();
     if (statsTicks % 30 === 0) {
       const pipeline = pipelineRates();
       if (samples.length) reportQuality(samples, pipeline);
@@ -958,12 +1131,14 @@ function reportQuality(samples, pipeline) {
   const viewers = samples.map(({ id, targetBitrate, ageMs, ...rest }) => ({
     ...rest,
     kbps: Math.round(targetBitrate / 1000),
-    capKbps: Math.round(viewerBitrateCap(id) / 1000),
+    capKbps: Math.round((rest.sfu ? presetBitrate() : viewerBitrateCap(id)) / 1000),
     excluded: isExcluded(id)
   }));
   const context = {
     viewers,
     pipeline,
+    mode: sfu.active ? 'sfu' : 'p2p',
+    roomViewers: roomViewerCount,
     preset: `${quality.res}p${quality.fps}`,
     share: share.mode,
     budgetKbps: share.budget === Infinity ? null : Math.round(share.budget / 1000)
@@ -971,7 +1146,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.2.1', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1094,7 +1269,7 @@ async function switchAudio(newPid) {
   localStream.addTrack(newAudioTrack);
 
   // Replace audio track on all peer connections
-  for (const [, pc] of peerConnections) {
+  for (const pc of sendingPcs()) {
     const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
     if (audioSender) {
       await audioSender.replaceTrack(newAudioTrack);
@@ -1119,7 +1294,7 @@ async function switchToSource(source) {
     if (videoChanged) {
       const newVideoTrack = await captureVideo(source.id);
 
-      for (const [, pc] of peerConnections) {
+      for (const pc of sendingPcs()) {
         const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
         if (videoSender) {
           await videoSender.replaceTrack(newVideoTrack);
