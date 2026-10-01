@@ -264,6 +264,23 @@ socket.on('sfu-start', async ({ sessionId, tracks }) => {
     statusText.textContent = '';
     if (stream.getTracks().length) showStream(stream, sfuPc);
 
+    // The host sends H264 Main through an SFU that advertises baseline. A decoder that can't
+    // take it shows a connected stream with no picture, so check that frames really decode.
+    setTimeout(async () => {
+      if (pc !== sfuPc || hostPaused) return;
+      let decoded = 0;
+      try {
+        for (const r of (await sfuPc.getStats()).values()) {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') decoded = r.framesDecoded || 0;
+        }
+      } catch {}
+      if (decoded === 0 && pc === sfuPc) {
+        reportError('SFU video not decoding', null, { sessionId });
+        sfuToken++;
+        socket.emit('sfu-fallback');
+      }
+    }, 8000);
+
     sfuPc.onconnectionstatechange = () => {
       if (pc !== sfuPc || hostPaused) return;
       const state = sfuPc.connectionState;
