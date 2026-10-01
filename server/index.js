@@ -135,6 +135,104 @@ async function saveRelayUsage() {
   }
 }
 
+// ======== Official usage (Cloudflare Analytics) ========
+// The host-reported total is an estimate and can't see traffic we didn't originate. When an
+// analytics token is configured, Cloudflare's own egress numbers (what billing uses) drive the cap.
+const CF_GRAPHQL_URL = process.env.CF_GRAPHQL_URL || 'https://api.cloudflare.com/client/v4/graphql';
+const official = { turnBytes: null, sfuBytes: null, sfuDataset: null, at: 0, error: null, candidates: null };
+
+function analyticsCredentials() {
+  const accountId = (process.env.CF_ACCOUNT_ID || '').trim();
+  const token = (process.env.CF_ANALYTICS_TOKEN || '').trim();
+  return /^[a-f0-9]{32}$/i.test(accountId) && token ? { accountId, token } : null;
+}
+
+async function cfGraphql(token, query) {
+  const resp = await fetch(CF_GRAPHQL_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query })
+  });
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok || !json) throw new Error(`Cloudflare Analytics respondeu ${resp.status}`);
+  if (json.errors?.length) throw new Error(json.errors[0].message || 'erro GraphQL');
+  return json.data;
+}
+
+async function monthEgress(creds, dataset) {
+  const now = new Date();
+  const from = now.toISOString().slice(0, 8) + '01';
+  const to = now.toISOString().slice(0, 10);
+  const data = await cfGraphql(creds.token, `{
+    viewer { accounts(filter: { accountTag: "${creds.accountId}" }) {
+      usage: ${dataset}(limit: 10000, filter: { date_geq: "${from}", date_leq: "${to}" }) { sum { egressBytes } }
+    } }
+  }`);
+  const rows = data?.viewer?.accounts?.[0]?.usage || [];
+  return rows.reduce((sum, r) => sum + (Number(r.sum?.egressBytes) || 0), 0);
+}
+
+// The SFU usage dataset isn't in the public docs, so find it in the schema next to the TURN one
+async function discoverSfuDataset(creds) {
+  for (const typeName of ['account', 'Account']) {
+    try {
+      const data = await cfGraphql(creds.token, `{ __type(name: "${typeName}") { fields { name } } }`);
+      const names = (data?.__type?.fields || []).map(f => f.name).filter(n => /^calls/i.test(n));
+      if (names.length) {
+        official.candidates = names;
+        return names.find(n => /usage/i.test(n) && !/turn/i.test(n)) || null;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+async function refreshOfficialUsage() {
+  const creds = analyticsCredentials();
+  if (!creds || Date.now() - official.at < 5 * 60 * 1000) return;
+  official.at = Date.now();
+  try {
+    official.turnBytes = await monthEgress(creds, 'callsTurnUsageAdaptiveGroups');
+    if (!official.sfuDataset) official.sfuDataset = await discoverSfuDataset(creds);
+    official.sfuBytes = official.sfuDataset ? await monthEgress(creds, official.sfuDataset) : null;
+    official.error = null;
+  } catch (err) {
+    official.error = err.message;
+  }
+}
+
+// Billing-relevant usage this month. Analytics lag a few minutes behind live traffic, so the
+// larger of Cloudflare's figure and our own running estimate is the safe one to act on.
+async function usedBytesThisMonth() {
+  await loadRelayUsage();
+  await refreshOfficialUsage();
+  const estimate = relayTotal();
+  if (official.turnBytes == null) return { bytes: estimate, source: 'estimativa' };
+  const measured = official.turnBytes + (official.sfuBytes || 0);
+  return { bytes: Math.max(measured, estimate), source: 'cloudflare' };
+}
+
+app.get('/api/usage', async (req, res) => {
+  const used = await usedBytesThisMonth();
+  const gb = (b) => (b == null ? null : +(b / 1e9).toFixed(3));
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    usedGb: gb(used.bytes),
+    capGb: TURN_CAP_BYTES / 1e9,
+    source: used.source,
+    estimateGb: gb(relayTotal()),
+    estimateLoaded: relayUsage.loaded,
+    official: {
+      configured: !!analyticsCredentials(),
+      turnGb: gb(official.turnBytes),
+      sfuGb: gb(official.sfuBytes),
+      sfuDataset: official.sfuDataset,
+      candidates: official.candidates,
+      error: official.error
+    }
+  });
+});
+
 app.post('/api/relay-usage', async (req, res) => {
   const bytes = Number(req.body?.bytes);
   if (!Number.isFinite(bytes) || bytes <= 0 || bytes > 5e9) {
@@ -162,8 +260,8 @@ function turnConfigState() {
 app.get('/api/ice-servers', async (req, res) => {
   let turn = [];
   let turnStatus = turnConfigState();
-  await loadRelayUsage();
-  const usedBytes = relayTotal();
+  const used = await usedBytesThisMonth();
+  const usedBytes = used.bytes;
   if (usedBytes >= TURN_CAP_BYTES) {
     turnStatus = 'limite mensal de relay atingido';
   } else {
@@ -181,7 +279,8 @@ app.get('/api/ice-servers', async (req, res) => {
     hasTurn: turn.length > 0,
     turnStatus,
     relayUsedGb: +(usedBytes / 1e9).toFixed(2),
-    relayCapGb: TURN_CAP_BYTES / 1e9
+    relayCapGb: TURN_CAP_BYTES / 1e9,
+    usageSource: used.source
   });
 });
 
@@ -200,13 +299,13 @@ function sfuCredentials() {
 
 async function sfuState() {
   if (!sfuCredentials()) return { enabled: false, reason: 'nao configurado' };
-  await loadRelayUsage();
-  // The SFU carries every viewer's video, so never run it blind: without the stored monthly
-  // total a restart would forget what was already spent and let usage run past the cap.
-  if (SUPABASE_URL && SUPABASE_KEY && !relayUsage.loaded) {
+  const used = await usedBytesThisMonth();
+  // The SFU carries every viewer's video, so never run it blind: without Cloudflare's figure
+  // or the stored monthly total, a restart would forget what was already spent.
+  if (used.source !== 'cloudflare' && SUPABASE_URL && SUPABASE_KEY && !relayUsage.loaded) {
     return { enabled: false, reason: 'contador de uso indisponivel' };
   }
-  if (relayTotal() >= TURN_CAP_BYTES) return { enabled: false, reason: 'limite mensal atingido' };
+  if (used.bytes >= TURN_CAP_BYTES) return { enabled: false, reason: 'limite mensal atingido' };
   return { enabled: true, reason: 'ok' };
 }
 
