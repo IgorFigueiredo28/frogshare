@@ -4,6 +4,7 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3030;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -371,6 +372,75 @@ app.put('/api/sfu/sessions/:sid/renegotiate', (req, res) => {
   sfuProxy(req, res, 'PUT', `/sessions/${req.params.sid}/renegotiate`, { sessionDescription: req.body?.sessionDescription });
 });
 
+// ======== Moderation ========
+// Media flows peer to peer, so restarting this server doesn't end a stream and the host simply
+// rejoins. Closing a room tells both sides to drop their connections and blocks the room id.
+const BLOCK_MS = 24 * 3600 * 1000;
+const blockedRooms = new Map();
+
+function isBlocked(roomId) {
+  const until = blockedRooms.get(roomId);
+  if (!until) return false;
+  if (until < Date.now()) { blockedRooms.delete(roomId); return false; }
+  return true;
+}
+
+function closeRoom(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return { hadHost: false, viewers: 0 };
+  const result = { hadHost: !!room.host, viewers: room.viewers.size };
+  for (const viewerId of room.viewers) {
+    // Viewer pages tear down on 'host-left'; the host app drops each peer on 'viewer-left'
+    io.to(viewerId).emit('host-left');
+    if (room.host) io.to(room.host).emit('viewer-left', { viewerId });
+  }
+  io.to(roomId).emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false });
+  rooms.delete(roomId);
+  return result;
+}
+
+// Blocks have to survive restarts, or a reconnecting host would bring the room straight back
+async function loadBlockedRooms() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  try {
+    const since = new Date(Date.now() - BLOCK_MS).toISOString();
+    const resp = await fetch(
+      `${SUPABASE_URL}/rest/v1/error_logs?source=eq.blocked-room&created_at=gte.${since}&select=room_id,created_at`,
+      { headers: supabaseHeaders() }
+    );
+    if (!resp.ok) return;
+    for (const row of await resp.json()) {
+      if (!row.room_id) continue;
+      blockedRooms.set(row.room_id, new Date(row.created_at).getTime() + BLOCK_MS);
+      if (isBlocked(row.room_id)) closeRoom(row.room_id);
+    }
+  } catch {}
+}
+
+function isAdmin(req) {
+  const given = Buffer.from(req.get('x-admin-key') || '');
+  const expected = Buffer.from(SUPABASE_KEY || '');
+  return expected.length > 0 && given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
+app.post('/api/admin/close-room', async (req, res) => {
+  if (!isAdmin(req)) return res.status(401).json({ error: 'unauthorized' });
+  const roomId = String(req.body?.roomId || '').slice(0, 50);
+  if (!roomId) return res.status(400).json({ error: 'roomId required' });
+  blockedRooms.set(roomId, Date.now() + BLOCK_MS);
+  const result = closeRoom(roomId);
+  let persisted = false;
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+      method: 'POST',
+      headers: { ...supabaseHeaders(), Prefer: 'return=minimal' },
+      body: JSON.stringify({ source: 'blocked-room', level: 'info', message: 'room closed by admin', room_id: roomId, context: result })
+    });
+    persisted = resp.ok;
+  } catch {}
+  res.json({ ok: true, ...result, blockedHours: BLOCK_MS / 3600000, persisted });
+});
+
 // Error logging proxy — clients POST here, server forwards to Supabase
 app.post('/api/errors', async (req, res) => {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -451,6 +521,11 @@ io.on('connection', (socket) => {
   let role = null;
 
   socket.on('join-room', ({ roomId, asHost, appVersion }) => {
+    if (isBlocked(roomId)) {
+      // A closed room stays closed: the host gets no viewers and viewers see no host
+      if (!asHost) socket.emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false });
+      return;
+    }
     let room = rooms.get(roomId);
     if (!room) {
       room = { host: null, viewers: new Set(), createdAt: Date.now() };
@@ -569,4 +644,5 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, () => {
   console.log(`Signaling server running on port ${PORT}`);
+  loadBlockedRooms();
 });
