@@ -186,6 +186,21 @@ h1 {
 
 .toggle-option input { display: none; }
 
+/* Update notice */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: #3a2f12;
+  border: 1px solid #6b5518;
+  border-radius: var(--radius-sm);
+  color: #f3e3b0;
+  font-size: 0.85rem;
+}
+
 /* Quality presets */
 .quality-row {
   display: flex;

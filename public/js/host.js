@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.3.0',
+        app_version: '1.3.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -418,7 +418,7 @@ async function ensureRoom() {
 
   socket = io(signalServer);
   socket.on('connect', () => {
-    socket.emit('join-room', { roomId, asHost: true });
+    socket.emit('join-room', { roomId, asHost: true, appVersion });
     // The server forgets the SFU session when the host socket drops
     if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
   });
@@ -1169,7 +1169,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.0', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.1', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1352,10 +1352,37 @@ async function switchToSource(source) {
 btnRefreshSources.addEventListener('click', loadSources);
 btnRefreshAudio.addEventListener('click', loadAudioSessions);
 
+// ======== Update check ========
+// Old builds stutter badly (CPU encoding per viewer) and nothing ever told the host to update
+let appVersion = null;
+
+function versionOlder(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  }
+  return false;
+}
+
+async function checkForUpdate() {
+  try {
+    appVersion = await window.electronAPI.getAppVersion();
+    const url = await getSignalUrl();
+    const latest = await (await fetch(`${url}/api/app-version`)).json();
+    if (!latest.version || !versionOlder(appVersion, latest.version)) return;
+    document.getElementById('update-text').textContent =
+      `Nova versao ${latest.version} disponivel (voce esta na ${appVersion}).`;
+    document.getElementById('btn-update').onclick = () => window.electronAPI.openDownload(latest.url);
+    document.getElementById('update-banner').style.display = '';
+  } catch {}
+}
+
 // ======== Init ========
 loadSources();
 loadAudioSessions();
 renderQualityControls();
+checkForUpdate();
 
 // Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start
 getSignalUrl().then(url => {

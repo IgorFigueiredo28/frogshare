@@ -32,6 +32,30 @@ setInterval(() => {
 
 app.get('/health', (req, res) => res.send('ok'));
 
+// ======== App version ========
+// Hosts on old builds encode on the CPU once per viewer and stutter badly, and nothing told
+// anyone. The app checks this on start; viewers are told when the room's host is behind.
+const LATEST_APP = {
+  version: '1.3.1',
+  // Below this the host has no GPU encoding, TURN, upload sharing or SFU
+  minimum: '1.3.0',
+  url: 'https://drive.google.com/file/d/1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu/view?usp=sharing'
+};
+
+function versionOlder(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  }
+  return false;
+}
+
+app.get('/api/app-version', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(LATEST_APP);
+});
+
 // STUN alone can't traverse symmetric NAT / mobile CGNAT; TURN relays those peers
 const STUN_SERVERS = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
@@ -394,11 +418,39 @@ app.get('/api/room/:id', (req, res) => {
   res.json({ exists: true, hasHost: !!room.host, viewerCount: room.viewers.size });
 });
 
+// Hosts up to 1.1.2 offer H264 baseline first (CPU encoding, one encode per viewer); 1.1.3+ put
+// Main first. Lets us spot the really problematic builds even though they never report a version.
+function offerLooksLegacy(sdp) {
+  const lines = String(sdp || '').split('\r\n');
+  const mLine = lines.find(l => l.startsWith('m=video'));
+  if (!mLine) return false;
+  for (const pt of mLine.split(' ').slice(3)) {
+    const fmtp = lines.find(l => l.startsWith(`a=fmtp:${pt} `));
+    const profile = fmtp && /profile-level-id=([0-9a-f]{2})/i.exec(fmtp);
+    if (profile) return profile[1].toLowerCase() !== '4d';
+  }
+  return false;
+}
+
+function hostOutdated(room) {
+  if (!room.host) return false;
+  if (room.hostVersion) return versionOlder(room.hostVersion, LATEST_APP.minimum);
+  return room.hostLegacy === true;
+}
+
+function emitRoomUpdate(roomId, room) {
+  io.to(roomId).emit('room-update', {
+    hasHost: !!room.host,
+    viewerCount: room.viewers.size,
+    hostOutdated: hostOutdated(room)
+  });
+}
+
 io.on('connection', (socket) => {
   let currentRoom = null;
   let role = null;
 
-  socket.on('join-room', ({ roomId, asHost }) => {
+  socket.on('join-room', ({ roomId, asHost, appVersion }) => {
     let room = rooms.get(roomId);
     if (!room) {
       room = { host: null, viewers: new Set(), createdAt: Date.now() };
@@ -410,6 +462,9 @@ io.on('connection', (socket) => {
 
     if (asHost) {
       room.host = socket.id;
+      // Builds before 1.3.1 don't send a version at all
+      room.hostVersion = typeof appVersion === 'string' ? appVersion.slice(0, 20) : null;
+      room.hostLegacy = undefined;
       role = 'host';
       socket.to(roomId).emit('host-joined');
       for (const viewerId of room.viewers) {
@@ -424,14 +479,16 @@ io.on('connection', (socket) => {
       if (room.sfu) socket.emit('sfu-start', room.sfu);
     }
 
-    io.to(roomId).emit('room-update', {
-      hasHost: !!room.host,
-      viewerCount: room.viewers.size
-    });
+    emitRoomUpdate(roomId, room);
   });
 
   socket.on('offer', ({ to, offer, sid }) => {
     io.to(to).emit('offer', { from: socket.id, offer, sid });
+    const room = currentRoom && rooms.get(currentRoom);
+    if (room && role === 'host' && !room.hostVersion && room.hostLegacy === undefined) {
+      room.hostLegacy = offerLooksLegacy(offer?.sdp);
+      if (room.hostLegacy) emitRoomUpdate(currentRoom, room);
+    }
   });
 
   socket.on('answer', ({ to, answer, sid }) => {
@@ -502,10 +559,7 @@ io.on('connection', (socket) => {
       }
     }
 
-    io.to(currentRoom).emit('room-update', {
-      hasHost: !!room.host,
-      viewerCount: room.viewers.size
-    });
+    emitRoomUpdate(currentRoom, room);
 
     if (!room.host && room.viewers.size === 0) {
       rooms.delete(currentRoom);

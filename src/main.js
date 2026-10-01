@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell } = require('electron');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -22,7 +22,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.3.0'
+        app_version: '1.3.1'
       })
     }).catch(() => {});
   } catch {}
@@ -268,6 +268,15 @@ function stopAudioCapture() {
 
 ipcMain.handle('get-server-port', () => {
   return serverInstance?.port || 3030;
+});
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('open-download', (event, url) => {
+  // The link comes from the signaling server; only ever hand a plain https URL to the OS
+  if (typeof url !== 'string' || !/^https:\/\/[^\s]+$/.test(url)) return false;
+  shell.openExternal(url);
+  return true;
 });
 
 ipcMain.handle('get-signal-server', () => {

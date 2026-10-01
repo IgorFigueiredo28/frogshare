@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.3.0',
+        app_version: '1.3.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -124,11 +124,19 @@ socket.on('connect', () => {
   socket.emit('join-room', { roomId, asHost: false });
 });
 
-socket.on('room-update', ({ hasHost, viewerCount: count }) => {
+const hostNotice = document.getElementById('host-notice');
+let hostNoticeDismissed = false;
+document.getElementById('host-notice-close').addEventListener('click', () => {
+  hostNoticeDismissed = true;
+  hostNotice.style.display = 'none';
+});
+
+socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated }) => {
   viewerCount.textContent = `${count} assistindo`;
   if (!hasHost) {
     statusText.textContent = 'Aguardando host conectar...';
   }
+  hostNotice.style.display = hostOutdated && !hostNoticeDismissed ? '' : 'none';
 });
 
 socket.on('host-joined', () => {
@@ -527,7 +535,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.0', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.1', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

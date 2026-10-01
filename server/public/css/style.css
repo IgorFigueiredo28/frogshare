@@ -346,6 +346,34 @@ body {
   opacity: 1;
 }
 
+.host-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #3a2f12;
+  border-bottom: 1px solid #6b5518;
+  color: #f3e3b0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.host-notice span { flex: 1; }
+.host-notice a { color: #ffd76a; }
+
+.host-notice-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.host-notice-close:hover { background: rgba(255, 255, 255, 0.1); }
+
 .stats-overlay {
   position: absolute;
   top: 12px;
