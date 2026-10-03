@@ -173,6 +173,8 @@ function createOverlay() {
     ...OVERLAY_SIZE,
     ...overlayPosition(),
     title: 'FrogShare: ao vivo',
+    // An NSPanel can float over another app's full-screen Space without changing how FrogShare shows in the Dock
+    type: isMac ? 'panel' : undefined,
     frame: false,
     transparent: true,
     resizable: false,
@@ -191,6 +193,9 @@ function createOverlay() {
     }
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  // A full-screen game on macOS gets its own Space, and a plain always-on-top window stays behind on the desktop.
+  // Electron's default here turns the app into a background agent, which drops its Dock icon for good.
+  if (isMac) overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   overlayWindow.on('moved', () => {
     // The chip is dragged by hand (it also needs clicks), see overlay-drag-end
     if (overlayCompact) return;
