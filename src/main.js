@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme } = require('electron');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -22,7 +22,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.3.2'
+        app_version: '1.4.0'
       })
     }).catch(() => {});
   } catch {}
@@ -49,18 +49,20 @@ let pendingCaptureSourceId = null;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 700,
+    width: 980,
+    height: 760,
     minWidth: 600,
     minHeight: 500,
-    title: 'Screen Share',
+    title: 'FrogShare',
+    icon: path.join(__dirname, '..', 'server', 'public', 'brand', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false
     },
-    backgroundColor: '#0a0a0f',
+    // Matches the theme's page background so the window doesn't flash before the page paints
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0B1A10' : '#F3F8EC',
     autoHideMenuBar: true,
     // --hidden runs the app without a window, for automated checks that must not steal focus
     show: !process.argv.includes('--hidden')

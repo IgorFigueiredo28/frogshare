@@ -37,7 +37,7 @@ app.get('/health', (req, res) => res.send('ok'));
 // Hosts on old builds encode on the CPU once per viewer and stutter badly, and nothing told
 // anyone. The app checks this on start; viewers are told when the room's host is behind.
 const LATEST_APP = {
-  version: '1.3.2',
+  version: '1.4.0',
   // Below this the host has no GPU encoding, TURN, upload sharing or SFU
   minimum: '1.3.0',
   url: 'https://drive.google.com/file/d/1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu/view?usp=sharing'

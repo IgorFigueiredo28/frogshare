@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.3.2',
+        app_version: '1.4.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -193,7 +193,7 @@ function getAudioMode() {
 
 // ======== Source Selection ========
 async function loadSources() {
-  sourceGrid.innerHTML = '<div class="loading">Carregando janelas...</div>';
+  sourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
   const sources = await window.electronAPI.getSources();
 
   const screens = sources.filter(s => s.isScreen);
@@ -204,7 +204,7 @@ async function loadSources() {
   if (screens.length > 0) {
     const screenLabel = document.createElement('div');
     screenLabel.className = 'source-section-label';
-    screenLabel.textContent = 'Telas (captura jogos em tela cheia)';
+    screenLabel.textContent = 'Telas inteiras (melhor para jogos em tela cheia)';
     sourceGrid.appendChild(screenLabel);
 
     screens.forEach(source => {
@@ -261,7 +261,7 @@ function createSourceItem(source, onClick) {
 
 // ======== Audio Sessions ========
 async function loadAudioSessions() {
-  sessionList.innerHTML = '<div class="loading">Buscando processos com audio...</div>';
+  sessionList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
   const result = await window.electronAPI.listAudioSessions();
 
   if (result.error) {
@@ -271,7 +271,7 @@ async function loadAudioSessions() {
 
   const sessions = result.sessions || [];
   if (sessions.length === 0) {
-    sessionList.innerHTML = '<div class="empty">Nenhum processo com audio encontrado. Inicie um app com audio e clique Atualizar.</div>';
+    sessionList.innerHTML = '<div class="empty">Nenhum app tocando som agora. Abra o jogo ou a música e toque em Atualizar.</div>';
     return;
   }
 
@@ -505,7 +505,7 @@ function renderQualityControls() {
   document.querySelectorAll('input[name="q-res"]').forEach(r => { r.checked = r.value === quality.res; });
   document.querySelectorAll('input[name="q-fps"]').forEach(r => { r.checked = Number(r.value) === quality.fps; });
   const mbps = (presetBitrate() / 1e6).toFixed(0);
-  qualityHint.textContent = `ate ~${mbps} Mbps de upload por viewer`;
+  qualityHint.textContent = `até ~${mbps} Mbps de upload por pessoa`;
 }
 
 document.querySelectorAll('input[name="q-res"], input[name="q-fps"]').forEach(input => {
@@ -711,7 +711,7 @@ function stopVideoTrack(track) {
 // ======== Start Streaming ========
 btnStart.addEventListener('click', async () => {
   btnStart.disabled = true;
-  btnStart.textContent = 'Iniciando...';
+  btnStart.textContent = 'Iniciando…';
 
   try {
     const mode = getAudioMode();
@@ -725,26 +725,26 @@ btnStart.addEventListener('click', async () => {
     if (mode === 'process' && selectedPid) {
       const result = await window.electronAPI.startAudioCapture(selectedPid);
       if (result.error) {
-        showToast('Erro ao capturar audio: ' + result.error);
+        showToast('Não deu para capturar o som: ' + result.error);
       } else {
         const audioTrack = await createAudioTrackFromProcess(
           result.sampleRate || 48000,
           result.channels || 2
         );
         tracks.push(audioTrack);
-        showToast(`Audio capturado: ${result.sampleRate}Hz, ${result.channels}ch`);
+        showToast(`Som do app capturado (${result.sampleRate} Hz, ${result.channels} canais)`);
       }
     } else if (mode === 'system') {
       const result = await window.electronAPI.startAudioCapture('system');
       if (result.error) {
-        showToast('Erro ao capturar audio do sistema: ' + result.error);
+        showToast('Não deu para capturar o som do PC: ' + result.error);
       } else {
         const audioTrack = await createAudioTrackFromProcess(
           result.sampleRate || 48000,
           result.channels || 2
         );
         tracks.push(audioTrack);
-        showToast(`Audio do sistema capturado: ${result.sampleRate}Hz`);
+        showToast(`Som do PC capturado (${result.sampleRate} Hz)`);
       }
     }
 
@@ -775,7 +775,7 @@ btnStart.addEventListener('click', async () => {
     showToast('Erro: ' + err.message);
     reportError('Start streaming failed: ' + err.message, err.stack);
     btnStart.disabled = false;
-    btnStart.textContent = roomId ? 'Retomar Compartilhamento' : 'Iniciar Compartilhamento';
+    btnStart.textContent = roomId ? 'Voltar a transmitir' : 'Começar a transmitir';
   }
 });
 
@@ -886,23 +886,23 @@ async function pauseStreaming() {
 
   panelStreaming.style.display = 'none';
   panelSetup.style.display = '';
-  btnStart.textContent = 'Retomar Compartilhamento';
+  btnStart.textContent = 'Voltar a transmitir';
   updateStartButton();
 }
 
 // ======== Copy buttons ========
 btnCopyCode.addEventListener('click', () => {
-  navigator.clipboard.writeText(roomId).then(() => showToast('Codigo copiado!'));
+  navigator.clipboard.writeText(roomId).then(() => showToast('Código copiado'));
 });
 
 btnCopyCodeBar.addEventListener('click', () => {
-  navigator.clipboard.writeText(roomId).then(() => showToast('Codigo copiado!'));
+  navigator.clipboard.writeText(roomId).then(() => showToast('Código copiado'));
 });
 
 btnCopyLink.addEventListener('click', async () => {
   const url = signalServer || await window.electronAPI.getSignalServer();
   const link = `${url}/room.html?room=${roomId}`;
-  navigator.clipboard.writeText(link).then(() => showToast('Link copiado!'));
+  navigator.clipboard.writeText(link).then(() => showToast('Link copiado'));
 });
 
 // ======== SFU mode ========
@@ -1283,7 +1283,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.2', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1299,8 +1299,8 @@ btnSwitchSource.addEventListener('click', async () => {
   switchModal.style.display = '';
   switchAudioPid = null;
 
-  switchSourceGrid.innerHTML = '<div class="loading">Carregando janelas...</div>';
-  switchAudioList.innerHTML = '<div class="loading">Carregando audio...</div>';
+  switchSourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
+  switchAudioList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
 
   const [sources, audioResult] = await Promise.all([
     window.electronAPI.getSources(),
@@ -1315,7 +1315,7 @@ btnSwitchSource.addEventListener('click', async () => {
   if (screens.length > 0) {
     const screenLabel = document.createElement('div');
     screenLabel.className = 'source-section-label';
-    screenLabel.textContent = 'Telas (captura jogos em tela cheia)';
+    screenLabel.textContent = 'Telas inteiras (melhor para jogos em tela cheia)';
     switchSourceGrid.appendChild(screenLabel);
     screens.forEach(source => {
       const item = createSourceItem(source, () => switchToSource(source));
@@ -1338,7 +1338,7 @@ btnSwitchSource.addEventListener('click', async () => {
 
   const keepItem = document.createElement('div');
   keepItem.className = 'session-item selected';
-  keepItem.innerHTML = '<span class="session-name">Manter audio atual</span>';
+  keepItem.innerHTML = '<span class="session-name">Manter o som atual</span>';
   keepItem.addEventListener('click', () => {
     switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
     keepItem.classList.add('selected');
@@ -1365,7 +1365,7 @@ btnSwitchSource.addEventListener('click', async () => {
   if (sessions.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Nenhum processo com audio encontrado';
+    empty.textContent = 'Nenhum app tocando som agora';
     switchAudioList.appendChild(empty);
   }
 });
@@ -1395,7 +1395,7 @@ async function switchAudio(newPid) {
   // Start new audio capture
   const result = await window.electronAPI.startAudioCapture(newPid);
   if (result.error) {
-    showToast('Erro ao trocar audio: ' + result.error);
+    showToast('Não deu para trocar o som: ' + result.error);
     return;
   }
 
@@ -1414,7 +1414,7 @@ async function switchAudio(newPid) {
   }
 
   selectedPid = newPid;
-  showToast(`Audio trocado: PID ${newPid}`);
+  showToast(`Som trocado (PID ${newPid})`);
 }
 
 async function switchToSource(source) {
@@ -1455,9 +1455,9 @@ async function switchToSource(source) {
       await switchAudio(newAudioPid);
     }
 
-    showToast(`Trocado: ${source.name}`);
+    showToast(`Agora mostrando: ${source.name}`);
   } catch (err) {
-    showToast('Erro ao trocar: ' + err.message);
+    showToast('Não deu para trocar: ' + err.message);
     reportError('Switch source failed: ' + err.message, err.stack);
   }
 }
@@ -1486,7 +1486,7 @@ async function checkForUpdate() {
     const latest = await (await fetch(`${url}/api/app-version`)).json();
     if (!latest.version || !versionOlder(appVersion, latest.version)) return;
     document.getElementById('update-text').textContent =
-      `Nova versao ${latest.version} disponivel (voce esta na ${appVersion}).`;
+      `Versão ${latest.version} disponível (você está na ${appVersion}).`;
     document.getElementById('btn-update').onclick = () => window.electronAPI.openDownload(latest.url);
     document.getElementById('update-banner').style.display = '';
   } catch {}

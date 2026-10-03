@@ -10,6 +10,8 @@ function createServer(port = 3030) {
   const io = new Server(server, { cors: { origin: '*' } });
 
   app.use(express.static(path.join(__dirname, '..', 'public')));
+  // Theme, mascot and icons are shared with the website; one copy lives with the site
+  app.use('/brand', express.static(path.join(__dirname, '..', 'server', 'public', 'brand')));
 
   const rooms = new Map();
 

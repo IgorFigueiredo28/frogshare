@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.3.2',
+        app_version: '1.4.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -134,20 +134,20 @@ document.getElementById('host-notice-close').addEventListener('click', () => {
 socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated }) => {
   viewerCount.textContent = `${count} assistindo`;
   if (!hasHost) {
-    statusText.textContent = 'Aguardando host conectar...';
+    statusText.textContent = 'Esperando o host entrar…';
   }
   hostNotice.style.display = hostOutdated && !hostNoticeDismissed ? '' : 'none';
 });
 
 socket.on('host-joined', () => {
   hostPaused = false;
-  statusText.textContent = 'Host conectado, aguardando tela...';
+  statusText.textContent = 'Host conectado, abrindo a tela…';
   placeholder.style.display = '';
 });
 
 socket.on('host-left', () => {
   hostPaused = false;
-  statusText.textContent = 'Host desconectou.';
+  statusText.textContent = 'O host desconectou';
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
@@ -162,7 +162,7 @@ socket.on('host-left', () => {
 
 socket.on('host-paused', () => {
   hostPaused = true;
-  statusText.textContent = 'Host pausou a transmissao...';
+  statusText.textContent = 'O host pausou a transmissão';
   remoteVideo.style.display = 'none';
   placeholder.style.display = '';
   btnFullscreen.style.display = 'none';
@@ -294,10 +294,10 @@ socket.on('sfu-start', async ({ sessionId, tracks }) => {
       const state = sfuPc.connectionState;
       if (state === 'failed') {
         reportError('SFU connection failed', null, { sessionId });
-        requestNewOffer('Conexao perdida. Reconectando...');
+        requestNewOffer('Conexão perdida. Reconectando…');
       } else if (state === 'disconnected') {
         setTimeout(() => {
-          if (pc === sfuPc && sfuPc.connectionState === 'disconnected') requestNewOffer('Reconectando...');
+          if (pc === sfuPc && sfuPc.connectionState === 'disconnected') requestNewOffer('Reconectando…');
         }, 3000);
       }
     };
@@ -312,7 +312,7 @@ socket.on('sfu-start', async ({ sessionId, tracks }) => {
 
 socket.on('sfu-stop', () => {
   sfuToken++;
-  if (pc && pc.isSfu) requestNewOffer('Reconectando...');
+  if (pc && pc.isSfu) requestNewOffer('Reconectando…');
 });
 
 // Candidates that arrive while the offer handler is still awaiting the ICE config
@@ -341,7 +341,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
     if (pc === thisPc && thisPc.connectionState !== 'connected') {
       const diag = await iceDiagnostics(thisPc);
       reportError('ICE timeout 10s', null, { state: thisPc.connectionState, sid, ...diag });
-      if (pc === thisPc) requestNewOffer('Conexao demorando, tentando de novo...');
+      if (pc === thisPc) requestNewOffer('A conexão está demorando, tentando de novo…');
     }
   }, 10000);
 
@@ -360,17 +360,17 @@ socket.on('offer', async ({ from, offer, sid }) => {
       statusText.textContent = '';
     } else if (state === 'disconnected') {
       if (hostPaused) return;
-      statusText.textContent = 'Reconectando...';
+      statusText.textContent = 'Reconectando…';
       setTimeout(() => {
         if (pc === thisPc && thisPc.connectionState === 'disconnected') {
-          requestNewOffer('Reconectando...');
+          requestNewOffer('Reconectando…');
         }
       }, 3000);
     } else if (state === 'failed') {
       iceDiagnostics(thisPc).then(diag => reportError('PeerConnection failed', null, { sid, ...diag }));
       remoteVideo.style.display = 'none';
       placeholder.style.display = '';
-      requestNewOffer('Conexao perdida. Reconectando...');
+      requestNewOffer('Conexão perdida. Reconectando…');
     }
   };
 
@@ -408,7 +408,7 @@ function toggleFullscreen() {
 }
 
 document.addEventListener('fullscreenchange', () => {
-  btnFullscreen.textContent = document.fullscreenElement ? 'Sair Tela Cheia' : 'Tela Cheia';
+  btnFullscreen.textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
 });
 
 btnFullscreen.addEventListener('click', toggleFullscreen);
@@ -474,13 +474,13 @@ function renderOverlay(s) {
   if (!s) { line('Coletando dados...'); return; }
   const lossPct = s.packets ? (100 * s.lost / s.packets) : 0;
   const delay = s.rttMs != null && s.jbMs != null ? Math.round(s.rttMs / 2 + s.jbMs) : null;
-  line(`Resolucao   ${s.res} @ ${s.fps} fps`, s.fps && s.fps < 24 ? 'bad' : null);
+  line(`Resolução   ${s.res} @ ${s.fps} fps`, s.fps && s.fps < 24 ? 'bad' : null);
   line(`Codec       ${s.codec}${s.decoder ? ` (${s.decoder})` : ''}`);
   line(`Bitrate     ${(s.kbps / 1000).toFixed(1)} Mbps`);
   line(`Perda       ${lossPct.toFixed(1)}%`, lossPct > 2 ? 'bad' : 'ok');
   line(`Travadas    ${agg.freezes} (${(agg.freezeMs / 1000).toFixed(1)}s)`, agg.freezes ? 'bad' : 'ok');
   if (delay != null) line(`Atraso      ~${delay} ms (rede ${s.rttMs} + buffer ${s.jbMs})`, delay > 250 ? 'bad' : null);
-  line(`Conexao     ${s.sfu ? 'servidor (SFU)' : s.relay ? 'via relay (TURN)' : 'direta (P2P)'}`);
+  line(`Conexão     ${s.sfu ? 'servidor (SFU)' : s.relay ? 'via relay (TURN)' : 'direta (P2P)'}`);
 }
 
 function setInfoOpen(open) {
@@ -535,7 +535,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.3.2', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.0', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

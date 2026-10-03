@@ -3,29 +3,72 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Screen Share</title>
+  <title>FrogShare: assista a tela dos amigos ao vivo</title>
+  <meta name="description" content="Entre na sala com o código e assista a tela do seu amigo em tempo real, direto no navegador.">
+  <meta name="theme-color" content="#F3F8EC" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0B1A10" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/brand/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/brand/icon.ico" sizes="any">
+  <script src="/brand/theme.js"></script>
+  <link rel="stylesheet" href="/brand/frog-theme.css">
   <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
-  <div class="container">
-    <div class="hero">
-      <h1>&#x1F438; Screen Share</h1>
-      <p class="subtitle">Assista a tela do seu amigo em tempo real, sem lag.</p>
-
-      <div class="actions">
-        <div class="join-form">
-          <input type="text" id="input-room" placeholder="Codigo da sala" maxlength="8" autocomplete="off">
-          <button id="btn-join" class="btn btn-primary">Entrar</button>
-        </div>
-      </div>
-
-      <div class="download-section">
-        <p class="download-hint">Quer compartilhar sua tela? Baixe o app:</p>
-        <a href="https://drive.google.com/file/d/1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu/view?usp=sharing" target="_blank" rel="noopener" class="btn btn-secondary btn-download">Baixar App (Windows)</a>
-      </div>
-    </div>
-
+<body class="page-home">
+  <div class="lilypads" aria-hidden="true">
+    <span style="width:420px;height:420px;left:-140px;top:-120px"></span>
+    <span style="width:260px;height:260px;right:-80px;top:30%;transform:rotate(140deg)"></span>
+    <span style="width:340px;height:340px;left:12%;bottom:-200px;transform:rotate(250deg)"></span>
   </div>
+
+  <header class="topbar">
+    <a href="/" class="brand" aria-label="FrogShare, página inicial">
+      <img src="/brand/icon.svg" alt="" width="32" height="32">
+      <span class="brand-name">Frog<b>Share</b></span>
+    </a>
+    <button type="button" class="btn btn-ghost btn-icon theme-toggle" data-theme-toggle>
+      <svg class="ico i-moon" aria-hidden="true"><use href="/brand/icons.svg#i-moon"/></svg>
+      <svg class="ico i-sun" aria-hidden="true"><use href="/brand/icons.svg#i-sun"/></svg>
+    </button>
+  </header>
+
+  <main class="home">
+    <section class="hero">
+      <img class="hero-frog" src="/brand/frog.svg" alt="" width="168" height="154">
+      <h1>Assista a tela dos amigos, ao vivo</h1>
+      <p class="hero-sub">Cole o código da sala e pule direto na transmissão. Sem cadastro e sem instalar nada.</p>
+
+      <div class="join card" role="group" aria-labelledby="join-label">
+        <label id="join-label" class="join-label" for="input-room">Código da sala</label>
+        <div class="join-row">
+          <input type="text" id="input-room" class="input input-code" placeholder="8e1592c7" maxlength="8"
+                 autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="join-hint">
+          <button id="btn-join" type="button" class="btn btn-primary btn-lg btn-hop">
+            Entrar
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-arrow-right"/></svg>
+          </button>
+        </div>
+        <p id="join-hint" class="join-hint">São 8 letras e números. Vem no link que o seu amigo mandou.</p>
+      </div>
+    </section>
+
+    <section class="host-cta card" aria-labelledby="host-cta-title">
+      <img src="/brand/icon.svg" alt="" width="64" height="64">
+      <div class="host-cta-text">
+        <h2 id="host-cta-title">Quer transmitir a sua tela?</h2>
+        <p>Baixe o app para Windows. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
+      </div>
+      <a href="https://drive.google.com/file/d/1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu/view?usp=sharing" target="_blank" rel="noopener" class="btn btn-secondary btn-download">
+        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+        Baixar para Windows
+      </a>
+    </section>
+
+    <ul class="perks" aria-label="O que o FrogShare faz">
+      <li><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-gauge"/></svg>Até 60 fps em 1080p</li>
+      <li><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-music"/></svg>Som só do jogo, sem o resto do PC</li>
+      <li><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-users"/></svg>Vários amigos na mesma sala</li>
+    </ul>
+  </main>
 
   <script>
     const btnJoin = document.getElementById('btn-join');
@@ -42,7 +85,7 @@
     btnJoin.addEventListener('click', () => {
       const code = inputRoom.value.trim().toLowerCase();
       if (!code) {
-        showToast('Digite o codigo da sala');
+        showToast('Digite o código da sala');
         return;
       }
       window.location.href = `/room.html?room=${code}`;

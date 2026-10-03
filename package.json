@@ -1,6 +1,6 @@
 {
   "name": "screen-share-app",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Screen sharing with per-process audio capture",
   "main": "src/main.js",
   "scripts": {
@@ -11,8 +11,9 @@
   },
   "build": {
     "appId": "com.screenshare.app",
-    "productName": "Screen Share",
+    "productName": "FrogShare",
     "win": {
+      "icon": "server/public/brand/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -36,6 +37,7 @@
     "files": [
       "src/**/*",
       "public/**/*",
+      "server/public/brand/**/*",
       "node_modules/**/*",
       "package.json"
     ],

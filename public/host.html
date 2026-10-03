@@ -3,127 +3,202 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Screen Share</title>
+  <title>FrogShare</title>
+  <script src="/brand/theme.js"></script>
+  <link rel="stylesheet" href="/brand/frog-theme.css">
   <link rel="stylesheet" href="/css/host.css">
 </head>
 <body>
-  <div class="app">
-    <div class="update-banner" id="update-banner" style="display:none" role="status">
-      <span id="update-text"></span>
-      <button id="btn-update" class="btn btn-small">Baixar</button>
-    </div>
-    <div class="panel" id="panel-setup">
-      <h1>&#x1F438; Screen Share</h1>
-      <p class="subtitle">Escolha a janela e o audio para compartilhar</p>
+  <header class="app-top">
+    <span class="brand">
+      <img src="/brand/icon.svg" alt="" width="32" height="32">
+      <span class="brand-name">Frog<b>Share</b></span>
+    </span>
 
-      <div id="room-bar" class="room-bar" style="display:none">
-        <span class="badge badge-active">SALA ATIVA</span>
-        <span class="room-code" id="room-code-bar"></span>
-        <button id="btn-copy-code-bar" class="btn btn-small">Copiar</button>
-        <span class="viewer-count" id="viewer-count-bar">0 assistindo</span>
+    <div id="room-bar" class="room-bar" style="display:none">
+      <span class="chip chip-ok">Sala ativa</span>
+      <span class="chip chip-code"><span class="sr-only">Código</span><span id="room-code-bar"></span></span>
+      <button id="btn-copy-code-bar" type="button" class="btn btn-ghost btn-icon" aria-label="Copiar código da sala" title="Copiar código">
+        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-copy"/></svg>
+      </button>
+      <span class="chip chip-watchers">
+        <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
+        <span id="viewer-count-bar">0 assistindo</span>
+      </span>
+    </div>
+
+    <button type="button" class="btn btn-ghost btn-icon theme-toggle" data-theme-toggle>
+      <svg class="ico i-moon" aria-hidden="true"><use href="/brand/icons.svg#i-moon"/></svg>
+      <svg class="ico i-sun" aria-hidden="true"><use href="/brand/icons.svg#i-sun"/></svg>
+    </button>
+  </header>
+
+  <div class="app">
+    <div class="notice update-banner" id="update-banner" style="display:none" role="status">
+      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+      <span id="update-text" class="notice-text"></span>
+      <button id="btn-update" type="button" class="btn btn-secondary">Baixar</button>
+    </div>
+
+    <!-- ================= Setup ================= -->
+    <div class="panel" id="panel-setup">
+      <div class="setup-hero">
+        <img src="/brand/frog.svg" alt="" width="88" height="81">
+        <div>
+          <h1>Compartilhar a tela</h1>
+          <p class="subtitle">Escolha o que mostrar e o som. Seus amigos assistem pelo navegador.</p>
+        </div>
       </div>
 
-      <section class="section">
-        <div class="section-header">
-          <h2>Janela</h2>
-          <button id="btn-refresh-sources" class="btn btn-small">Atualizar</button>
+      <section class="step card" aria-labelledby="step-source">
+        <div class="step-head">
+          <span class="step-num" aria-hidden="true">1</span>
+          <h2 id="step-source">O que mostrar</h2>
+          <button id="btn-refresh-sources" type="button" class="btn btn-ghost">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-refresh"/></svg>Atualizar
+          </button>
         </div>
         <div class="source-grid" id="source-grid">
-          <div class="loading">Carregando janelas...</div>
+          <div class="loading">Procurando janelas…</div>
         </div>
       </section>
 
-      <section class="section">
-        <div class="section-header">
-          <h2>Audio</h2>
-          <button id="btn-refresh-audio" class="btn btn-small">Atualizar</button>
-        </div>
-        <div class="audio-mode-toggle">
-          <label class="toggle-option">
-            <input type="radio" name="audio-mode" value="process" checked>
-            <span>Audio do app</span>
-          </label>
-          <label class="toggle-option">
-            <input type="radio" name="audio-mode" value="system">
-            <span>Audio do sistema</span>
-          </label>
-          <label class="toggle-option">
-            <input type="radio" name="audio-mode" value="none">
-            <span>Sem audio</span>
-          </label>
-        </div>
-        <div id="audio-sessions-container">
-          <div class="session-list" id="session-list">
-            <div class="loading">Carregando sessoes de audio...</div>
+      <section class="step card step-audio" aria-labelledby="step-audio">
+          <div class="step-head">
+            <span class="step-num" aria-hidden="true">2</span>
+            <h2 id="step-audio">Som</h2>
+            <button id="btn-refresh-audio" type="button" class="btn btn-ghost">
+              <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-refresh"/></svg>Atualizar
+            </button>
           </div>
-        </div>
-      </section>
+          <div class="segmented audio-mode-toggle" role="radiogroup" aria-label="Origem do som">
+            <label class="segment toggle-option">
+              <input type="radio" name="audio-mode" value="process" checked>
+              <span>Só de um app</span>
+            </label>
+            <label class="segment toggle-option">
+              <input type="radio" name="audio-mode" value="system">
+              <span>Todo o PC</span>
+            </label>
+            <label class="segment toggle-option">
+              <input type="radio" name="audio-mode" value="none">
+              <span>Sem som</span>
+            </label>
+          </div>
+          <div id="audio-sessions-container">
+            <div class="session-list" id="session-list">
+              <div class="loading">Procurando apps com som…</div>
+            </div>
+          </div>
+        </section>
 
-      <section class="section" id="quality-section">
-        <div class="section-header">
-          <h2>Qualidade</h2>
-          <span class="quality-hint" id="quality-hint"></span>
-        </div>
-        <div class="quality-row">
-          <span class="quality-label">Resolucao</span>
-          <div class="audio-mode-toggle">
-            <label class="toggle-option"><input type="radio" name="q-res" value="720"><span>720p</span></label>
-            <label class="toggle-option"><input type="radio" name="q-res" value="1080"><span>1080p</span></label>
-            <label class="toggle-option"><input type="radio" name="q-res" value="native"><span>Nativa</span></label>
+        <section class="step card" id="quality-section" aria-labelledby="step-quality">
+          <div class="step-head">
+            <span class="step-num" aria-hidden="true">3</span>
+            <h2 id="step-quality">Qualidade</h2>
           </div>
-        </div>
-        <div class="quality-row">
-          <span class="quality-label">Taxa de quadros</span>
-          <div class="audio-mode-toggle">
-            <label class="toggle-option"><input type="radio" name="q-fps" value="30"><span>30 fps</span></label>
-            <label class="toggle-option"><input type="radio" name="q-fps" value="60"><span>60 fps</span></label>
+          <div class="quality-row">
+            <span class="quality-label" id="q-res-label">Resolução</span>
+            <div class="segmented audio-mode-toggle" role="radiogroup" aria-labelledby="q-res-label">
+              <label class="segment toggle-option"><input type="radio" name="q-res" value="720"><span>720p</span></label>
+              <label class="segment toggle-option"><input type="radio" name="q-res" value="1080"><span>1080p</span></label>
+              <label class="segment toggle-option"><input type="radio" name="q-res" value="native"><span>Nativa</span></label>
+            </div>
           </div>
-        </div>
-      </section>
+          <div class="quality-row">
+            <span class="quality-label" id="q-fps-label">Quadros por segundo</span>
+            <div class="segmented audio-mode-toggle" role="radiogroup" aria-labelledby="q-fps-label">
+              <label class="segment toggle-option"><input type="radio" name="q-fps" value="30"><span>30 fps</span></label>
+              <label class="segment toggle-option"><input type="radio" name="q-fps" value="60"><span>60 fps</span></label>
+            </div>
+          </div>
+          <p class="quality-hint">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-gauge"/></svg>
+            <span id="quality-hint"></span>
+          </p>
+        </section>
 
-      <button id="btn-start" class="btn btn-primary btn-large" disabled>Iniciar Compartilhamento</button>
+      <!-- host.js re-inserts #quality-section before this button, so it must stay a direct child of the panel -->
+      <button id="btn-start" type="button" class="btn btn-primary btn-lg btn-block btn-hop" disabled>Começar a transmitir</button>
     </div>
 
+    <!-- ================= Streaming ================= -->
     <div class="panel" id="panel-streaming" style="display:none">
       <div class="stream-header">
         <div class="stream-info">
-          <span class="badge badge-live">AO VIVO</span>
-          <span class="room-code" id="room-code"></span>
-          <button id="btn-copy-code" class="btn btn-small">Copiar</button>
-          <span class="viewer-count" id="viewer-count">0 assistindo</span>
+          <span class="chip chip-live chip-onair"><span class="live-eyes" aria-hidden="true"><i></i><i></i></span>Ao vivo</span>
+          <span class="chip chip-code"><span class="sr-only">Código</span><span id="room-code"></span></span>
+          <button id="btn-copy-code" type="button" class="btn btn-ghost btn-icon" aria-label="Copiar código da sala" title="Copiar código">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-copy"/></svg>
+          </button>
         </div>
         <div class="stream-actions">
-          <button id="btn-switch-source" class="btn btn-small">Trocar Janela/Audio</button>
-          <button id="btn-copy-link" class="btn btn-small">Copiar Link</button>
-          <button id="btn-stop" class="btn btn-danger">Parar</button>
+          <button id="btn-switch-source" type="button" class="btn btn-secondary">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-switch"/></svg>Trocar janela ou som
+          </button>
+          <button id="btn-copy-link" type="button" class="btn btn-secondary">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar link
+          </button>
+          <button id="btn-stop" type="button" class="btn btn-danger">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-stop"/></svg>Parar
+          </button>
         </div>
       </div>
 
-      <div class="preview-area">
-        <video id="local-preview" autoplay muted playsinline></video>
-      </div>
+      <div class="stream-body">
+        <div class="preview-area">
+          <video id="local-preview" autoplay muted playsinline></video>
+          <div class="preview-paused" aria-hidden="true">
+            <img src="/brand/frog-sleep.svg" alt="" width="96" height="88">
+            <span>A prévia pausa quando você está no jogo, para não pesar. Seus amigos continuam vendo normalmente.</span>
+          </div>
+        </div>
 
-      <div class="stream-stats" id="stream-stats"></div>
+        <aside class="room-panel card" aria-labelledby="room-panel-title">
+          <h2 id="room-panel-title">Sala</h2>
+          <div class="room-watchers">
+            <span class="room-watchers-num" id="watchers-num">0</span>
+            <span class="room-watchers-label">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
+              <span id="viewer-count">0 assistindo</span>
+            </span>
+          </div>
+          <dl class="room-facts" id="room-facts">
+            <div><dt>Modo</dt><dd id="fact-mode">Esperando alguém entrar</dd></div>
+            <div><dt>Imagem</dt><dd id="fact-video">–</dd></div>
+            <div><dt>Codificação</dt><dd id="fact-encoder">–</dd></div>
+            <div><dt>Envio</dt><dd id="fact-rate">–</dd></div>
+          </dl>
+          <p class="stream-stats" id="stream-stats"></p>
+        </aside>
+      </div>
     </div>
   </div>
 
+  <!-- ================= Switch source modal ================= -->
   <div class="modal-overlay" id="switch-modal" style="display:none">
-    <div class="modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="switch-title">
       <div class="modal-header">
-        <h2>Trocar Janela e Audio</h2>
-        <button id="btn-close-modal" class="btn btn-small">Fechar</button>
+        <h2 id="switch-title">Trocar janela ou som</h2>
+        <button id="btn-close-modal" type="button" class="btn btn-ghost btn-icon" aria-label="Fechar">
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+        </button>
       </div>
-      <div class="source-grid" id="switch-source-grid">
-        <div class="loading">Carregando janelas...</div>
-      </div>
-      <div class="switch-audio-section">
-        <div class="source-section-label">Audio (clique para trocar junto)</div>
-        <div class="session-list" id="switch-audio-list"></div>
+      <div class="modal-body">
+        <p class="modal-hint">Para trocar o som junto, escolha o som primeiro e depois a janela. Para trocar só o som, escolha o som e clique na janela que já está sendo mostrada.</p>
+        <div class="switch-audio-section">
+          <h3 class="source-section-label">Som</h3>
+          <div class="session-list" id="switch-audio-list"></div>
+        </div>
+        <div class="source-grid" id="switch-source-grid">
+          <div class="loading">Procurando janelas…</div>
+        </div>
       </div>
     </div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="/js/host.js"></script>
+  <script src="/js/host-ui.js"></script>
 </body>
 </html>

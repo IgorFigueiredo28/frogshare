@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="FrogShare">
+  <!-- Simplified mark for 16-32px: smaller details turn to mush at that size -->
+  <defs>
+    <clipPath id="screen"><rect x="36" y="40" width="184" height="136" rx="18"/></clipPath>
+  </defs>
+  <rect x="12" y="16" width="232" height="184" rx="36" fill="#1F3A2A"/>
+  <rect x="36" y="40" width="184" height="136" rx="18" fill="#B7EB6A"/>
+  <g clip-path="url(#screen)">
+    <ellipse cx="128" cy="196" rx="92" ry="66" fill="#3E9E3A"/>
+    <circle cx="90" cy="124" r="34" fill="#3E9E3A"/>
+    <circle cx="166" cy="124" r="34" fill="#3E9E3A"/>
+    <circle cx="90" cy="122" r="22" fill="#fff"/>
+    <circle cx="166" cy="122" r="22" fill="#fff"/>
+    <circle cx="94" cy="126" r="11" fill="#16301E"/>
+    <circle cx="170" cy="126" r="11" fill="#16301E"/>
+  </g>
+  <rect x="64" y="212" width="128" height="30" rx="15" fill="#1F3A2A"/>
+</svg>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="FrogShare">
+  <defs>
+    <clipPath id="screen"><rect x="38" y="46" width="180" height="120" rx="16"/></clipPath>
+  </defs>
+  <rect x="20" y="28" width="216" height="156" rx="30" fill="#1F3A2A"/>
+  <rect x="38" y="46" width="180" height="120" rx="16" fill="#B7EB6A"/>
+  <g clip-path="url(#screen)">
+    <circle cx="98" cy="118" r="26" fill="#3E9E3A"/>
+    <circle cx="158" cy="118" r="26" fill="#3E9E3A"/>
+    <ellipse cx="128" cy="176" rx="78" ry="54" fill="#3E9E3A"/>
+    <circle cx="98" cy="116" r="16" fill="#fff"/>
+    <circle cx="158" cy="116" r="16" fill="#fff"/>
+    <circle cx="101" cy="119" r="8" fill="#16301E"/>
+    <circle cx="161" cy="119" r="8" fill="#16301E"/>
+    <circle cx="104" cy="114" r="3" fill="#fff"/>
+    <circle cx="164" cy="114" r="3" fill="#fff"/>
+    <path d="M106 152 Q128 166 150 152" fill="none" stroke="#16301E" stroke-width="5" stroke-linecap="round"/>
+    <ellipse cx="80" cy="150" rx="9" ry="5.5" fill="#FF8FB1"/>
+    <ellipse cx="176" cy="150" rx="9" ry="5.5" fill="#FF8FB1"/>
+  </g>
+  <rect x="112" y="184" width="32" height="22" fill="#1F3A2A"/>
+  <rect x="72" y="202" width="112" height="22" rx="11" fill="#1F3A2A"/>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 110" role="img" aria-label="Sapo triste">
+  <ellipse cx="40" cy="101" rx="13" ry="6" fill="#3E8E3A"/>
+  <ellipse cx="80" cy="101" rx="13" ry="6" fill="#3E8E3A"/>
+  <circle cx="38" cy="36" r="19" fill="#58B44A"/>
+  <circle cx="82" cy="36" r="19" fill="#58B44A"/>
+  <ellipse cx="60" cy="70" rx="47" ry="34" fill="#58B44A"/>
+  <ellipse cx="60" cy="82" rx="27" ry="16" fill="#C9EBA0"/>
+  <circle cx="38" cy="36" r="12" fill="#fff"/>
+  <circle cx="82" cy="36" r="12" fill="#fff"/>
+  <circle cx="38" cy="40" r="6" fill="#16301E"/>
+  <circle cx="82" cy="40" r="6" fill="#16301E"/>
+  <path d="M27 24 L46 29" stroke="#16301E" stroke-width="3" stroke-linecap="round"/>
+  <path d="M93 24 L74 29" stroke="#16301E" stroke-width="3" stroke-linecap="round"/>
+  <path d="M47 72 Q60 63 73 72" fill="none" stroke="#16301E" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M91 48 Q95 56 91 60 Q87 56 91 48 Z" fill="#7CC4F2"/>
+</svg>

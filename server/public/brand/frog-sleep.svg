@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 110" role="img" aria-label="Sapo dormindo">
+  <style>
+    .z { animation: float 2.8s ease-in-out infinite; }
+    .z2 { animation-delay: 0.6s; }
+    @keyframes float { 0%, 100% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-3px); opacity: 0.55; } }
+    @media (prefers-reduced-motion: reduce) { .z { animation: none; } }
+  </style>
+  <ellipse cx="60" cy="102" rx="54" ry="8" fill="#9BD84B" opacity="0.55"/>
+  <circle cx="38" cy="36" r="19" fill="#58B44A"/>
+  <circle cx="82" cy="36" r="19" fill="#58B44A"/>
+  <ellipse cx="60" cy="70" rx="47" ry="34" fill="#58B44A"/>
+  <ellipse cx="60" cy="82" rx="27" ry="16" fill="#C9EBA0"/>
+  <path d="M30 37 Q38 43 46 37" fill="none" stroke="#16301E" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M74 37 Q82 43 90 37" fill="none" stroke="#16301E" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M52 67 Q60 72 68 67" fill="none" stroke="#16301E" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="31" cy="62" rx="6.5" ry="4" fill="#FF8FB1"/>
+  <ellipse cx="89" cy="62" rx="6.5" ry="4" fill="#FF8FB1"/>
+  <text class="z" x="99" y="19" font-family="Fredoka, Segoe UI, sans-serif" font-weight="600" font-size="16" fill="#5B7A3D">z</text>
+  <text class="z z2" x="108" y="9" font-family="Fredoka, Segoe UI, sans-serif" font-weight="600" font-size="12" fill="#5B7A3D">z</text>
+</svg>
