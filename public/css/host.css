@@ -13,6 +13,15 @@ body { min-height: 100vh; user-select: none; }
 }
 .app-top .theme-toggle { margin-left: auto; }
 
+/* Version tucked under the theme toggle; zero-height row so it takes no space and scrolls away */
+.app-meta { position: relative; height: 0; }
+.app-version {
+  position: absolute; top: var(--space-1); right: var(--space-5);
+  font: var(--text-xs) var(--font-mono); color: var(--text-2);
+}
+/* Room for the version line above the first row of buttons */
+.app-meta + .app { padding-top: calc(var(--space-5) + var(--space-3)); }
+
 .room-bar { display: flex; align-items: center; gap: var(--space-2); }
 .chip-code { font-family: var(--font-mono); font-size: var(--text-sm); letter-spacing: 1.5px; background: var(--surface-2); color: var(--text); }
 .chip-watchers { background: var(--surface-2); color: var(--text-2); }
@@ -188,6 +197,7 @@ body { min-height: 100vh; user-select: none; }
 .stream-stats {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
 }
+.room-panel .switch-row { padding-top: var(--space-3); border-top: 1px solid var(--border); }
 
 /* While streaming the header already shows the room code; don't repeat it in the top bar */
 body:has(#panel-streaming:not([style*="none"])) #room-bar { display: none !important; }
@@ -213,6 +223,7 @@ body:has(#panel-streaming:not([style*="none"])) #room-bar { display: none !impor
   .app { padding: var(--space-4); }
   .app-top { padding: var(--space-2) var(--space-4); }
   .app-top .brand-name { display: none; }
+  .app-version { right: var(--space-4); }
   .stream-actions { width: 100%; }
   .stream-actions .btn { flex: 1; }
   #panel-streaming > #quality-section .quality-row { flex-direction: column; align-items: stretch; }

@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences, screen, nativeImage } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const { createServer } = require('./server');
@@ -25,7 +26,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.0'
+        app_version: '1.4.3'
       })
     }).catch(() => {});
   } catch {}
@@ -79,10 +80,230 @@ async function createWindow() {
   };
   for (const evt of ['focus', 'blur', 'minimize', 'restore']) mainWindow.on(evt, sendFocus);
 
+  // While streaming, minimizing shows a small floating notice so it's obvious the screen is shared
+  mainWindow.on('minimize', showOverlay);
+  for (const evt of ['restore', 'show', 'focus']) mainWindow.on(evt, hideOverlay);
+  mainWindow.on('closed', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
+  });
+
   mainWindow.loadURL(`http://127.0.0.1:${serverInstance.port}/host.html`);
 }
 
+// ======== "You're live" overlay ========
+let overlayWindow = null;
+const streamStatus = { streaming: false, viewers: 0, mode: 'direto' };
+// x/y is where the full notice sits; anchor says which side the compact chip hugs
+const overlayPrefs = { enabled: true, x: null, y: null, anchor: 'right' };
+const OVERLAY_SIZE = { width: 340, height: 76 };
+const OVERLAY_COMPACT_SIZE = { width: 140, height: 44 };
+const OVERLAY_COMPACT_AFTER_MS = 30000;
+let overlayCompact = false;
+let overlayCompactTimer = null;
+
+function overlayPrefsFile() {
+  return path.join(app.getPath('userData'), 'overlay.json');
+}
+
+function loadOverlayPrefs() {
+  try { Object.assign(overlayPrefs, JSON.parse(fs.readFileSync(overlayPrefsFile(), 'utf8'))); } catch {}
+}
+
+function saveOverlayPrefs() {
+  try { fs.writeFileSync(overlayPrefsFile(), JSON.stringify(overlayPrefs)); } catch {}
+}
+
+// A saved spot can end up off-screen after a monitor is unplugged; fall back to the corner
+function overlayPosition() {
+  const { workArea } = screen.getPrimaryDisplay();
+  const corner = {
+    x: workArea.x + workArea.width - OVERLAY_SIZE.width - 16,
+    y: workArea.y + workArea.height - OVERLAY_SIZE.height - 16
+  };
+  if (overlayPrefs.x == null || overlayPrefs.y == null) return corner;
+  const onScreen = screen.getAllDisplays().some(({ workArea: a }) =>
+    overlayPrefs.x >= a.x && overlayPrefs.y >= a.y &&
+    overlayPrefs.x + OVERLAY_SIZE.width <= a.x + a.width && overlayPrefs.y + OVERLAY_SIZE.height <= a.y + a.height);
+  return onScreen ? { x: overlayPrefs.x, y: overlayPrefs.y } : corner;
+}
+
+// The chip keeps the full notice's vertical centre and the edge on its anchor side
+function compactBounds(full) {
+  const { width, height } = OVERLAY_COMPACT_SIZE;
+  return {
+    x: overlayPrefs.anchor === 'left' ? full.x : full.x + OVERLAY_SIZE.width - width,
+    y: Math.round(full.y + (OVERLAY_SIZE.height - height) / 2),
+    width, height
+  };
+}
+
+// Kept inside the chip's screen so the full notice doesn't fall back to the default corner
+function fullPositionFromCompact(chip) {
+  const { workArea: a } = screen.getDisplayMatching(chip);
+  const x = overlayPrefs.anchor === 'left' ? chip.x : chip.x + chip.width - OVERLAY_SIZE.width;
+  const y = Math.round(chip.y - (OVERLAY_SIZE.height - chip.height) / 2);
+  return {
+    x: Math.min(Math.max(x, a.x), a.x + a.width - OVERLAY_SIZE.width),
+    y: Math.min(Math.max(y, a.y), a.y + a.height - OVERLAY_SIZE.height)
+  };
+}
+
+function anchorFor(bounds) {
+  const { workArea } = screen.getDisplayMatching(bounds);
+  return bounds.x + bounds.width / 2 < workArea.x + workArea.width / 2 ? 'left' : 'right';
+}
+
+function setOverlayCompact(compact) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  clearTimeout(overlayCompactTimer);
+  overlayCompact = compact;
+  const full = { ...overlayPosition(), ...OVERLAY_SIZE };
+  overlayWindow.webContents.send('overlay-compact', { compact, anchor: overlayPrefs.anchor });
+  const bounds = compact ? compactBounds(full) : full;
+  overlayWindow.setBounds(bounds);
+  // Windows won't make the window shorter than 64px, so the chip would leave an invisible
+  // strip below it that swallows clicks; clipping the window region to the chip removes it
+  overlayWindow.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
+  // Expanded again: shrink back after another stretch so it stays out of the way
+  if (!compact) overlayCompactTimer = setTimeout(() => setOverlayCompact(true), OVERLAY_COMPACT_AFTER_MS);
+}
+
+function createOverlay() {
+  overlayWindow = new BrowserWindow({
+    ...OVERLAY_SIZE,
+    ...overlayPosition(),
+    title: 'FrogShare: ao vivo',
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    // Never take focus away from the game
+    focusable: false,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  overlayWindow.on('moved', () => {
+    // The chip is dragged by hand (it also needs clicks), see overlay-drag-end
+    if (overlayCompact) return;
+    const [x, y] = overlayWindow.getPosition();
+    overlayPrefs.anchor = anchorFor(overlayWindow.getBounds());
+    overlayPrefs.x = x;
+    overlayPrefs.y = y;
+    saveOverlayPrefs();
+  });
+  overlayWindow.on('closed', () => { overlayWindow = null; });
+  overlayWindow.webContents.on('did-finish-load', () => sendOverlayStatus());
+  overlayWindow.loadURL(`http://127.0.0.1:${serverInstance.port}/overlay.html`);
+}
+
+function sendOverlayStatus() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.webContents.send('overlay-status', streamStatus);
+}
+
+function showOverlay() {
+  if (!streamStatus.streaming || !overlayPrefs.enabled) return;
+  if (!overlayWindow) createOverlay();
+  sendOverlayStatus();
+  // Every minimize starts with the full notice, then it shrinks to a small chip
+  setOverlayCompact(false);
+  overlayWindow.showInactive();
+  // Keeps the notice out of the stream itself. Windows only honours this once the window is
+  // visible and drops it on every hide, so it has to be re-applied after each show (measured).
+  overlayWindow.setContentProtection(true);
+}
+
+function hideOverlay() {
+  clearTimeout(overlayCompactTimer);
+  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide();
+}
+
+// Pink dot on the taskbar button while live, visible even with the window minimized
+function liveBadge() {
+  const size = 16;
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2);
+      const i = (y * size + x) * 4;
+      if (d <= 7.5) {
+        const ring = d > 6;
+        pixels[i] = ring ? 0xFF : 0x6C;     // B
+        pixels[i + 1] = ring ? 0xFF : 0x33; // G
+        pixels[i + 2] = ring ? 0xFF : 0xD6; // R
+        pixels[i + 3] = 0xFF;
+      }
+    }
+  }
+  return nativeImage.createFromBitmap(pixels, { width: size, height: size });
+}
+
+ipcMain.handle('set-stream-status', (event, status) => {
+  const wasStreaming = streamStatus.streaming;
+  streamStatus.streaming = !!status.streaming;
+  streamStatus.viewers = Number(status.viewers) || 0;
+  streamStatus.mode = status.mode === 'sfu' ? 'sfu' : 'direto';
+  if (streamStatus.streaming !== wasStreaming && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setOverlayIcon(streamStatus.streaming ? liveBadge() : null, streamStatus.streaming ? 'Transmitindo' : '');
+  }
+  if (!streamStatus.streaming) hideOverlay();
+  else if (mainWindow && mainWindow.isMinimized() && !wasStreaming) showOverlay();
+  sendOverlayStatus();
+  return true;
+});
+
+ipcMain.handle('get-overlay-enabled', () => overlayPrefs.enabled);
+
+ipcMain.handle('set-overlay-enabled', (event, enabled) => {
+  overlayPrefs.enabled = !!enabled;
+  saveOverlayPrefs();
+  if (!overlayPrefs.enabled) hideOverlay();
+  return overlayPrefs.enabled;
+});
+
+ipcMain.handle('overlay-open-app', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  return true;
+});
+
+ipcMain.handle('overlay-expand', () => {
+  setOverlayCompact(false);
+  return true;
+});
+
+ipcMain.on('overlay-drag', (event, { dx, dy }) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const [x, y] = overlayWindow.getPosition();
+  overlayWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
+});
+
+ipcMain.handle('overlay-drag-end', () => {
+  if (!overlayWindow || overlayWindow.isDestroyed() || !overlayCompact) return false;
+  const chip = overlayWindow.getBounds();
+  overlayPrefs.anchor = anchorFor(chip);
+  Object.assign(overlayPrefs, fullPositionFromCompact(chip));
+  saveOverlayPrefs();
+  return true;
+});
+
+ipcMain.handle('overlay-hide', () => {
+  hideOverlay();
+  return true;
+});
+
 app.whenReady().then(async () => {
+  loadOverlayPrefs();
   serverInstance = await createServer(3030);
 
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
@@ -128,7 +349,9 @@ ipcMain.handle('get-sources', async () => {
     throw err;
   }
 
-  return sources.map(s => ({
+  // The "you're live" notice is our own window; it shouldn't be offered as something to share
+  const overlayId = overlayWindow && !overlayWindow.isDestroyed() ? overlayWindow.getMediaSourceId() : null;
+  return sources.filter(s => s.id !== overlayId).map(s => ({
     id: s.id,
     name: s.name,
     thumbnail: s.thumbnail.toDataURL(),

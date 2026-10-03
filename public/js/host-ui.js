@@ -6,6 +6,10 @@
   const viewers = document.getElementById('viewer-count');
   const watchersNum = document.getElementById('watchers-num');
   const preview = document.getElementById('local-preview');
+
+  window.electronAPI.getAppVersion().then(v => {
+    document.getElementById('app-version').textContent = 'v' + v;
+  });
   const facts = {
     mode: document.getElementById('fact-mode'),
     video: document.getElementById('fact-video'),
@@ -39,11 +43,30 @@
     document.body.classList.toggle('preview-off', !preview.srcObject);
   }
 
-  new MutationObserver(renderStats).observe(stats, { childList: true, characterData: true, subtree: true });
-  new MutationObserver(renderViewers).observe(viewers, { childList: true, characterData: true, subtree: true });
-  setInterval(renderPreview, 1000);
+  // Tell the main process when we're live, so it can show the floating notice on minimize
+  const panelStreaming = document.getElementById('panel-streaming');
+  let lastStatus = '';
+  function sendStatus() {
+    const streaming = panelStreaming.style.display !== 'none';
+    const count = parseInt(viewers.textContent, 10) || 0;
+    const mode = stats.textContent.includes('SFU') ? 'sfu' : 'direto';
+    const key = `${streaming}|${count}|${mode}`;
+    if (key === lastStatus) return;
+    lastStatus = key;
+    document.title = streaming ? 'FrogShare · ao vivo' : 'FrogShare';
+    window.electronAPI.setStreamStatus({ streaming, viewers: count, mode });
+  }
+
+  const overlayToggle = document.getElementById('overlay-toggle');
+  window.electronAPI.getOverlayEnabled().then(enabled => { overlayToggle.checked = enabled; });
+  overlayToggle.addEventListener('change', () => window.electronAPI.setOverlayEnabled(overlayToggle.checked));
+
+  new MutationObserver(() => { renderStats(); sendStatus(); }).observe(stats, { childList: true, characterData: true, subtree: true });
+  new MutationObserver(() => { renderViewers(); sendStatus(); }).observe(viewers, { childList: true, characterData: true, subtree: true });
+  setInterval(() => { renderPreview(); sendStatus(); }, 1000);
 
   renderStats();
   renderViewers();
   renderPreview();
+  sendStatus();
 })();
