@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setOverlayEnabled: (enabled) => ipcRenderer.invoke('set-overlay-enabled', enabled),
   overlayOpenApp: () => ipcRenderer.invoke('overlay-open-app'),
   overlayHide: () => ipcRenderer.invoke('overlay-hide'),
+  overlayExpand: () => ipcRenderer.invoke('overlay-expand'),
+  overlayDrag: (dx, dy) => ipcRenderer.send('overlay-drag', { dx, dy }),
+  overlayDragEnd: () => ipcRenderer.invoke('overlay-drag-end'),
+  onOverlayCompact: (callback) => {
+    ipcRenderer.on('overlay-compact', (_, state) => callback(state));
+  },
   onOverlayStatus: (callback) => {
     ipcRenderer.on('overlay-status', (_, status) => callback(status));
   },
