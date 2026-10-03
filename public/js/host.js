@@ -194,7 +194,11 @@ function getAudioMode() {
 // ======== Source Selection ========
 async function loadSources() {
   sourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
-  const sources = await window.electronAPI.getSources();
+  const [sources, needsScreenPermission] = await Promise.all([
+    window.electronAPI.getSources(),
+    window.electronAPI.needsScreenPermission()
+  ]);
+  document.getElementById('screen-permission-banner').style.display = needsScreenPermission ? '' : 'none';
 
   const screens = sources.filter(s => s.isScreen);
   const windows = sources.filter(s => !s.isScreen);
@@ -1465,6 +1469,7 @@ async function switchToSource(source) {
 // ======== Refresh buttons ========
 btnRefreshSources.addEventListener('click', loadSources);
 btnRefreshAudio.addEventListener('click', loadAudioSessions);
+document.getElementById('btn-screen-settings').addEventListener('click', () => window.electronAPI.openScreenSettings());
 
 // ======== Update check ========
 // Old builds stutter badly (CPU encoding per viewer) and nothing ever told the host to update
@@ -1485,9 +1490,12 @@ async function checkForUpdate() {
     const url = await getSignalUrl();
     const latest = await (await fetch(`${url}/api/app-version`)).json();
     if (!latest.version || !versionOlder(appVersion, latest.version)) return;
+    const platform = await window.electronAPI.getPlatform();
+    const downloadUrl = platform === 'darwin' ? latest.macUrl : latest.url;
+    if (!downloadUrl) return;
     document.getElementById('update-text').textContent =
       `Versão ${latest.version} disponível (você está na ${appVersion}).`;
-    document.getElementById('btn-update').onclick = () => window.electronAPI.openDownload(latest.url);
+    document.getElementById('btn-update').onclick = () => window.electronAPI.openDownload(downloadUrl);
     document.getElementById('update-banner').style.display = '';
   } catch {}
 }

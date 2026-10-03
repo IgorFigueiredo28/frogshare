@@ -38,7 +38,9 @@
 }
 .host-cta h2 { font-size: var(--text-lg); margin-bottom: 2px; }
 .host-cta p { color: var(--text-2); font-size: var(--text-sm); }
-.host-cta .btn-download { grid-column: 1 / -1; }
+.host-cta .download-buttons { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--space-2); }
+/* .btn sets display, which would otherwise beat the hidden attribute */
+.host-cta [hidden] { display: none; }
 .host-cta .download-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-2); }
 
 .perks {
@@ -54,7 +56,7 @@
 
 @media (min-width: 640px) {
   .host-cta { grid-template-columns: auto 1fr auto; }
-  .host-cta .btn-download { grid-column: auto; }
+  .host-cta .download-buttons { grid-column: auto; }
 }
 
 @media (max-width: 480px) {

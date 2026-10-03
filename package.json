@@ -7,7 +7,9 @@
     "start": "electron .",
     "server": "node src/server-standalone.js",
     "dist": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist:portable": "electron-builder --win portable",
+    "build:native:mac": "swiftc -O -target arm64-apple-macos11 native/mac/AudioCapture.swift -o native/AudioCapture-mac",
+    "dist:mac": "electron-builder --mac dmg --arm64"
   },
   "build": {
     "appId": "com.screenshare.app",
@@ -27,6 +29,12 @@
             "x64"
           ]
         }
+      ],
+      "extraResources": [
+        {
+          "from": "native/AudioCapture.exe",
+          "to": "native/AudioCapture.exe"
+        }
       ]
     },
     "nsis": {
@@ -41,12 +49,34 @@
       "node_modules/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "native/AudioCapture.exe",
-        "to": "native/AudioCapture.exe"
-      }
-    ],
+    "mac": {
+      "icon": "server/public/brand/icon-512.png",
+      "category": "public.app-category.social-networking",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSAudioCaptureUsageDescription": "O FrogShare captura o som do app escolhido para transmitir junto com a tela.",
+        "NSScreenCaptureUsageDescription": "O FrogShare grava a tela ou janela escolhida para transmitir aos seus amigos."
+      },
+      "extraResources": [
+        {
+          "from": "native/AudioCapture-mac",
+          "to": "native/AudioCapture-mac"
+        }
+      ]
+    },
+    "dmg": {
+      "title": "FrogShare"
+    },
+    "afterSign": "build/adhoc-sign.js",
     "asar": true
   },
   "dependencies": {

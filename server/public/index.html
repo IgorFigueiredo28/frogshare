@@ -55,13 +55,20 @@
       <img src="/brand/icon.svg" alt="" width="64" height="64">
       <div class="host-cta-text">
         <h2 id="host-cta-title">Quer transmitir a sua tela?</h2>
-        <p>Baixe o app para Windows. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
+        <p>Baixe o app. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
         <p class="download-note">O Google Drive avisa que não consegue verificar vírus em arquivos de programa. É normal: clique em <strong>Fazer o download assim mesmo</strong>.</p>
+        <p class="download-note" id="mac-note" hidden>No Mac (chip M1 ou mais novo): arraste o FrogShare para Aplicativos. Na primeira vez que abrir, vá em <strong>Ajustes do Sistema › Privacidade e Segurança</strong> e clique em <strong>Abrir Mesmo Assim</strong>. Escolher o som de um app exige macOS 14.2 ou mais novo.</p>
       </div>
-      <a href="https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&amp;export=download" target="_blank" rel="noopener" class="btn btn-secondary btn-download">
-        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
-        Baixar para Windows
-      </a>
+      <div class="download-buttons">
+        <a id="btn-download-win" href="https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&amp;export=download" target="_blank" rel="noopener" class="btn btn-secondary btn-download">
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+          Baixar para Windows
+        </a>
+        <a id="btn-download-mac" href="#" target="_blank" rel="noopener" class="btn btn-secondary btn-download" hidden>
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+          Baixar para Mac
+        </a>
+      </div>
     </section>
 
     <ul class="perks" aria-label="O que o FrogShare faz">
@@ -95,6 +102,18 @@
     inputRoom.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') btnJoin.click();
     });
+
+    // Download links live in one place (/api/app-version); the Mac button stays hidden until a build is published
+    fetch('/api/app-version').then(r => r.json()).then(({ url, macUrl }) => {
+      if (url) document.getElementById('btn-download-win').href = url;
+      if (!macUrl) return;
+      const mac = document.getElementById('btn-download-mac');
+      mac.href = macUrl;
+      mac.hidden = false;
+      document.getElementById('mac-note').hidden = false;
+      // Put the visitor's own platform first
+      if (/Mac/.test(navigator.platform)) mac.parentNode.prepend(mac);
+    }).catch(() => {});
   </script>
 </body>
 </html>

@@ -1,13 +1,16 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences } = require('electron');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const { createServer } = require('./server');
 
 const isDev = !app.isPackaged;
+const isMac = process.platform === 'darwin';
+// Same protocol on both: WASAPI (C#) on Windows, Core Audio process taps (Swift) on macOS
+const AUDIO_CAPTURE_BIN = isMac ? 'AudioCapture-mac' : 'AudioCapture.exe';
 const AUDIO_CAPTURE_EXE = isDev
-  ? path.join(__dirname, '..', 'native', 'AudioCapture.exe')
-  : path.join(process.resourcesPath, 'native', 'AudioCapture.exe');
+  ? path.join(__dirname, '..', 'native', AUDIO_CAPTURE_BIN)
+  : path.join(process.resourcesPath, 'native', AUDIO_CAPTURE_BIN);
 
 const SIGNAL_SERVER = process.env.SIGNAL_SERVER || 'https://telaskzpetentes.onrender.com';
 
@@ -54,7 +57,8 @@ async function createWindow() {
     minWidth: 600,
     minHeight: 500,
     title: 'FrogShare',
-    icon: path.join(__dirname, '..', 'server', 'public', 'brand', 'icon.ico'),
+    // macOS takes the icon from the app bundle
+    icon: isMac ? undefined : path.join(__dirname, '..', 'server', 'public', 'brand', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -111,11 +115,18 @@ app.on('window-all-closed', () => {
 
 // ======== IPC: Window/Screen Sources ========
 ipcMain.handle('get-sources', async () => {
-  const sources = await desktopCapturer.getSources({
-    types: ['window', 'screen'],
-    thumbnailSize: { width: 320, height: 180 },
-    fetchWindowIcons: true
-  });
+  let sources;
+  try {
+    sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: true
+    });
+  } catch (err) {
+    // macOS rejects outright until Screen Recording is allowed; the page shows how to fix that
+    if (isMac) return [];
+    throw err;
+  }
 
   return sources.map(s => ({
     id: s.id,
@@ -125,6 +136,18 @@ ipcMain.handle('get-sources', async () => {
     isScreen: s.id.startsWith('screen:')
   }));
 });
+
+// Without Screen Recording access macOS still lists windows, but every capture comes out blank
+ipcMain.handle('needs-screen-permission', () => {
+  return isMac && systemPreferences.getMediaAccessStatus('screen') !== 'granted';
+});
+
+ipcMain.handle('open-screen-settings', () => {
+  if (isMac) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  return true;
+});
+
+ipcMain.handle('get-platform', () => process.platform);
 
 // ======== IPC: Audio Sessions ========
 ipcMain.handle('list-audio-sessions', () => {
@@ -239,6 +262,8 @@ function setStreamingPriority(on) {
   for (const pid of pids) {
     try { os.setPriority(pid, cpu); } catch {}
   }
+  // GPU scheduling priority (D3DKMT) is Windows-only
+  if (isMac) return;
   const proc = spawn(AUDIO_CAPTURE_EXE, ['gpu-priority', ...pids.map(String), on ? '4' : '2']);
   let out = '';
   proc.stderr.on('data', d => { out += d; });
