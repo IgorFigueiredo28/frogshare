@@ -43,7 +43,7 @@ const LATEST_APP = {
   // Direct download: skips Drive's preview page and goes straight to its virus-scan notice
   url: 'https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&export=download',
   // Apple Silicon .dmg; the site hides its download button while this is null
-  macUrl: null
+  macUrl: 'https://drive.usercontent.google.com/download?id=17eAsGhGXXWTauVKpL8l7T2Xkyvn_wr-E&export=download'
 };
 
 function versionOlder(a, b) {
