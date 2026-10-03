@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>FrogShare: ao vivo</title>
+  <script src="/brand/theme.js"></script>
+  <link rel="stylesheet" href="/brand/frog-theme.css">
+  <link rel="stylesheet" href="/css/overlay.css">
+</head>
+<body>
+  <div class="pill" role="status" aria-live="polite">
+    <img class="pill-frog" src="/brand/frog-head.svg" alt="" width="40" height="35">
+    <div class="pill-text">
+      <span class="pill-title">
+        <span class="live-eyes" aria-hidden="true"><i></i><i></i></span>
+        Você está ao vivo
+      </span>
+      <span class="pill-sub" id="ov-sub">Compartilhando a tela</span>
+    </div>
+    <button id="ov-open" type="button" class="btn btn-ghost btn-icon" title="Abrir o FrogShare" aria-label="Abrir o FrogShare">
+      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-window"/></svg>
+    </button>
+    <button id="ov-hide" type="button" class="btn btn-ghost btn-icon" title="Ocultar este aviso" aria-label="Ocultar este aviso">
+      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+    </button>
+  </div>
+  <script src="/js/overlay.js"></script>
+</body>
+</html>

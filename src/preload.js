@@ -9,6 +9,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
   getSignalServer: () => ipcRenderer.invoke('get-signal-server'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  setStreamStatus: (status) => ipcRenderer.invoke('set-stream-status', status),
+  getOverlayEnabled: () => ipcRenderer.invoke('get-overlay-enabled'),
+  setOverlayEnabled: (enabled) => ipcRenderer.invoke('set-overlay-enabled', enabled),
+  overlayOpenApp: () => ipcRenderer.invoke('overlay-open-app'),
+  overlayHide: () => ipcRenderer.invoke('overlay-hide'),
+  onOverlayStatus: (callback) => {
+    ipcRenderer.on('overlay-status', (_, status) => callback(status));
+  },
   openDownload: (url) => ipcRenderer.invoke('open-download', url),
   setStreamingPriority: (on) => ipcRenderer.invoke('set-streaming-priority', on),
 

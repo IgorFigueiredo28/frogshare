@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, screen, nativeImage } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const { createServer } = require('./server');
@@ -22,7 +23,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.0'
+        app_version: '1.4.1'
       })
     }).catch(() => {});
   } catch {}
@@ -75,10 +76,159 @@ async function createWindow() {
   };
   for (const evt of ['focus', 'blur', 'minimize', 'restore']) mainWindow.on(evt, sendFocus);
 
+  // While streaming, minimizing shows a small floating notice so it's obvious the screen is shared
+  mainWindow.on('minimize', showOverlay);
+  for (const evt of ['restore', 'show', 'focus']) mainWindow.on(evt, hideOverlay);
+  mainWindow.on('closed', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
+  });
+
   mainWindow.loadURL(`http://127.0.0.1:${serverInstance.port}/host.html`);
 }
 
+// ======== "You're live" overlay ========
+let overlayWindow = null;
+const streamStatus = { streaming: false, viewers: 0, mode: 'direto' };
+const overlayPrefs = { enabled: true, x: null, y: null };
+const OVERLAY_SIZE = { width: 340, height: 76 };
+
+function overlayPrefsFile() {
+  return path.join(app.getPath('userData'), 'overlay.json');
+}
+
+function loadOverlayPrefs() {
+  try { Object.assign(overlayPrefs, JSON.parse(fs.readFileSync(overlayPrefsFile(), 'utf8'))); } catch {}
+}
+
+function saveOverlayPrefs() {
+  try { fs.writeFileSync(overlayPrefsFile(), JSON.stringify(overlayPrefs)); } catch {}
+}
+
+// A saved spot can end up off-screen after a monitor is unplugged; fall back to the corner
+function overlayPosition() {
+  const { workArea } = screen.getPrimaryDisplay();
+  const corner = {
+    x: workArea.x + workArea.width - OVERLAY_SIZE.width - 16,
+    y: workArea.y + workArea.height - OVERLAY_SIZE.height - 16
+  };
+  if (overlayPrefs.x == null || overlayPrefs.y == null) return corner;
+  const onScreen = screen.getAllDisplays().some(({ workArea: a }) =>
+    overlayPrefs.x >= a.x && overlayPrefs.y >= a.y &&
+    overlayPrefs.x + OVERLAY_SIZE.width <= a.x + a.width && overlayPrefs.y + OVERLAY_SIZE.height <= a.y + a.height);
+  return onScreen ? { x: overlayPrefs.x, y: overlayPrefs.y } : corner;
+}
+
+function createOverlay() {
+  overlayWindow = new BrowserWindow({
+    ...OVERLAY_SIZE,
+    ...overlayPosition(),
+    title: 'FrogShare: ao vivo',
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    // Never take focus away from the game
+    focusable: false,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  overlayWindow.on('moved', () => {
+    const [x, y] = overlayWindow.getPosition();
+    overlayPrefs.x = x;
+    overlayPrefs.y = y;
+    saveOverlayPrefs();
+  });
+  overlayWindow.on('closed', () => { overlayWindow = null; });
+  overlayWindow.webContents.on('did-finish-load', () => sendOverlayStatus());
+  overlayWindow.loadURL(`http://127.0.0.1:${serverInstance.port}/overlay.html`);
+}
+
+function sendOverlayStatus() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.webContents.send('overlay-status', streamStatus);
+}
+
+function showOverlay() {
+  if (!streamStatus.streaming || !overlayPrefs.enabled) return;
+  if (!overlayWindow) createOverlay();
+  overlayWindow.setPosition(...Object.values(overlayPosition()));
+  sendOverlayStatus();
+  overlayWindow.showInactive();
+  // Keeps the notice out of the stream itself. Windows only honours this once the window is
+  // visible and drops it on every hide, so it has to be re-applied after each show (measured).
+  overlayWindow.setContentProtection(true);
+}
+
+function hideOverlay() {
+  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide();
+}
+
+// Pink dot on the taskbar button while live, visible even with the window minimized
+function liveBadge() {
+  const size = 16;
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2);
+      const i = (y * size + x) * 4;
+      if (d <= 7.5) {
+        const ring = d > 6;
+        pixels[i] = ring ? 0xFF : 0x6C;     // B
+        pixels[i + 1] = ring ? 0xFF : 0x33; // G
+        pixels[i + 2] = ring ? 0xFF : 0xD6; // R
+        pixels[i + 3] = 0xFF;
+      }
+    }
+  }
+  return nativeImage.createFromBitmap(pixels, { width: size, height: size });
+}
+
+ipcMain.handle('set-stream-status', (event, status) => {
+  const wasStreaming = streamStatus.streaming;
+  streamStatus.streaming = !!status.streaming;
+  streamStatus.viewers = Number(status.viewers) || 0;
+  streamStatus.mode = status.mode === 'sfu' ? 'sfu' : 'direto';
+  if (streamStatus.streaming !== wasStreaming && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setOverlayIcon(streamStatus.streaming ? liveBadge() : null, streamStatus.streaming ? 'Transmitindo' : '');
+  }
+  if (!streamStatus.streaming) hideOverlay();
+  else if (mainWindow && mainWindow.isMinimized() && !wasStreaming) showOverlay();
+  sendOverlayStatus();
+  return true;
+});
+
+ipcMain.handle('get-overlay-enabled', () => overlayPrefs.enabled);
+
+ipcMain.handle('set-overlay-enabled', (event, enabled) => {
+  overlayPrefs.enabled = !!enabled;
+  saveOverlayPrefs();
+  if (!overlayPrefs.enabled) hideOverlay();
+  return overlayPrefs.enabled;
+});
+
+ipcMain.handle('overlay-open-app', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  return true;
+});
+
+ipcMain.handle('overlay-hide', () => {
+  hideOverlay();
+  return true;
+});
+
 app.whenReady().then(async () => {
+  loadOverlayPrefs();
   serverInstance = await createServer(3030);
 
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
@@ -117,7 +267,9 @@ ipcMain.handle('get-sources', async () => {
     fetchWindowIcons: true
   });
 
-  return sources.map(s => ({
+  // The "you're live" notice is our own window; it shouldn't be offered as something to share
+  const overlayId = overlayWindow && !overlayWindow.isDestroyed() ? overlayWindow.getMediaSourceId() : null;
+  return sources.filter(s => s.id !== overlayId).map(s => ({
     id: s.id,
     name: s.name,
     thumbnail: s.thumbnail.toDataURL(),

@@ -1,0 +1,29 @@
+/* Floating "you're live" notice shown while the app is minimized */
+html, body { background: transparent; overflow: hidden; user-select: none; }
+
+body { height: 100vh; display: flex; align-items: center; justify-content: center; padding: 6px; }
+
+.pill {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--surface); color: var(--text);
+  border: 1.5px solid var(--border-strong); border-radius: var(--radius-pill);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  /* The whole pill moves the window; buttons opt out */
+  -webkit-app-region: drag;
+  animation: fs-splash var(--dur-slow) var(--ease-hop);
+}
+
+.pill-frog { width: 40px; height: auto; flex-shrink: 0; }
+
+.pill-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.pill-title {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font: 600 var(--text-sm) var(--font-ui); color: var(--on-live-soft);
+}
+.pill-title .live-eyes i { width: 6px; height: 6px; }
+.pill-sub { font-size: var(--text-xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.pill .btn-icon { -webkit-app-region: no-drag; width: 36px; min-height: 36px; color: var(--text-2); }
+.pill .btn-icon:hover { color: var(--text); }

@@ -168,6 +168,7 @@ body { min-height: 100vh; user-select: none; }
 .stream-stats {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
 }
+.room-panel .switch-row { padding-top: var(--space-3); border-top: 1px solid var(--border); }
 
 /* While streaming the header already shows the room code; don't repeat it in the top bar */
 body:has(#panel-streaming:not([style*="none"])) #room-bar { display: none !important; }
