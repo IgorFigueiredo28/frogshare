@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openDownload: (url) => ipcRenderer.invoke('open-download', url),
   setStreamingPriority: (on) => ipcRenderer.invoke('set-streaming-priority', on),
+  getPermissions: () => ipcRenderer.invoke('get-permissions'),
+  requestPermission: (kind) => ipcRenderer.invoke('request-permission', kind),
+  relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
+  getPlatform: () => ipcRenderer.invoke('get-platform'),
 
   onAudioData: (callback) => {
     ipcRenderer.on('audio-data', (_, data) => callback(data));

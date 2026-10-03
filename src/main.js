@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences, screen, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -6,9 +6,12 @@ const { spawn } = require('child_process');
 const { createServer } = require('./server');
 
 const isDev = !app.isPackaged;
+const isMac = process.platform === 'darwin';
+// Same protocol on both: WASAPI (C#) on Windows, Core Audio process taps (Swift) on macOS
+const AUDIO_CAPTURE_BIN = isMac ? 'AudioCapture-mac' : 'AudioCapture.exe';
 const AUDIO_CAPTURE_EXE = isDev
-  ? path.join(__dirname, '..', 'native', 'AudioCapture.exe')
-  : path.join(process.resourcesPath, 'native', 'AudioCapture.exe');
+  ? path.join(__dirname, '..', 'native', AUDIO_CAPTURE_BIN)
+  : path.join(process.resourcesPath, 'native', AUDIO_CAPTURE_BIN);
 
 const SIGNAL_SERVER = process.env.SIGNAL_SERVER || 'https://telaskzpetentes.onrender.com';
 
@@ -55,7 +58,8 @@ async function createWindow() {
     minWidth: 600,
     minHeight: 500,
     title: 'FrogShare',
-    icon: path.join(__dirname, '..', 'server', 'public', 'brand', 'icon.ico'),
+    // macOS takes the icon from the app bundle
+    icon: isMac ? undefined : path.join(__dirname, '..', 'server', 'public', 'brand', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -169,6 +173,8 @@ function createOverlay() {
     ...OVERLAY_SIZE,
     ...overlayPosition(),
     title: 'FrogShare: ao vivo',
+    // An NSPanel can float over another app's full-screen Space without changing how FrogShare shows in the Dock
+    type: isMac ? 'panel' : undefined,
     frame: false,
     transparent: true,
     resizable: false,
@@ -187,6 +193,9 @@ function createOverlay() {
     }
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  // A full-screen game on macOS gets its own Space, and a plain always-on-top window stays behind on the desktop.
+  // Electron's default here turns the app into a background agent, which drops its Dock icon for good.
+  if (isMac) overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   overlayWindow.on('moved', () => {
     // The chip is dragged by hand (it also needs clicks), see overlay-drag-end
     if (overlayCompact) return;
@@ -332,11 +341,18 @@ app.on('window-all-closed', () => {
 
 // ======== IPC: Window/Screen Sources ========
 ipcMain.handle('get-sources', async () => {
-  const sources = await desktopCapturer.getSources({
-    types: ['window', 'screen'],
-    thumbnailSize: { width: 320, height: 180 },
-    fetchWindowIcons: true
-  });
+  let sources;
+  try {
+    sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: true
+    });
+  } catch (err) {
+    // macOS rejects outright until Screen Recording is allowed; the page shows how to fix that
+    if (isMac) return [];
+    throw err;
+  }
 
   // The "you're live" notice is our own window; it shouldn't be offered as something to share
   const overlayId = overlayWindow && !overlayWindow.isDestroyed() ? overlayWindow.getMediaSourceId() : null;
@@ -348,6 +364,54 @@ ipcMain.handle('get-sources', async () => {
     isScreen: s.id.startsWith('screen:')
   }));
 });
+
+// ======== IPC: macOS permissions ========
+// Screen Recording and System Audio Recording are separate macOS permissions. Missing the first
+// makes every capture blank, missing the second makes the sound silent, and neither says so itself.
+const PRIVACY_PANES = {
+  screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+  audio: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture'
+};
+
+function runHelperJson(args) {
+  return new Promise((resolve) => {
+    const proc = spawn(AUDIO_CAPTURE_EXE, args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.on('close', () => { try { resolve(JSON.parse(stderr.trim())); } catch { resolve({}); } });
+    proc.on('error', () => resolve({}));
+  });
+}
+
+async function getPermissions() {
+  if (!isMac) return { screen: 'granted', audio: 'granted' };
+  const { status } = await runHelperJson(['audio-permission']);
+  return { screen: systemPreferences.getMediaAccessStatus('screen'), audio: status || 'unknown' };
+}
+
+ipcMain.handle('get-permissions', getPermissions);
+
+ipcMain.handle('request-permission', async (event, kind) => {
+  if (!isMac || !PRIVACY_PANES[kind]) return getPermissions();
+  if (kind === 'screen') {
+    // A capture attempt is what puts FrogShare in the Settings list (and shows the prompt the first time).
+    // Granting only takes effect after a relaunch, so Settings is always where this ends up.
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => {});
+    if (systemPreferences.getMediaAccessStatus('screen') !== 'granted') shell.openExternal(PRIVACY_PANES.screen);
+  } else {
+    // Waits on the system prompt if undecided; after a "no" only Settings can change it
+    const { status } = await runHelperJson(['audio-permission', 'request']);
+    if (status === 'denied') shell.openExternal(PRIVACY_PANES.audio);
+  }
+  return getPermissions();
+});
+
+ipcMain.handle('relaunch-app', () => {
+  app.relaunch();
+  app.exit(0);
+});
+
+ipcMain.handle('get-platform', () => process.platform);
 
 // ======== IPC: Audio Sessions ========
 ipcMain.handle('list-audio-sessions', () => {
@@ -462,6 +526,8 @@ function setStreamingPriority(on) {
   for (const pid of pids) {
     try { os.setPriority(pid, cpu); } catch {}
   }
+  // GPU scheduling priority (D3DKMT) is Windows-only
+  if (isMac) return;
   const proc = spawn(AUDIO_CAPTURE_EXE, ['gpu-priority', ...pids.map(String), on ? '4' : '2']);
   let out = '';
   proc.stderr.on('data', d => { out += d; });

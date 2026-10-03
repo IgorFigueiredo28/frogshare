@@ -55,13 +55,20 @@
       <img src="/brand/icon.svg" alt="" width="64" height="64">
       <div class="host-cta-text">
         <h2 id="host-cta-title">Quer transmitir a sua tela?</h2>
-        <p>Baixe o app para Windows. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
+        <p>Baixe o app. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
         <p class="download-note">O Google Drive avisa que não consegue verificar vírus em arquivos de programa. É normal: clique em <strong>Fazer o download assim mesmo</strong>.</p>
+        <p class="download-note" id="mac-note" hidden>Mac: precisa de chip M1 ou mais novo. Ao baixar, mostramos o passo a passo para instalar.</p>
       </div>
-      <a href="https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&amp;export=download" target="_blank" rel="noopener" class="btn btn-secondary btn-download">
-        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
-        Baixar para Windows
-      </a>
+      <div class="download-buttons">
+        <a id="btn-download-win" href="https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&amp;export=download" target="_blank" rel="noopener" class="btn btn-secondary btn-download">
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+          Baixar para Windows
+        </a>
+        <a id="btn-download-mac" href="#" target="_blank" rel="noopener" class="btn btn-secondary btn-download" hidden>
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+          Baixar para Mac
+        </a>
+      </div>
     </section>
 
     <ul class="perks" aria-label="O que o FrogShare faz">
@@ -70,6 +77,35 @@
       <li><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-users"/></svg>Vários amigos na mesma sala</li>
     </ul>
   </main>
+
+  <!-- Without an Apple Developer ID macOS blocks the first launch, and nothing in the app can run
+       to explain it. So the steps are shown here, right when the download starts. -->
+  <div class="modal-overlay" id="mac-guide" hidden>
+    <div class="modal mac-guide" role="dialog" aria-modal="true" aria-labelledby="mac-guide-title">
+      <div class="mac-guide-head">
+        <img src="/brand/frog.svg" alt="" width="64" height="59">
+        <div>
+          <h2 id="mac-guide-title">Instalando no Mac</h2>
+          <p>O download começou em outra aba. Depois, é só seguir:</p>
+        </div>
+        <button id="btn-mac-guide-close" type="button" class="btn btn-ghost btn-icon" aria-label="Fechar">
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+        </button>
+      </div>
+      <ol class="mac-steps">
+        <li>Se o Google Drive avisar que não consegue verificar vírus, clique em <strong>Fazer o download assim mesmo</strong>.</li>
+        <li>Abra o arquivo baixado e arraste o <strong>FrogShare</strong> para a pasta <strong>Aplicativos</strong>.</li>
+        <li>Abra o FrogShare. O Mac vai dizer que <em>não conseguiu verificar</em> o app (é porque ele não vem da App Store). Clique em <strong>Concluído</strong> (<em>Done</em>), <u>não</u> em Mover para o Lixo.</li>
+        <li>
+          Abra a tela de segurança, role até o fim e clique em <strong>Abrir Mesmo Assim</strong> (<em>Open Anyway</em>):
+          <a class="btn btn-secondary mac-settings-link" href="x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-arrow-right"/></svg>Abrir Privacidade e Segurança
+          </a>
+        </li>
+        <li>Pronto! O FrogShare abre e mostra o que mais falta autorizar. Isso tudo só acontece na primeira vez.</li>
+      </ol>
+    </div>
+  </div>
 
   <script>
     const btnJoin = document.getElementById('btn-join');
@@ -95,6 +131,25 @@
     inputRoom.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') btnJoin.click();
     });
+
+    // Download links live in one place (/api/app-version); the Mac button stays hidden until a build is published
+    fetch('/api/app-version').then(r => r.json()).then(({ url, macUrl }) => {
+      if (url) document.getElementById('btn-download-win').href = url;
+      if (!macUrl) return;
+      const mac = document.getElementById('btn-download-mac');
+      mac.href = macUrl;
+      mac.hidden = false;
+      document.getElementById('mac-note').hidden = false;
+      // Put the visitor's own platform first
+      if (/Mac/.test(navigator.platform)) mac.parentNode.prepend(mac);
+    }).catch(() => {});
+
+    const macGuide = document.getElementById('mac-guide');
+    // The link still opens the download; the guide shows on top of this page
+    document.getElementById('btn-download-mac').addEventListener('click', () => { macGuide.hidden = false; });
+    document.getElementById('btn-mac-guide-close').addEventListener('click', () => { macGuide.hidden = true; });
+    macGuide.addEventListener('click', (e) => { if (e.target === macGuide) macGuide.hidden = true; });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') macGuide.hidden = true; });
   </script>
 </body>
 </html>
