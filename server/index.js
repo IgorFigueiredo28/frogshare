@@ -40,7 +40,8 @@ const LATEST_APP = {
   version: '1.4.0',
   // Below this the host has no GPU encoding, TURN, upload sharing or SFU
   minimum: '1.3.0',
-  url: 'https://drive.google.com/file/d/1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu/view?usp=sharing'
+  // Direct download: skips Drive's preview page and goes straight to its virus-scan notice
+  url: 'https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&export=download'
 };
 
 function versionOlder(a, b) {

@@ -39,6 +39,7 @@
 .host-cta h2 { font-size: var(--text-lg); margin-bottom: 2px; }
 .host-cta p { color: var(--text-2); font-size: var(--text-sm); }
 .host-cta .btn-download { grid-column: 1 / -1; }
+.host-cta .download-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-2); }
 
 .perks {
   list-style: none; width: 100%;
