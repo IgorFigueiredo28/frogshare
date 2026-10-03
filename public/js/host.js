@@ -194,11 +194,8 @@ function getAudioMode() {
 // ======== Source Selection ========
 async function loadSources() {
   sourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
-  const [sources, needsScreenPermission] = await Promise.all([
-    window.electronAPI.getSources(),
-    window.electronAPI.needsScreenPermission()
-  ]);
-  document.getElementById('screen-permission-banner').style.display = needsScreenPermission ? '' : 'none';
+  const sources = await window.electronAPI.getSources();
+  refreshPermissions();
 
   const screens = sources.filter(s => s.isScreen);
   const windows = sources.filter(s => !s.isScreen);
@@ -1469,7 +1466,6 @@ async function switchToSource(source) {
 // ======== Refresh buttons ========
 btnRefreshSources.addEventListener('click', loadSources);
 btnRefreshAudio.addEventListener('click', loadAudioSessions);
-document.getElementById('btn-screen-settings').addEventListener('click', () => window.electronAPI.openScreenSettings());
 
 // ======== Update check ========
 // Old builds stutter badly (CPU encoding per viewer) and nothing ever told the host to update
@@ -1500,7 +1496,79 @@ async function checkForUpdate() {
   } catch {}
 }
 
+// ======== macOS permissions ========
+// Screen and system-audio recording each need a macOS permission that nothing else asks for:
+// without them the stream is blank or silent. Walk the host through both on first launch.
+const panelPermissions = document.getElementById('panel-permissions');
+const btnPermContinue = document.getElementById('btn-perm-continue');
+const btnPermRelaunch = document.getElementById('btn-perm-relaunch');
+const requestedPermissions = new Set();
+let permissionPoll = null;
+
+const audioMissing = (p) => p.audio === 'denied' || p.audio === 'not-determined';
+const permissionsMissing = (p) => p.screen !== 'granted' || audioMissing(p);
+
+function renderPermissions(p) {
+  for (const row of panelPermissions.querySelectorAll('[data-perm]')) {
+    const kind = row.dataset.perm;
+    const status = p[kind];
+    const granted = status === 'granted';
+    // "unknown": the check itself isn't available, so there is nothing useful to ask
+    row.hidden = status === 'unknown';
+    row.querySelector('.perm-done').hidden = !granted;
+    const unsupported = row.querySelector('.perm-unsupported');
+    if (unsupported) unsupported.hidden = status !== 'unsupported';
+    row.querySelector('.perm-btn').hidden = granted || status === 'unsupported';
+    row.querySelector('.perm-hint').hidden = granted || !requestedPermissions.has(kind);
+  }
+  // Screen access only applies after a relaunch, so after asking that becomes the next step
+  const needsRelaunch = p.screen !== 'granted' && requestedPermissions.has('screen');
+  btnPermRelaunch.hidden = !needsRelaunch;
+  btnPermContinue.hidden = needsRelaunch;
+  btnPermContinue.disabled = p.screen !== 'granted';
+  document.getElementById('permission-banner').style.display =
+    permissionsMissing(p) && panelPermissions.style.display === 'none' ? '' : 'none';
+}
+
+async function refreshPermissions() {
+  const p = await window.electronAPI.getPermissions();
+  renderPermissions(p);
+  return p;
+}
+
+function showPermissions(show) {
+  panelPermissions.style.display = show ? '' : 'none';
+  panelSetup.style.display = show ? 'none' : '';
+  clearInterval(permissionPoll);
+  // Picks up the switch being flipped in System Settings
+  if (show) permissionPoll = setInterval(refreshPermissions, 2000);
+  refreshPermissions();
+}
+
+panelPermissions.querySelectorAll('.perm-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const kind = btn.closest('[data-perm]').dataset.perm;
+    btn.disabled = true;
+    requestedPermissions.add(kind);
+    try {
+      renderPermissions(await window.electronAPI.requestPermission(kind));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+btnPermContinue.addEventListener('click', () => { showPermissions(false); loadSources(); });
+document.getElementById('btn-perm-skip').addEventListener('click', () => showPermissions(false));
+btnPermRelaunch.addEventListener('click', () => window.electronAPI.relaunchApp());
+document.getElementById('btn-permission-banner').addEventListener('click', () => showPermissions(true));
+
+async function initPermissions() {
+  if (await window.electronAPI.getPlatform() !== 'darwin') return;
+  if (permissionsMissing(await refreshPermissions())) showPermissions(true);
+}
+
 // ======== Init ========
+initPermissions();
 loadSources();
 loadAudioSessions();
 renderQualityControls();

@@ -3,6 +3,7 @@
 //   capture <pid>   -> stderr {"started":true,...}, stdout [uint32 LE length][float32 interleaved PCM]
 //   capture-system  -> same, everything except FrogShare itself
 //   gpu-priority    -> no-op (no macOS equivalent)
+//   audio-permission [request] -> stderr {"status":"granted"|"denied"|"not-determined"|"unsupported"}
 // "stop" or EOF on stdin ends a capture. Process taps need macOS 14.2+.
 import AppKit
 import CoreAudio
@@ -245,6 +246,33 @@ final class TapCapture {
   }
 }
 
+// ======== audio permission ========
+// macOS has no public API to check "System Audio Recording" access; without one the first capture
+// just comes out silent. Same private TCC calls Apple's own sample code paths rely on. TCC attributes
+// a helper to the app that launched it, so this answers for FrogShare itself.
+typealias PreflightFn = @convention(c) (CFString, CFDictionary?) -> Int
+typealias RequestFn = @convention(c) (CFString, CFDictionary?, @escaping @convention(block) (Bool) -> Void) -> Void
+let tcc = dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW)
+let audioService = "kTCCServiceAudioCapture" as CFString
+
+func audioPermission() -> String {
+  guard let tcc, let sym = dlsym(tcc, "TCCAccessPreflight") else { return "unknown" }
+  switch unsafeBitCast(sym, to: PreflightFn.self)(audioService, nil) {
+  case 0: return "granted"
+  case 1: return "denied"
+  default: return "not-determined"
+  }
+}
+
+// Shows the system prompt when undecided; once denied only System Settings can change it
+func requestAudioPermission() {
+  guard let tcc, let sym = dlsym(tcc, "TCCAccessRequest") else { writeJson(["status": audioPermission()]); return }
+  let done = DispatchSemaphore(value: 0)
+  unsafeBitCast(sym, to: RequestFn.self)(audioService, nil) { _ in done.signal() }
+  done.wait()
+  writeJson(["status": audioPermission()])
+}
+
 // ======== main ========
 signal(SIGPIPE, SIG_IGN)
 let args = CommandLine.arguments.dropFirst()
@@ -255,6 +283,9 @@ guard let command = args.first else {
 switch command {
 case "gpu-priority":
   writeJson(["class": 4])
+case "audio-permission":
+  guard #available(macOS 14.2, *) else { writeJson(["status": "unsupported"]); break }
+  if args.dropFirst().first == "request" { requestAudioPermission() } else { writeJson(["status": audioPermission()]) }
 case "list":
   guard #available(macOS 14.2, *) else { fail("Escolher o som de um app exige macOS 14.2 ou mais novo") }
   listSessions()

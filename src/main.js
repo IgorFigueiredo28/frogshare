@@ -137,14 +137,50 @@ ipcMain.handle('get-sources', async () => {
   }));
 });
 
-// Without Screen Recording access macOS still lists windows, but every capture comes out blank
-ipcMain.handle('needs-screen-permission', () => {
-  return isMac && systemPreferences.getMediaAccessStatus('screen') !== 'granted';
+// ======== IPC: macOS permissions ========
+// Screen Recording and System Audio Recording are separate macOS permissions. Missing the first
+// makes every capture blank, missing the second makes the sound silent, and neither says so itself.
+const PRIVACY_PANES = {
+  screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+  audio: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture'
+};
+
+function runHelperJson(args) {
+  return new Promise((resolve) => {
+    const proc = spawn(AUDIO_CAPTURE_EXE, args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.on('close', () => { try { resolve(JSON.parse(stderr.trim())); } catch { resolve({}); } });
+    proc.on('error', () => resolve({}));
+  });
+}
+
+async function getPermissions() {
+  if (!isMac) return { screen: 'granted', audio: 'granted' };
+  const { status } = await runHelperJson(['audio-permission']);
+  return { screen: systemPreferences.getMediaAccessStatus('screen'), audio: status || 'unknown' };
+}
+
+ipcMain.handle('get-permissions', getPermissions);
+
+ipcMain.handle('request-permission', async (event, kind) => {
+  if (!isMac || !PRIVACY_PANES[kind]) return getPermissions();
+  if (kind === 'screen') {
+    // A capture attempt is what puts FrogShare in the Settings list (and shows the prompt the first time).
+    // Granting only takes effect after a relaunch, so Settings is always where this ends up.
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => {});
+    if (systemPreferences.getMediaAccessStatus('screen') !== 'granted') shell.openExternal(PRIVACY_PANES.screen);
+  } else {
+    // Waits on the system prompt if undecided; after a "no" only Settings can change it
+    const { status } = await runHelperJson(['audio-permission', 'request']);
+    if (status === 'denied') shell.openExternal(PRIVACY_PANES.audio);
+  }
+  return getPermissions();
 });
 
-ipcMain.handle('open-screen-settings', () => {
-  if (isMac) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
-  return true;
+ipcMain.handle('relaunch-app', () => {
+  app.relaunch();
+  app.exit(0);
 });
 
 ipcMain.handle('get-platform', () => process.platform);

@@ -40,7 +40,17 @@
 .host-cta p { color: var(--text-2); font-size: var(--text-sm); }
 .host-cta .download-buttons { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--space-2); }
 /* .btn sets display, which would otherwise beat the hidden attribute */
-.host-cta [hidden] { display: none; }
+.host-cta [hidden], .modal-overlay[hidden] { display: none; }
+
+.mac-guide { max-width: 560px; padding: var(--space-6); gap: var(--space-5); overflow-y: auto; }
+.mac-guide-head { display: flex; align-items: center; gap: var(--space-4); }
+.mac-guide-head h2 { font-size: var(--text-xl); }
+.mac-guide-head p { color: var(--text-2); font-size: var(--text-sm); }
+.mac-guide-head .btn-icon { margin-left: auto; align-self: flex-start; color: var(--text-2); }
+.mac-steps { display: flex; flex-direction: column; gap: var(--space-3); padding-left: var(--space-5); }
+.mac-steps li { padding-left: var(--space-1); line-height: 1.5; }
+.mac-steps li::marker { font-weight: 700; color: var(--accent); }
+.mac-settings-link { display: flex; width: fit-content; margin-top: var(--space-2); }
 .host-cta .download-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-2); }
 
 .perks {
