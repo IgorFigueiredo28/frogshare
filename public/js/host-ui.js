@@ -6,6 +6,10 @@
   const viewers = document.getElementById('viewer-count');
   const watchersNum = document.getElementById('watchers-num');
   const preview = document.getElementById('local-preview');
+
+  window.electronAPI.getAppVersion().then(v => {
+    document.getElementById('app-version').textContent = 'v' + v;
+  });
   const facts = {
     mode: document.getElementById('fact-mode'),
     video: document.getElementById('fact-video'),
