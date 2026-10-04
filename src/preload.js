@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('overlay-status', (_, status) => callback(status));
   },
   openDownload: (url) => ipcRenderer.invoke('open-download', url),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateProgress: (callback) => {
+    ipcRenderer.on('update-progress', (_, progress) => callback(progress));
+  },
   setStreamingPriority: (on) => ipcRenderer.invoke('set-streaming-priority', on),
 
   onAudioData: (callback) => {

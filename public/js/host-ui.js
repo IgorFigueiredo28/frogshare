@@ -38,6 +38,10 @@
     watchersNum.textContent = Number.isFinite(n) ? n : 0;
   }
 
+  // Behind a game or minimized, nothing on screen should animate: with background throttling off
+  // the page keeps painting, and a single bobbing frog measured 1.5-3 CPU cores taken from the game
+  window.electronAPI.onWindowFocus((focused) => document.body.classList.toggle('app-background', !focused));
+
   // host.js clears the preview while the app is in the background to spare the GPU
   function renderPreview() {
     document.body.classList.toggle('preview-off', !preview.srcObject);

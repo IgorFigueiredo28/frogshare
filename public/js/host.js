@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.4.3',
+        app_version: '1.4.4',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1283,7 +1283,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.3', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.4', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1479,15 +1479,67 @@ function versionOlder(a, b) {
   return false;
 }
 
+// Downloads in the background, checks the file against the hash the server publishes, then
+// installs silently and reopens. Without a published hash it falls back to the browser download.
+const updateText = document.getElementById('update-text');
+const updateProgress = document.getElementById('update-progress');
+const btnUpdate = document.getElementById('btn-update');
+
+function offerBrowserDownload(latest, message) {
+  updateText.textContent = message;
+  updateProgress.hidden = true;
+  btnUpdate.disabled = false;
+  btnUpdate.textContent = 'Baixar pelo navegador';
+  btnUpdate.onclick = () => window.electronAPI.openDownload(latest.url);
+}
+
+async function startUpdate(latest) {
+  btnUpdate.disabled = true;
+  btnUpdate.textContent = 'Baixando…';
+  updateText.textContent = `Baixando a versão ${latest.version}…`;
+  updateProgress.value = 0;
+  updateProgress.hidden = false;
+  const result = await window.electronAPI.downloadUpdate();
+  if (!result.ok) {
+    offerBrowserDownload(latest, `Não deu para atualizar por aqui (${result.error}).`);
+    return;
+  }
+  updateProgress.hidden = true;
+  updateText.textContent = `Versão ${result.version} pronta. O app fecha e abre de novo já atualizado.`;
+  btnUpdate.disabled = false;
+  btnUpdate.textContent = 'Instalar e reiniciar';
+  btnUpdate.onclick = async () => {
+    btnUpdate.disabled = true;
+    const install = await window.electronAPI.installUpdate();
+    if (install.ok) {
+      btnUpdate.textContent = 'Instalando…';
+    } else if (install.cancelled) {
+      btnUpdate.disabled = false;
+    } else {
+      offerBrowserDownload(latest, `Não deu para instalar por aqui (${install.error}).`);
+    }
+  };
+}
+
+window.electronAPI.onUpdateProgress(({ received, total }) => {
+  if (total) updateProgress.value = Math.round((received / total) * 100);
+  btnUpdate.textContent = `Baixando… ${updateProgress.value}%`;
+});
+
 async function checkForUpdate() {
   try {
     appVersion = await window.electronAPI.getAppVersion();
     const url = await getSignalUrl();
     const latest = await (await fetch(`${url}/api/app-version`)).json();
     if (!latest.version || !versionOlder(appVersion, latest.version)) return;
-    document.getElementById('update-text').textContent =
-      `Versão ${latest.version} disponível (você está na ${appVersion}).`;
-    document.getElementById('btn-update').onclick = () => window.electronAPI.openDownload(latest.url);
+    updateText.textContent = `Versão ${latest.version} disponível (você está na ${appVersion}).`;
+    if (latest.sha512) {
+      btnUpdate.textContent = 'Atualizar';
+      btnUpdate.onclick = () => startUpdate(latest);
+    } else {
+      btnUpdate.textContent = 'Baixar';
+      btnUpdate.onclick = () => window.electronAPI.openDownload(latest.url);
+    }
     document.getElementById('update-banner').style.display = '';
   } catch {}
 }

@@ -1,6 +1,6 @@
 {
   "name": "screen-share-app",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Screen sharing with per-process audio capture",
   "main": "src/main.js",
   "scripts": {

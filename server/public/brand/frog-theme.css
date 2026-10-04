@@ -419,6 +419,9 @@ a { color: var(--accent); text-underline-offset: 3px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
 
+/* ---------- Background: freeze every animation so the page stops repainting ---------- */
+.app-background *, .app-background *::before, .app-background *::after { animation-play-state: paused !important; }
+
 /* ---------- Respect "reduce motion" ---------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, screen, nativeImage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { createServer } = require('./server');
 
@@ -23,7 +24,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.3'
+        app_version: '1.4.4'
       })
     }).catch(() => {});
   } catch {}
@@ -504,6 +505,134 @@ ipcMain.handle('open-download', (event, url) => {
   if (typeof url !== 'string' || !/^https:\/\/[^\s]+$/.test(url)) return false;
   shell.openExternal(url);
   return true;
+});
+
+// ======== In-app update ========
+// The installer lives on Google Drive. The signaling server publishes its version, size and
+// SHA-512; nothing runs unless the downloaded file matches that hash exactly.
+let downloadedUpdate = null;
+let updateDownload = null;
+
+function versionOlder(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  }
+  return false;
+}
+
+// Big Drive files come back as a "can't scan this file for viruses" page; its form leads to the file.
+// Accepting the warning up front (confirm=t) answers in ~2s; the form's own link took ~16s (measured).
+async function fetchDriveFile(url) {
+  const direct = new URL(url);
+  if (direct.hostname === 'drive.usercontent.google.com') direct.searchParams.set('confirm', 't');
+  let res = await fetch(direct);
+  if ((res.headers.get('content-type') || '').includes('text/html')) {
+    const html = await res.text();
+    const action = html.match(/<form[^>]*action="([^"]+)"/);
+    if (!action) throw new Error('o Drive não liberou o arquivo');
+    const next = new URL(action[1].replace(/&amp;/g, '&'));
+    if (next.protocol !== 'https:' || !/(^|\.)(google|googleusercontent)\.com$/.test(next.hostname)) {
+      throw new Error('link de download inesperado');
+    }
+    for (const m of html.matchAll(/<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)) {
+      next.searchParams.set(m[1], m[2]);
+    }
+    res = await fetch(next);
+  }
+  if (!res.ok || !res.body) throw new Error(`o Drive respondeu ${res.status}`);
+  return res;
+}
+
+function sendUpdateProgress(progress) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-progress', progress);
+}
+
+async function hashFile(file) {
+  const hash = crypto.createHash('sha512');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  return hash.digest('base64');
+}
+
+async function downloadUpdate() {
+  const latest = await (await fetch(`${SIGNAL_SERVER}/api/app-version`)).json();
+  if (!latest.version || !versionOlder(app.getVersion(), latest.version)) throw new Error('já está na versão mais recente');
+  if (!latest.sha512 || !latest.size) throw new Error('essa versão ainda não tem verificação publicada');
+
+  const dir = path.join(app.getPath('temp'), 'FrogShare-update');
+  const file = path.join(dir, `FrogShare-Setup-${latest.version}.exe`);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // A finished download from an earlier attempt is reused if it still checks out
+  if (fs.existsSync(file) && fs.statSync(file).size === latest.size && await hashFile(file) === latest.sha512) {
+    return { version: latest.version, file };
+  }
+
+  const res = await fetchDriveFile(latest.url);
+  const hash = crypto.createHash('sha512');
+  const out = fs.createWriteStream(file);
+  let received = 0;
+  let lastSent = 0;
+  try {
+    for await (const chunk of res.body) {
+      hash.update(chunk);
+      received += chunk.length;
+      if (received > latest.size) throw new Error('o arquivo do Drive é maior que o esperado');
+      if (!out.write(chunk)) await new Promise(r => out.once('drain', r));
+      if (Date.now() - lastSent > 200) {
+        lastSent = Date.now();
+        sendUpdateProgress({ received, total: latest.size });
+      }
+    }
+    await new Promise((resolve, reject) => out.end(err => (err ? reject(err) : resolve())));
+  } catch (err) {
+    out.destroy();
+    fs.rmSync(file, { force: true });
+    throw err;
+  }
+  sendUpdateProgress({ received, total: latest.size });
+
+  if (received !== latest.size || hash.digest('base64') !== latest.sha512) {
+    fs.rmSync(file, { force: true });
+    throw new Error('o arquivo baixado não confere com a versão publicada');
+  }
+  return { version: latest.version, file };
+}
+
+ipcMain.handle('download-update', async () => {
+  try {
+    // A second click while downloading joins the same download
+    updateDownload = updateDownload || downloadUpdate();
+    downloadedUpdate = await updateDownload;
+    return { ok: true, version: downloadedUpdate.version };
+  } catch (err) {
+    reportMainError('Update download failed: ' + err.message, err.stack);
+    return { ok: false, error: err.message };
+  } finally {
+    updateDownload = null;
+  }
+});
+
+ipcMain.handle('install-update', async () => {
+  if (!downloadedUpdate) return { ok: false, error: 'nenhuma atualização baixada' };
+  if (isDev) return { ok: false, error: 'só dá para instalar pelo app instalado' };
+  if (streamStatus.streaming) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['Instalar agora', 'Depois'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Atualizar o FrogShare',
+      message: 'Você está transmitindo.',
+      detail: 'Instalar agora encerra a transmissão. O app fecha e abre de novo já atualizado.'
+    });
+    if (response !== 0) return { ok: false, cancelled: true };
+  }
+  // /S installs silently; --force-run reopens the app when it's done
+  spawn(downloadedUpdate.file, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+  setTimeout(() => app.quit(), 300);
+  return { ok: true };
 });
 
 ipcMain.handle('get-signal-server', () => {

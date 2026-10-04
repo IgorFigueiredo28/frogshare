@@ -37,8 +37,11 @@
   <div class="app">
     <div class="notice update-banner" id="update-banner" style="display:none" role="status">
       <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
-      <span id="update-text" class="notice-text"></span>
-      <button id="btn-update" type="button" class="btn btn-secondary">Baixar</button>
+      <span class="notice-text">
+        <span id="update-text"></span>
+        <progress id="update-progress" class="update-progress" max="100" value="0" hidden></progress>
+      </span>
+      <button id="btn-update" type="button" class="btn btn-secondary">Atualizar</button>
     </div>
 
     <!-- ================= Setup ================= -->
