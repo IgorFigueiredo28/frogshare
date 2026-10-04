@@ -30,6 +30,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-progress', (_, progress) => callback(progress));
   },
   setStreamingPriority: (on) => ipcRenderer.invoke('set-streaming-priority', on),
+  getPermissions: () => ipcRenderer.invoke('get-permissions'),
+  requestPermission: (kind) => ipcRenderer.invoke('request-permission', kind),
+  relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
+  getPlatform: () => ipcRenderer.invoke('get-platform'),
 
   onAudioData: (callback) => {
     ipcRenderer.on('audio-data', (_, data) => callback(data));

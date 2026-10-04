@@ -44,6 +44,57 @@
       <button id="btn-update" type="button" class="btn btn-secondary">Atualizar</button>
     </div>
 
+    <div class="notice update-banner" id="permission-banner" style="display:none" role="alert">
+      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
+      <span class="notice-text">Falta autorizar o FrogShare no macOS. Sem isso a tela ou o som não chegam para os seus amigos.</span>
+      <button id="btn-permission-banner" type="button" class="btn btn-secondary">Autorizar</button>
+    </div>
+
+    <!-- ================= macOS permissions ================= -->
+    <div class="panel" id="panel-permissions" style="display:none">
+      <div class="setup-hero">
+        <img src="/brand/frog.svg" alt="" width="88" height="81">
+        <div>
+          <h1>Falta pouco!</h1>
+          <p class="subtitle">O macOS pede duas autorizações antes de o FrogShare transmitir. É só clicar em cada uma.</p>
+        </div>
+      </div>
+
+      <section class="card perm-card" aria-label="Autorizações">
+        <div class="perm-row" data-perm="screen">
+          <span class="perm-ico" aria-hidden="true"><svg class="ico"><use href="/brand/icons.svg#i-monitor"/></svg></span>
+          <div class="perm-text">
+            <h2>Gravar a tela</h2>
+            <p>Para os seus amigos verem o jogo ou a janela que você escolher.</p>
+            <p class="perm-hint" hidden>Na janela que abriu, ative o <strong>FrogShare</strong>. Depois clique em <strong>Reabrir o FrogShare</strong> aqui embaixo.</p>
+          </div>
+          <span class="chip chip-ok perm-done" hidden><svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-check"/></svg>Autorizado</span>
+          <button type="button" class="btn btn-secondary perm-btn">Autorizar</button>
+        </div>
+        <div class="perm-row" data-perm="audio">
+          <span class="perm-ico" aria-hidden="true"><svg class="ico"><use href="/brand/icons.svg#i-music"/></svg></span>
+          <div class="perm-text">
+            <h2>Gravar o som</h2>
+            <p>Para o som do jogo ou da música ir junto com a tela.</p>
+            <p class="perm-hint" hidden>Na janela que abriu, ative o <strong>FrogShare</strong> em <strong>Somente Gravação de Áudio do Sistema</strong>.</p>
+          </div>
+          <span class="chip chip-ok perm-done" hidden><svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-check"/></svg>Autorizado</span>
+          <span class="chip chip-warn perm-unsupported" hidden>Precisa do macOS 14.2 ou mais novo</span>
+          <button type="button" class="btn btn-secondary perm-btn">Autorizar</button>
+        </div>
+      </section>
+
+      <div class="perm-actions">
+        <button id="btn-perm-skip" type="button" class="btn btn-ghost">Pular por agora</button>
+        <button id="btn-perm-relaunch" type="button" class="btn btn-primary btn-lg" hidden>
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-refresh"/></svg>Reabrir o FrogShare
+        </button>
+        <button id="btn-perm-continue" type="button" class="btn btn-primary btn-lg btn-hop" disabled>
+          Continuar<svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-arrow-right"/></svg>
+        </button>
+      </div>
+    </div>
+
     <!-- ================= Setup ================= -->
     <div class="panel" id="panel-setup">
       <div class="setup-hero">
