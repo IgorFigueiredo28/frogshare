@@ -1,6 +1,6 @@
 {
   "name": "screen-share-app",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "Screen sharing with per-process audio capture",
   "main": "src/main.js",
   "scripts": {
@@ -82,7 +82,7 @@
     "express": "^4.21.0"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
   }
 }
