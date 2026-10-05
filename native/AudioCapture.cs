@@ -409,6 +409,31 @@ class AudioCapture
         WriteJson("{\"gpuPriority\":[" + string.Join(",", results) + "]}");
     }
 
+    delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hwnd);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+
+    // Windows someone could pick, the same way Chromium lists them: visible, titled, not cloaked (other virtual desktops,
+    // suspended UWP). Only used to notice that one opened or closed; asking Electron for its source list
+    // takes ~400 ms of the main process, this takes a few.
+    static void ListWindows()
+    {
+        const int DWMWA_CLOAKED = 14;
+        var ids = new List<string>();
+        EnumWindows((hwnd, l) =>
+        {
+            if (IsWindowVisible(hwnd) && GetWindowTextLength(hwnd) > 0)
+            {
+                int cloaked;
+                if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out cloaked, 4) != 0 || cloaked == 0) ids.Add(hwnd.ToInt64().ToString());
+            }
+            return true;
+        }, IntPtr.Zero);
+        WriteJson("{\"windows\":[" + string.Join(",", ids) + "]}");
+    }
+
     static void WriteJson(string json) { Console.Error.WriteLine(json); Console.Error.Flush(); }
     static string Esc(string s) { return s.Replace("\\", "\\\\").Replace("\"", "\\\""); }
 
@@ -419,6 +444,7 @@ class AudioCapture
         try
         {
             if (args[0] == "list") { ListAudioSessions(); return; }
+            if (args[0] == "windows") { ListWindows(); return; }
             if (args[0] == "gpu-priority" && args.Length > 2) { SetGpuPriority(args); return; }
 
             var stdinThread = new Thread(() => {

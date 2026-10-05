@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.4.9',
+        app_version: '1.5.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -194,10 +194,19 @@ function getAudioMode() {
 }
 
 // ======== Source Selection ========
-async function loadSources() {
-  sourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
+const sourceSignature = (sources) => sources.map(s => s.id).sort().join('|');
+
+async function loadSources({ silent = false } = {}) {
+  if (!silent) sourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
+  const scroll = sourceGrid.scrollTop;
   const sources = await window.electronAPI.getSources();
   refreshPermissions();
+  liveLists.sourceSig = sourceSignature(sources);
+  // The window that was picked may have closed (the game was quit)
+  if (selectedSourceId && !sources.some(s => s.id === selectedSourceId)) {
+    selectedSourceId = null;
+    updateStartButton();
+  }
 
   const screens = sources.filter(s => s.isScreen);
   const windows = sources.filter(s => !s.isScreen);
@@ -225,6 +234,7 @@ async function loadSources() {
     const item = createSourceItem(source);
     sourceGrid.appendChild(item);
   });
+  sourceGrid.scrollTop = scroll;
 }
 
 function createSourceItem(source, onClick) {
@@ -273,9 +283,17 @@ function sessionRow(session) {
   ];
 }
 
-async function loadAudioSessions() {
-  sessionList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
-  const result = await window.electronAPI.listAudioSessions();
+const audioSignature = (sessions) => (sessions || []).map(s => `${s.pid}:${s.name}:${s.state}`).join('|');
+
+async function loadAudioSessions({ silent = false, result = null } = {}) {
+  if (!silent) sessionList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
+  result = result || await window.electronAPI.listAudioSessions();
+  liveLists.audioSig = audioSignature(result.sessions);
+  // The app that was picked may have closed
+  if (selectedPid && !(result.sessions || []).some(s => s.pid === selectedPid)) {
+    selectedPid = null;
+    updateStartButton();
+  }
 
   if (result.error) {
     sessionList.replaceChildren(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'Erro: ' + result.error }));
@@ -562,6 +580,8 @@ document.querySelectorAll('input[name="q-res"], input[name="q-fps"]').forEach(in
 async function captureVideo(sourceId) {
   await window.electronAPI.setCaptureSource(sourceId);
   const stream = await navigator.mediaDevices.getDisplayMedia({
+    // Keeps the mouse out of the stream, so a fullscreen game shows only its own crosshair. Electron 33
+    // ignored this and drew the cursor; 44 honours it for both window and screen capture (measured).
     video: { cursor: 'never', frameRate: { ideal: quality.fps, max: quality.fps } },
     audio: false
   });
@@ -1325,7 +1345,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.9', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1348,8 +1368,12 @@ btnSwitchSource.addEventListener('click', async () => {
     window.electronAPI.getSources(),
     window.electronAPI.listAudioSessions()
   ]);
+  renderSwitchSources(sources);
+  renderSwitchAudio(audioResult);
+});
 
-  // Build source grid
+function renderSwitchSources(sources) {
+  liveLists.sourceSig = sourceSignature(sources);
   const screens = sources.filter(s => s.isScreen);
   const windows = sources.filter(s => !s.isScreen);
   switchSourceGrid.innerHTML = '';
@@ -1373,13 +1397,17 @@ btnSwitchSource.addEventListener('click', async () => {
     const item = createSourceItem(source, () => switchToSource(source));
     switchSourceGrid.appendChild(item);
   });
+}
 
-  // Build audio list
+function renderSwitchAudio(audioResult) {
   switchAudioList.innerHTML = '';
   const sessions = (audioResult && audioResult.sessions) || [];
+  liveLists.audioSig = audioSignature(sessions);
+  // A redraw keeps what was picked, unless that app is gone
+  if (switchAudioPid && !sessions.some(s => s.pid === switchAudioPid)) switchAudioPid = null;
 
   const keepItem = document.createElement('div');
-  keepItem.className = 'session-item selected';
+  keepItem.className = 'session-item' + (switchAudioPid ? '' : ' selected');
   keepItem.innerHTML = '<span class="session-name">Manter o som atual</span>';
   keepItem.addEventListener('click', () => {
     switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
@@ -1390,7 +1418,7 @@ btnSwitchSource.addEventListener('click', async () => {
 
   sessions.forEach(s => {
     const item = document.createElement('div');
-    item.className = 'session-item';
+    item.className = 'session-item' + (s.pid === switchAudioPid ? ' selected' : '');
     item.append(...sessionRow(s));
     item.addEventListener('click', () => {
       switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
@@ -1406,7 +1434,7 @@ btnSwitchSource.addEventListener('click', async () => {
     empty.textContent = 'Nenhum app tocando som agora';
     switchAudioList.appendChild(empty);
   }
-});
+}
 
 btnCloseModal.addEventListener('click', () => {
   switchModal.style.display = 'none';
@@ -1501,8 +1529,8 @@ async function switchToSource(source) {
 }
 
 // ======== Refresh buttons ========
-btnRefreshSources.addEventListener('click', loadSources);
-btnRefreshAudio.addEventListener('click', loadAudioSessions);
+btnRefreshSources.addEventListener('click', () => loadSources());
+btnRefreshAudio.addEventListener('click', () => loadAudioSessions());
 
 // ======== Update check ========
 // Old builds stutter badly (CPU encoding per viewer) and nothing ever told the host to update
@@ -1664,6 +1692,56 @@ async function initPermissions() {
   if (await window.electronAPI.getPlatform() !== 'darwin') return;
   if (permissionsMissing(await refreshPermissions())) showPermissions(true);
 }
+
+// ======== Live lists ========
+// A game opened while the app is up shows its window and its sound without pressing Atualizar.
+// Every few seconds: a cheap id-only window check (thumbnails only when the set changes) and the
+// audio session list. Nothing runs while streaming with the modal closed or while minimized.
+// windowSig is only ever compared with itself: it says "the set of windows changed", nothing more
+const liveLists = { sourceSig: '', windowSig: '', audioSig: '', busy: false, minimized: false, ticks: 0, isMac: false };
+window.electronAPI.getPlatform().then(p => { liveLists.isMac = p === 'darwin'; });
+
+async function refreshLiveLists() {
+  const modalOpen = switchModal.style.display !== 'none';
+  const setupOpen = panelSetup.style.display !== 'none' && !isStreaming;
+  if (liveLists.busy || liveLists.minimized || !(modalOpen || setupOpen)) return;
+  liveLists.busy = true;
+  try {
+    // On macOS the window check is Electron's own (expensive), so it runs on every 4th pass only
+    const checkWindows = !liveLists.isMac || liveLists.ticks % 4 === 0;
+    const [ids, audio] = await Promise.all([
+      checkWindows ? window.electronAPI.getSourceIds() : Promise.resolve(''),
+      window.electronAPI.listAudioSessions()
+    ]);
+    if (ids) {
+      const changed = liveLists.windowSig && ids !== liveLists.windowSig;
+      liveLists.windowSig = ids;
+      if (changed) {
+        if (modalOpen) renderSwitchSources(await window.electronAPI.getSources());
+        else await loadSources({ silent: true });
+      }
+    }
+    if (!audio.error && audioSignature(audio.sessions) !== liveLists.audioSig) {
+      const scroll = (modalOpen ? switchAudioList : sessionList).scrollTop;
+      if (modalOpen) renderSwitchAudio(audio);
+      else await loadAudioSessions({ silent: true, result: audio });
+      (modalOpen ? switchAudioList : sessionList).scrollTop = scroll;
+    }
+  } catch {} finally {
+    liveLists.busy = false;
+  }
+}
+
+// Every 3s while the window has focus, every 6s while it's open behind something else
+setInterval(() => {
+  liveLists.ticks++;
+  if (windowFocused || liveLists.ticks % 2 === 0) refreshLiveLists();
+}, 3000);
+window.electronAPI.onWindowFocus((focused) => { if (focused) refreshLiveLists(); });
+window.electronAPI.onWindowMinimized((minimized) => {
+  liveLists.minimized = minimized;
+  if (!minimized) refreshLiveLists();
+});
 
 // ======== Init ========
 initPermissions();

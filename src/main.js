@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.9'
+        app_version: '1.5.0'
       })
     }).catch(() => {});
   } catch {}
@@ -80,6 +80,10 @@ async function createWindow() {
     }
   };
   for (const evt of ['focus', 'blur', 'minimize', 'restore']) mainWindow.on(evt, sendFocus);
+  // The source and audio lists stop refreshing while minimized
+  for (const evt of ['minimize', 'restore']) {
+    mainWindow.on(evt, () => mainWindow.webContents.send('window-minimized', mainWindow.isMinimized()));
+  }
 
   // While streaming, minimizing shows a small floating notice so it's obvious the screen is shared
   mainWindow.on('minimize', showOverlay);
@@ -362,6 +366,23 @@ app.on('window-all-closed', () => {
 });
 
 // ======== IPC: Window/Screen Sources ========
+// Cheap check for "did a window open or close?". The page only asks for the full list (with
+// thumbnails) when this changes. Electron's own list costs ~400 ms of this process even without
+// thumbnails (17% of a core when polled every 3 s), so on Windows the helper enumerates instead (~70 ms).
+ipcMain.handle('get-source-ids', async () => {
+  if (!isMac) {
+    const { windows } = await runHelperJson(['windows']);
+    if (Array.isArray(windows)) return windows.map(String).sort().join('|');
+  }
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } });
+    const overlayId = overlayWindow && !overlayWindow.isDestroyed() ? overlayWindow.getMediaSourceId() : null;
+    return sources.filter(s => s.id !== overlayId).map(s => s.id).sort().join('|');
+  } catch {
+    return '';
+  }
+});
+
 ipcMain.handle('get-sources', async () => {
   let sources;
   try {
