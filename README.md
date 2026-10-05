@@ -1,4 +1,4 @@
-# telaskzpetentes
+# FrogShare
 screen-share-app para skzpetentes
 
 ## Build

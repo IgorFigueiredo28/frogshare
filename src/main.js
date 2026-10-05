@@ -14,7 +14,7 @@ const AUDIO_CAPTURE_EXE = isDev
   ? path.join(__dirname, '..', 'native', AUDIO_CAPTURE_BIN)
   : path.join(process.resourcesPath, 'native', AUDIO_CAPTURE_BIN);
 
-const SIGNAL_SERVER = process.env.SIGNAL_SERVER || 'https://telaskzpetentes.onrender.com';
+const SIGNAL_SERVER = process.env.SIGNAL_SERVER || 'https://frogshare.onrender.com';
 
 function reportMainError(message, stack, context) {
   try {
@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.4'
+        app_version: '1.4.5'
       })
     }).catch(() => {});
   } catch {}
@@ -704,5 +704,5 @@ ipcMain.handle('install-update', async () => {
 });
 
 ipcMain.handle('get-signal-server', () => {
-  return process.env.SIGNAL_SERVER || 'https://telaskzpetentes.onrender.com';
+  return process.env.SIGNAL_SERVER || 'https://frogshare.onrender.com';
 });

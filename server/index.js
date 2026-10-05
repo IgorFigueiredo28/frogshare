@@ -37,11 +37,14 @@ app.get('/health', (req, res) => res.send('ok'));
 // Hosts on old builds encode on the CPU once per viewer and stutter badly, and nothing told
 // anyone. The app checks this on start; viewers are told when the room's host is behind.
 const LATEST_APP = {
-  version: '1.4.0',
+  version: '1.4.4',
   // Below this the host has no GPU encoding, TURN, upload sharing or SFU
   minimum: '1.3.0',
   // Direct download: skips Drive's preview page and goes straight to its virus-scan notice
   url: 'https://drive.usercontent.google.com/download?id=1h8kEmEb0XJpR4D42Z10YFKZ9il0cQPGu&export=download',
+  // Exactly the Windows Setup on Drive: the in-app updater refuses anything that doesn't match
+  size: 82256304,
+  sha512: 'bJRevEqXaJjoekxOOdPTTCCpH575NP7OD6KvusUfav0khyykxZ2YKBNY+cEIFHLDt6VWfm3NSc2LuF5cbKVgKQ==',
   // Apple Silicon .dmg; the site hides its download button while this is null
   macUrl: 'https://drive.usercontent.google.com/download?id=17eAsGhGXXWTauVKpL8l7T2Xkyvn_wr-E&export=download'
 };

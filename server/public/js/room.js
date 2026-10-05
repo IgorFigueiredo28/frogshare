@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.4.4',
+        app_version: '1.4.5',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -549,7 +549,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.4', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.5', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }
