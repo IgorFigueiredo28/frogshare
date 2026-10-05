@@ -95,12 +95,27 @@ body { min-height: 100vh; user-select: none; }
   box-shadow: var(--shadow-2);
 }
 /* Re-enable the hop and pink once a source is picked; the disabled state reads as "not yet" */
-#btn-start:disabled { background: var(--surface-3); color: var(--text-2); box-shadow: none; opacity: 1; }
-#btn-start:not(:disabled)::before {
+#btn-start:disabled, #btn-start[aria-disabled="true"] { background: var(--surface-3); color: var(--text-2); box-shadow: none; opacity: 1; }
+#btn-start[aria-disabled="true"]:hover { animation: none; }
+#btn-start:not(:disabled):not([aria-disabled="true"])::before {
   content: ''; width: 22px; height: 22px; flex-shrink: 0; background: currentColor;
   -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'><path d='M18.364 19.364a9 9 0 1 0 -12.728 0'/><path d='M15.536 16.536a5 5 0 1 0 -7.072 0'/><circle cx='12' cy='13' r='1'/></svg>") center / contain no-repeat;
           mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'><path d='M18.364 19.364a9 9 0 1 0 -12.728 0'/><path d='M15.536 16.536a5 5 0 1 0 -7.072 0'/><circle cx='12' cy='13' r='1'/></svg>") center / contain no-repeat;
 }
+
+/* A step that still needs a choice, after the start button was clicked: one nudge, then it settles */
+.step.needs-attention {
+  border-color: var(--tongue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tongue) 25%, transparent);
+  animation: fs-nudge 420ms var(--ease-out);
+}
+@keyframes fs-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  45% { transform: translateX(5px); }
+  70% { transform: translateX(-3px); }
+}
+@media (prefers-reduced-motion: reduce) { .step.needs-attention { animation-duration: 1ms; } }
 
 /* ================= Source cards ================= */
 .source-grid {

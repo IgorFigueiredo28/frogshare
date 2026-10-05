@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.4.6',
+        app_version: '1.4.7',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -314,11 +314,32 @@ audioModeRadios.forEach(radio => {
   });
 });
 
+// What still has to be picked before a stream can start, or null when it's ready
+function missingForStart() {
+  if (!selectedSourceId) {
+    return { section: sourceGrid.closest('.step'), message: 'Escolha a tela ou a janela que você quer mostrar.' };
+  }
+  if (getAudioMode() === 'process' && !selectedPid) {
+    return { section: sessionList.closest('.step'), message: 'Escolha o app do som que vai junto, ou marque "Todo o PC" ou "Sem som".' };
+  }
+  return null;
+}
+
+// The button stays clickable while something is missing (it only looks inactive), so a click can
+// say what's missing instead of doing nothing
 function updateStartButton() {
-  const mode = getAudioMode();
-  const hasSource = !!selectedSourceId;
-  const hasAudio = mode !== 'process' || !!selectedPid;
-  btnStart.disabled = !(hasSource && hasAudio);
+  btnStart.setAttribute('aria-disabled', String(!!missingForStart()));
+}
+
+function flagMissing({ section, message }) {
+  showToast(message);
+  section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  section.classList.remove('needs-attention');
+  void section.offsetWidth; // restart the nudge if it's clicked again
+  section.classList.add('needs-attention');
+  // The nudge is brief; the highlight lingers long enough to find the spot
+  clearTimeout(section.attentionTimer);
+  section.attentionTimer = setTimeout(() => section.classList.remove('needs-attention'), 2500);
 }
 
 // ======== AudioWorklet for process audio ========
@@ -725,6 +746,11 @@ function stopVideoTrack(track) {
 
 // ======== Start Streaming ========
 btnStart.addEventListener('click', async () => {
+  const missing = missingForStart();
+  if (missing) {
+    flagMissing(missing);
+    return;
+  }
   btnStart.disabled = true;
   btnStart.textContent = 'Iniciando…';
 
@@ -901,6 +927,7 @@ async function pauseStreaming() {
 
   panelStreaming.style.display = 'none';
   panelSetup.style.display = '';
+  btnStart.disabled = false;
   btnStart.textContent = 'Voltar a transmitir';
   updateStartButton();
 }
@@ -1298,7 +1325,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.6', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.7', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
