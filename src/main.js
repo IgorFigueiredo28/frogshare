@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.8'
+        app_version: '1.4.9'
       })
     }).catch(() => {});
   } catch {}
@@ -599,6 +599,7 @@ ipcMain.handle('open-download', (event, url) => {
 // SHA-512; nothing runs unless the downloaded file matches that hash exactly.
 let downloadedUpdate = null;
 let updateDownload = null;
+let installerLaunched = false;
 
 function versionOlder(a, b) {
   const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
@@ -719,9 +720,21 @@ ipcMain.handle('install-update', async () => {
     if (response !== 0) return { ok: false, cancelled: true };
   }
   // /S installs silently; --force-run reopens the app when it's done
-  spawn(downloadedUpdate.file, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+  launchInstaller(['/S', '--force-run']);
   setTimeout(() => app.quit(), 300);
   return { ok: true };
+});
+
+function launchInstaller(args) {
+  if (installerLaunched) return;
+  installerLaunched = true;
+  spawn(downloadedUpdate.file, args, { detached: true, stdio: 'ignore' }).unref();
+}
+
+// A downloaded update installs itself when the app is closed, so nobody has to click anything.
+// No --force-run here: the person chose to close the app, so it stays closed until reopened.
+app.on('will-quit', () => {
+  if (downloadedUpdate && !isDev && process.platform === 'win32') launchInstaller(['/S']);
 });
 
 ipcMain.handle('get-signal-server', () => {

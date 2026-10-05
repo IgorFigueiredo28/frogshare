@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.4.8',
+        app_version: '1.4.9',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1325,7 +1325,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.8', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.9', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1531,21 +1531,25 @@ function offerBrowserDownload(latest, message) {
   btnUpdate.onclick = () => window.electronAPI.openDownload(latest.url);
 }
 
+let updateStarted = false;
+
 async function startUpdate(latest) {
+  updateStarted = true;
   btnUpdate.disabled = true;
   btnUpdate.textContent = 'Baixando…';
-  updateText.textContent = `Baixando a versão ${latest.version}…`;
+  updateText.textContent = `Baixando a versão ${latest.version} em segundo plano…`;
   updateProgress.value = 0;
   updateProgress.hidden = false;
   const result = await window.electronAPI.downloadUpdate();
   if (!result.ok) {
+    updateStarted = false;
     offerBrowserDownload(latest, `Não deu para atualizar por aqui (${result.error}).`);
     return;
   }
   updateProgress.hidden = true;
-  updateText.textContent = `Versão ${result.version} pronta. O app fecha e abre de novo já atualizado.`;
+  updateText.textContent = `Versão ${result.version} baixada. Ela é instalada sozinha quando você fechar o FrogShare.`;
   btnUpdate.disabled = false;
-  btnUpdate.textContent = 'Instalar e reiniciar';
+  btnUpdate.textContent = 'Reiniciar agora';
   btnUpdate.onclick = async () => {
     btnUpdate.disabled = true;
     const install = await window.electronAPI.installUpdate();
@@ -1570,14 +1574,18 @@ async function checkForUpdate() {
     const url = await getSignalUrl();
     const latest = await (await fetch(`${url}/api/app-version`)).json();
     if (!latest.version || !versionOlder(appVersion, latest.version)) return;
+    // Already downloading or downloaded: the banner already says so
+    if (updateStarted) return;
     const platform = await window.electronAPI.getPlatform();
     const downloadUrl = platform === 'darwin' ? latest.macUrl : latest.url;
     if (!downloadUrl) return;
     updateText.textContent = `Versão ${latest.version} disponível (você está na ${appVersion}).`;
     // The silent installer (and its published hash) is the Windows build; the Mac .dmg goes through the browser
     if (platform === 'win32' && latest.sha512) {
-      btnUpdate.textContent = 'Atualizar';
-      btnUpdate.onclick = () => startUpdate(latest);
+      // Downloads right away; it installs on its own when the app is closed
+      document.getElementById('update-banner').style.display = '';
+      startUpdate(latest);
+      return;
     } else {
       btnUpdate.textContent = 'Baixar';
       btnUpdate.onclick = () => window.electronAPI.openDownload(downloadUrl);
@@ -1663,6 +1671,8 @@ loadSources();
 loadAudioSessions();
 renderQualityControls();
 checkForUpdate();
+// For sessions left open for days: look again every few hours
+setInterval(checkForUpdate, 6 * 3600 * 1000);
 
 // Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start
 getSignalUrl().then(url => {
