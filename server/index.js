@@ -78,14 +78,14 @@ app.get('/health', (req, res) => res.send('ok'));
 // Hosts on old builds encode on the CPU once per viewer and stutter badly, and nothing told
 // anyone. The app checks this on start; viewers are told when the room's host is behind.
 const LATEST_APP = {
-  version: '1.5.1',
+  version: '1.5.2',
   // Below this the host has no GPU encoding, TURN, upload sharing or SFU
   minimum: '1.3.0',
   // The Windows installer attached to this version's GitHub release (the repo is public)
-  url: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.5.1/FrogShare.Setup.1.5.1.exe',
+  url: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.5.2/FrogShare.Setup.1.5.2.exe',
   // Exactly that file: the in-app updater refuses anything that doesn't match
-  size: 111800834,
-  sha512: 'QAcHB8OFkPPJaUkviwobABZSU1w+j44NEkY457fcf4mACtwiftZrmKCIfyE6jFnPI4x3ZorCU3Q5tJFjDKixeA==',
+  size: 111801852,
+  sha512: '2IKe+5VLOhW77hyXhIZgwYf98jGd0mjzMy1LF06teKv5sw42XpxsPhpHtmD1xUnM1Q3zOzK+O1xoLE3PavtDqQ==',
   // Apple Silicon .dmg; the site hides its download button while this is null
   macUrl: 'https://drive.usercontent.google.com/download?id=17eAsGhGXXWTauVKpL8l7T2Xkyvn_wr-E&export=download'
 };
