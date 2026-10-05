@@ -12,6 +12,11 @@ function createServer(port = 3030) {
   app.use(express.static(path.join(__dirname, '..', 'public')));
   // Theme, mascot and icons are shared with the website; one copy lives with the site
   app.use('/brand', express.static(path.join(__dirname, '..', 'server', 'public', 'brand')));
+  // Bundled with the app rather than loaded from a CDN: the page can't start until it's there, and a
+  // slow or blocked CDN used to hold the whole UI up
+  // (the package's exports map hides the minified file, so locate it from its package.json)
+  const socketIoClient = path.join(path.dirname(require.resolve('socket.io-client/package.json')), 'dist', 'socket.io.min.js');
+  app.get('/vendor/socket.io.min.js', (req, res) => res.sendFile(socketIoClient));
 
   return new Promise((resolve) => {
     server.once('listening', () => {

@@ -90,7 +90,7 @@ Configure no painel do Render. **Nunca** coloque valores no código nem em commi
 
 - **Salas:** quem cria a sala recebe uma chave de host. Só ela permite transmitir na sala, então ninguém que tenha o link consegue tomar a transmissão. As mensagens de sinalização só circulam entre membros da mesma sala.
 - **Servidor:** limites por IP nas rotas que gravam ou alocam recursos, cabeçalhos de segurança (CSP, nosniff, anti-iframe), códigos de sala validados e registros internos (uso, bloqueios) que não podem ser forjados pela rota pública de logs.
-- **App:** `contextIsolation` ligado, sem Node na interface, navegação e janelas novas bloqueadas, permissões restritas a captura de tela e área de transferência, e biblioteca externa carregada com Subresource Integrity.
+- **App:** `contextIsolation` ligado, sem Node na interface, navegação e janelas novas bloqueadas, permissões restritas a captura de tela e área de transferência, e nenhum script carregado de fora (o cliente do Socket.IO vem junto com o app).
 - **Atualização:** o instalador só roda se o tamanho e o SHA-512 baterem com o que o servidor publica.
 
 Encontrou uma vulnerabilidade? Veja [SECURITY.md](SECURITY.md).
