@@ -191,7 +191,7 @@ function showStream(stream, peer) {
   btnFullscreen.style.display = '';
   btnInfo.style.display = '';
   volumeControl.style.display = '';
-  if (isNewStream) applyInitialAudio();
+  if (isNewStream) { applyInitialAudio(); setInfoOpen(infoWanted); }
 
   for (const receiver of peer.getReceivers()) {
     if (receiver.jitterBufferTarget !== undefined) {
@@ -417,6 +417,11 @@ videoArea.addEventListener('dblclick', toggleFullscreen);
 // ======== Stream info & viewer telemetry ========
 const btnInfo = document.getElementById('btn-info');
 const statsOverlay = document.getElementById('stats-overlay');
+const statsLines = document.getElementById('stats-lines');
+// The viewer's choice sticks across streams and visits; the panel only shows while there is video
+const INFO_KEY = 'fs-stream-info';
+let infoWanted = false;
+try { infoWanted = localStorage.getItem(INFO_KEY) === '1'; } catch {}
 let infoOpen = false;
 let prevVideo = null;
 let prevPc = null;
@@ -464,12 +469,12 @@ async function sampleInbound() {
 }
 
 function renderOverlay(s) {
-  statsOverlay.replaceChildren();
+  statsLines.replaceChildren();
   const line = (text, cls) => {
     const el = document.createElement('div');
     el.textContent = text;
     if (cls) el.className = cls;
-    statsOverlay.appendChild(el);
+    statsLines.appendChild(el);
   };
   if (!s) { line('Coletando dados...'); return; }
   const lossPct = s.packets ? (100 * s.lost / s.packets) : 0;
@@ -486,9 +491,18 @@ function renderOverlay(s) {
 function setInfoOpen(open) {
   infoOpen = open;
   statsOverlay.style.display = open ? '' : 'none';
+  btnInfo.setAttribute('aria-pressed', String(open));
   if (open) renderOverlay(agg.last);
 }
-btnInfo.addEventListener('click', () => setInfoOpen(!infoOpen));
+
+// A choice made by the viewer (button, x or the I key), remembered for next time
+function toggleInfo(open = !infoOpen) {
+  infoWanted = open;
+  try { localStorage.setItem(INFO_KEY, open ? '1' : '0'); } catch {}
+  setInfoOpen(open);
+}
+btnInfo.addEventListener('click', () => toggleInfo());
+document.getElementById('stats-close').addEventListener('click', () => toggleInfo(false));
 
 function flushTelemetry() {
   if (!agg.n) return;
@@ -653,7 +667,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowDown') setVolume(base - 0.05);
   else if (e.key === 'm' || e.key === 'M') toggleMute();
   else if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); return; }
-  else if (e.key === 'i' || e.key === 'I') { setInfoOpen(!infoOpen); return; }
+  else if (e.key === 'i' || e.key === 'I') { toggleInfo(); return; }
   else return;
   e.preventDefault();
   showVolumeOsd();

@@ -46,7 +46,7 @@
           <span class="volume-value" id="volume-value">100%</span>
         </div>
         <button id="btn-info" type="button" class="btn btn-ghost btn-icon" style="display:none"
-                aria-label="Informações da transmissão" title="Informações da transmissão (I)">
+                aria-label="Informações da transmissão" aria-pressed="false" title="Mostrar ou esconder as informações da transmissão (I)">
           <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-info"/></svg>
         </button>
         <button id="btn-fullscreen" type="button" class="btn btn-secondary" style="display:none">Tela cheia</button>
@@ -76,7 +76,12 @@
           </div>
         </div>
         <video id="remote-video" autoplay playsinline muted style="display:none"></video>
-        <div class="stats-overlay" id="stats-overlay" style="display:none"></div>
+        <div class="stats-overlay" id="stats-overlay" style="display:none">
+          <button id="stats-close" type="button" class="stats-close" aria-label="Esconder informações da transmissão" title="Esconder (I)">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+          </button>
+          <div id="stats-lines"></div>
+        </div>
       </div>
     </main>
   </div>

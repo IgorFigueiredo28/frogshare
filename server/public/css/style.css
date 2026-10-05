@@ -154,12 +154,22 @@
 
 /* Stream info panel floats over the video, so it keeps its own dark glass in both themes */
 .stats-overlay {
-  position: absolute; top: var(--space-3); left: var(--space-3); z-index: 4;
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
+  position: absolute; right: var(--space-3); bottom: var(--space-3); z-index: 4;
+  padding: var(--space-3) var(--space-8) var(--space-3) var(--space-4); border-radius: var(--radius-md);
   background: rgba(5, 11, 7, 0.8); color: #E7F5E3; border: 1px solid rgba(183, 235, 106, 0.18);
-  font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; white-space: pre;
+  font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6;
   pointer-events: none;
 }
+#stats-lines { white-space: pre; }
+.stats-close {
+  position: absolute; top: var(--space-1); right: var(--space-1);
+  width: 28px; height: 28px; display: grid; place-items: center;
+  background: none; border: 0; border-radius: 50%; color: inherit; opacity: 0.7; cursor: pointer;
+  pointer-events: auto;
+}
+.stats-close .ico { width: 14px; height: 14px; }
+.stats-close:hover, .stats-close:focus-visible { opacity: 1; background: rgba(231, 245, 227, 0.12); }
+#btn-info[aria-pressed="true"] { background: var(--accent-soft); color: var(--on-accent-soft); }
 .stats-overlay .bad { color: #FFB3B5; }
 .stats-overlay .ok { color: #B7EB6A; }
 
