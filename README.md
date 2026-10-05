@@ -83,8 +83,8 @@ Configure no painel do Render. **Nunca** coloque valores no código nem em commi
 ### Publicar uma versão
 
 1. Suba a versão em `package.json` e nas strings `app_version` (`src/main.js`, `public/js/host.js`, `server/public/js/room.js`) e gere o build.
-2. Suba o **instalador** (`FrogShare Setup X.exe`, não o portátil) no arquivo do Google Drive, em "Gerenciar versões".
-3. Baixe o arquivo do Drive, confira se ele é idêntico ao do `dist/` e só então atualize `LATEST_APP` em `server/index.js` com `version`, `size` e `sha512` (SHA-512 em base64). O atualizador do app recusa qualquer arquivo que não bata com esse hash.
+2. Crie a release `vX.Y.Z` no GitHub com o instalador `FrogShare Setup X.Y.Z.exe` (o GitHub o renomeia para `FrogShare.Setup.X.Y.Z.exe`) e uma cópia chamada `FrogShare-Setup.exe`. O botão do site aponta para `releases/latest/download/FrogShare-Setup.exe`, então ele passa a entregar a versão nova sozinho.
+3. Atualize `LATEST_APP` em `server/index.js` com `version`, o `url` do instalador dessa release, `size` e `sha512` (SHA-512 em base64). O atualizador do app recusa qualquer arquivo que não bata com esse hash.
 
 ## Segurança
 
