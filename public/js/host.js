@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.5.1',
+        app_version: '1.5.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -854,6 +854,8 @@ btnStart.addEventListener('click', async () => {
     }
 
     localStream = new MediaStream(tracks);
+    // What viewers hear right now: an app's pid, 'system', or null when the stream has no audio track
+    liveAudio = localStream.getAudioTracks().length ? (mode === 'system' ? 'system' : selectedPid) : null;
     syncPreview();
 
     // 3. Create or reuse room
@@ -1389,7 +1391,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.1', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.2', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1399,11 +1401,18 @@ const switchModal = document.getElementById('switch-modal');
 const switchSourceGrid = document.getElementById('switch-source-grid');
 const switchAudioList = document.getElementById('switch-audio-list');
 const btnCloseModal = document.getElementById('btn-close-modal');
-let switchAudioPid = null;
+// The dialog only collects choices; Aplicar switches the screen, the sound or both
+const switchPick = { sourceId: null, sources: [], sessions: [], audio: 'keep', audioByHand: false };
+let liveAudio = null;
+const btnSwitchApply = document.getElementById('btn-switch-apply');
+const switchSummary = document.getElementById('switch-summary');
 
 btnSwitchSource.addEventListener('click', async () => {
   switchModal.style.display = '';
-  switchAudioPid = null;
+  switchPick.sourceId = selectedSourceId;
+  switchPick.audio = 'keep';
+  switchPick.audioByHand = false;
+  updateSwitchApply();
 
   switchSourceGrid.innerHTML = '<div class="loading">Procurando janelas…</div>';
   switchAudioList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
@@ -1418,67 +1427,123 @@ btnSwitchSource.addEventListener('click', async () => {
 
 function renderSwitchSources(sources) {
   liveLists.sourceSig = sourceSignature(sources);
+  switchPick.sources = sources;
+  // The window being picked may have closed: fall back to what's on air
+  if (!sources.some(s => s.id === switchPick.sourceId)) switchPick.sourceId = selectedSourceId;
   const screens = sources.filter(s => s.isScreen);
   const windows = sources.filter(s => !s.isScreen);
   switchSourceGrid.innerHTML = '';
+
+  const addItem = (source) => {
+    const item = createSourceItem(source, () => pickSwitchSource(source));
+    item.dataset.sourceId = source.id;
+    item.classList.toggle('selected', source.id === switchPick.sourceId);
+    if (source.id === selectedSourceId) {
+      item.querySelector('.source-label').append(Object.assign(document.createElement('span'), { className: 'now-tag', textContent: 'agora' }));
+    }
+    switchSourceGrid.appendChild(item);
+  };
 
   if (screens.length > 0) {
     const screenLabel = document.createElement('div');
     screenLabel.className = 'source-section-label';
     screenLabel.textContent = 'Telas inteiras (melhor para jogos em tela cheia)';
     switchSourceGrid.appendChild(screenLabel);
-    screens.forEach(source => {
-      const item = createSourceItem(source, () => switchToSource(source));
-      switchSourceGrid.appendChild(item);
-    });
+    screens.forEach(addItem);
     const windowLabel = document.createElement('div');
     windowLabel.className = 'source-section-label';
     windowLabel.textContent = 'Janelas';
     switchSourceGrid.appendChild(windowLabel);
   }
+  windows.forEach(addItem);
+  updateSwitchApply();
+}
 
-  windows.forEach(source => {
-    const item = createSourceItem(source, () => switchToSource(source));
-    switchSourceGrid.appendChild(item);
-  });
+async function pickSwitchSource(source) {
+  switchPick.sourceId = source.id;
+  switchSourceGrid.querySelectorAll('.source-item').forEach(el => el.classList.toggle('selected', el.dataset.sourceId === source.id));
+  // Like on the setup screen, a game's window brings the game's sound along, unless a sound was picked by hand
+  if (!switchPick.audioByHand && liveAudio !== null) {
+    let follow = 'keep';
+    const owner = source.isScreen ? null : await window.electronAPI.getWindowOwner(source.id);
+    if (switchPick.sourceId !== source.id) return;
+    const session = owner && matchOwnerSession(owner, switchPick.sessions);
+    if (session && session.pid !== liveAudio) follow = session.pid;
+    if (follow !== switchPick.audio) {
+      switchPick.audio = follow;
+      renderSwitchAudio({ sessions: switchPick.sessions });
+    }
+  }
+  updateSwitchApply();
+}
+
+function switchAudioLabel(value) {
+  if (value === 'system') return 'Todo o PC';
+  const s = switchPick.sessions.find(x => x.pid === value);
+  return s ? s.name : 'outro app';
+}
+
+function updateSwitchApply() {
+  const source = switchPick.sources.find(s => s.id === switchPick.sourceId);
+  const videoChanged = !!source && switchPick.sourceId !== selectedSourceId;
+  const audioChanged = switchPick.audio !== 'keep' && switchPick.audio !== liveAudio;
+  btnSwitchApply.disabled = !(videoChanged || audioChanged);
+  btnSwitchApply.textContent = videoChanged && audioChanged ? 'Trocar tela e som' : videoChanged ? 'Trocar tela' : audioChanged ? 'Trocar som' : 'Aplicar';
+  const parts = [];
+  if (videoChanged) parts.push(`tela: ${source.name}`);
+  if (audioChanged) parts.push(`som: ${switchAudioLabel(switchPick.audio)}`);
+  switchSummary.textContent = parts.length ? 'Vai trocar ' + parts.join(' e ') : 'Nada mudou ainda';
 }
 
 function renderSwitchAudio(audioResult) {
   switchAudioList.innerHTML = '';
   const sessions = (audioResult && audioResult.sessions) || [];
+  switchPick.sessions = sessions;
   liveLists.audioSig = audioSignature(sessions);
+
+  // Without an audio track the connections were set up video-only, so a sound can't be added live
+  if (liveAudio === null) {
+    switchAudioList.append(Object.assign(document.createElement('p'), {
+      className: 'switch-note',
+      textContent: 'Esta transmissão começou sem som. Para ter som, pare a transmissão e comece de novo escolhendo um som.'
+    }));
+    switchPick.audio = 'keep';
+    updateSwitchApply();
+    return;
+  }
   // A redraw keeps what was picked, unless that app is gone
-  if (switchAudioPid && !sessions.some(s => s.pid === switchAudioPid)) switchAudioPid = null;
+  if (typeof switchPick.audio === 'number' && !sessions.some(s => s.pid === switchPick.audio)) switchPick.audio = 'keep';
 
-  const keepItem = document.createElement('div');
-  keepItem.className = 'session-item' + (switchAudioPid ? '' : ' selected');
-  keepItem.innerHTML = '<span class="session-name">Manter o som atual</span>';
-  keepItem.addEventListener('click', () => {
-    switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
-    keepItem.classList.add('selected');
-    switchAudioPid = null;
-  });
-  switchAudioList.appendChild(keepItem);
-
-  sessions.forEach(s => {
+  const addOption = (value, children) => {
     const item = document.createElement('div');
-    item.className = 'session-item' + (s.pid === switchAudioPid ? ' selected' : '');
-    item.append(...sessionRow(s));
+    item.className = 'session-item' + (value === switchPick.audio ? ' selected' : '');
+    item.setAttribute('role', 'button');
+    item.append(...children);
+    if (value !== 'keep' && value === liveAudio) {
+      item.append(Object.assign(document.createElement('span'), { className: 'now-tag', textContent: 'agora' }));
+    }
     item.addEventListener('click', () => {
       switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
-      switchAudioPid = s.pid;
+      switchPick.audio = value;
+      switchPick.audioByHand = value !== 'keep';
+      updateSwitchApply();
     });
     switchAudioList.appendChild(item);
-  });
+  };
+  const nameSpan = (text) => Object.assign(document.createElement('span'), { className: 'session-name', textContent: text });
 
+  addOption('keep', [nameSpan('Manter o som atual')]);
+  addOption('system', [nameSpan('Todo o PC')]);
+  sessions.forEach(s => addOption(s.pid, sessionRow(s)));
   if (sessions.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.textContent = 'Nenhum app tocando som agora';
-    switchAudioList.appendChild(empty);
+    switchAudioList.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'Nenhum app tocando som agora' }));
   }
+  updateSwitchApply();
 }
+
+btnSwitchApply.addEventListener('click', applySwitch);
+document.getElementById('btn-switch-cancel').addEventListener('click', () => { switchModal.style.display = 'none'; });
 
 btnCloseModal.addEventListener('click', () => {
   switchModal.style.display = 'none';
@@ -1488,7 +1553,7 @@ switchModal.addEventListener('click', (e) => {
   if (e.target === switchModal) switchModal.style.display = 'none';
 });
 
-async function switchAudio(newPid) {
+async function switchAudio(newPid, label = '') {
   // Stop old audio
   await window.electronAPI.stopAudioCapture();
   window.electronAPI.removeAudioListeners();
@@ -1523,17 +1588,18 @@ async function switchAudio(newPid) {
     }
   }
 
-  selectedPid = newPid;
-  showToast(`Som trocado (PID ${newPid})`);
+  if (typeof newPid === 'number') selectedPid = newPid;
+  liveAudio = newPid;
+  showToast(`Som trocado para ${label || 'o app escolhido'}`);
 }
 
-async function switchToSource(source) {
-  const newAudioPid = switchAudioPid;
+async function applySwitch() {
+  const source = switchPick.sources.find(s => s.id === switchPick.sourceId);
+  const videoChanged = !!source && source.id !== selectedSourceId;
+  const newAudio = switchPick.audio;
+  const audioChanged = newAudio !== 'keep' && newAudio !== liveAudio;
+  const audioName = audioChanged ? switchAudioLabel(newAudio) : '';
   switchModal.style.display = 'none';
-
-  const videoChanged = source.id !== selectedSourceId;
-  const audioChanged = newAudioPid && newAudioPid !== selectedPid;
-
   if (!videoChanged && !audioChanged) return;
 
   try {
@@ -1562,10 +1628,11 @@ async function switchToSource(source) {
 
     // Switch audio
     if (audioChanged) {
-      await switchAudio(newAudioPid);
+      await switchAudio(newAudio, audioName);
     }
 
-    showToast(`Agora mostrando: ${source.name}`);
+    if (videoChanged && audioChanged) showToast(`Agora mostrando: ${source.name}, com o som de ${audioName}`);
+    else if (videoChanged) showToast(`Agora mostrando: ${source.name}`);
   } catch (err) {
     showToast('Não deu para trocar: ' + err.message);
     reportError('Switch source failed: ' + err.message, err.stack);

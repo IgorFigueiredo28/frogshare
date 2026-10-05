@@ -244,14 +244,22 @@
         </button>
       </div>
       <div class="modal-body">
-        <p class="modal-hint">Para trocar o som junto, escolha o som primeiro e depois a janela. Para trocar só o som, escolha o som e clique na janela que já está sendo mostrada.</p>
-        <div class="switch-audio-section">
-          <h3 class="source-section-label">Som</h3>
+        <p class="modal-hint">Escolha a tela, o som ou os dois e clique em Aplicar. O que está marcado como <strong>agora</strong> é o que seus amigos estão vendo e ouvindo.</p>
+        <section class="switch-section" aria-labelledby="switch-video-title">
+          <h3 id="switch-video-title" class="switch-section-title">Tela ou janela</h3>
+          <div class="source-grid" id="switch-source-grid">
+            <div class="loading">Procurando janelas…</div>
+          </div>
+        </section>
+        <section class="switch-section" aria-labelledby="switch-audio-title">
+          <h3 id="switch-audio-title" class="switch-section-title">Som</h3>
           <div class="session-list" id="switch-audio-list"></div>
-        </div>
-        <div class="source-grid" id="switch-source-grid">
-          <div class="loading">Procurando janelas…</div>
-        </div>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <span class="switch-summary" id="switch-summary" aria-live="polite">Nada mudou ainda</span>
+        <button id="btn-switch-cancel" type="button" class="btn btn-ghost">Cancelar</button>
+        <button id="btn-switch-apply" type="button" class="btn btn-primary" disabled>Aplicar</button>
       </div>
     </div>
   </div>
