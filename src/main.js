@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.5.0'
+        app_version: '1.5.1'
       })
     }).catch(() => {});
   } catch {}
@@ -381,6 +381,14 @@ ipcMain.handle('get-source-ids', async () => {
   } catch {
     return '';
   }
+});
+
+// The program behind a window ("window:<hwnd>:0"), so the page can pre-pick its sound. Windows only.
+ipcMain.handle('get-window-owner', async (event, sourceId) => {
+  const hwnd = /^window:(\d+):/.exec(String(sourceId))?.[1];
+  if (isMac || !hwnd) return null;
+  const owner = await runHelperJson(['window-owner', hwnd]);
+  return owner.pid ? owner : null;
 });
 
 ipcMain.handle('get-sources', async () => {

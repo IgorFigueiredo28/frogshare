@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.5.0',
+        app_version: '1.5.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -267,6 +267,7 @@ function createSourceItem(source, onClick) {
       item.classList.add('selected');
       selectedSourceId = source.id;
       updateStartButton();
+      followWindowAudio(source);
     });
   }
   return item;
@@ -285,10 +286,52 @@ function sessionRow(session) {
 
 const audioSignature = (sessions) => (sessions || []).map(s => `${s.pid}:${s.name}:${s.state}`).join('|');
 
+// ======== Sound that follows the window ========
+// Picking a game's window also picks the game's sound, unless a sound was already chosen by hand.
+// Matched by the same process, then one of its child processes (games and browsers often play
+// audio from a helper), then the same program name. If the game isn't making sound yet, the pick
+// happens as soon as its session shows up.
+const audioFollow = { owner: null, sourceId: null, autoPicked: false };
+
+function matchOwnerSession(owner, sessions) {
+  const name = (owner.name || '').toLowerCase();
+  return sessions.find(s => s.pid === owner.pid)
+    || sessions.find(s => owner.descendants?.includes(s.pid))
+    || (name && sessions.find(s => String(s.name).toLowerCase() === name))
+    || null;
+}
+
+function applyAudioFollow(sessions, { announce = true } = {}) {
+  const { owner } = audioFollow;
+  if (!owner || audioFollow.sourceId !== selectedSourceId || getAudioMode() !== 'process') return false;
+  if (selectedPid && !audioFollow.autoPicked) return false;
+  const session = matchOwnerSession(owner, sessions || []);
+  if (!session || session.pid === selectedPid) return false;
+  selectedPid = session.pid;
+  audioFollow.autoPicked = true;
+  updateStartButton();
+  if (announce) showToast(`Som de "${session.name}" escolhido junto com a janela.`);
+  return true;
+}
+
+async function followWindowAudio(source) {
+  audioFollow.owner = null;
+  audioFollow.sourceId = source.id;
+  if (source.isScreen) return;
+  const owner = await window.electronAPI.getWindowOwner(source.id);
+  // Another window may have been picked while this was being looked up
+  if (!owner || audioFollow.sourceId !== source.id) return;
+  audioFollow.owner = owner;
+  if (applyAudioFollow(audioFollow.lastSessions)) loadAudioSessions({ silent: true, result: { sessions: audioFollow.lastSessions } });
+}
+
 async function loadAudioSessions({ silent = false, result = null } = {}) {
   if (!silent) sessionList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
   result = result || await window.electronAPI.listAudioSessions();
   liveLists.audioSig = audioSignature(result.sessions);
+  audioFollow.lastSessions = result.sessions || [];
+  // The picked window's program may have only just started playing sound
+  applyAudioFollow(audioFollow.lastSessions);
   // The app that was picked may have closed
   if (selectedPid && !(result.sessions || []).some(s => s.pid === selectedPid)) {
     selectedPid = null;
@@ -315,6 +358,7 @@ async function loadAudioSessions({ silent = false, result = null } = {}) {
       document.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
       selectedPid = session.pid;
+      audioFollow.autoPicked = false;
       updateStartButton();
     });
     sessionList.appendChild(item);
@@ -1345,7 +1389,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.0', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.1', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 

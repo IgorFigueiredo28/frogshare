@@ -434,6 +434,54 @@ class AudioCapture
         WriteJson("{\"windows\":[" + string.Join(",", ids) + "]}");
     }
 
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32FirstW(IntPtr snap, ref PROCESSENTRY32W entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32NextW(IntPtr snap, ref PROCESSENTRY32W entry);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct PROCESSENTRY32W
+    {
+        public uint dwSize, cntUsage, th32ProcessID; public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID, cntThreads, th32ParentProcessID; public int pcPriClassBase; public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+
+    // Which program a window belongs to, so the app can pre-pick that program's sound. Games and
+    // browsers often play audio from a helper process, so the owner's descendants come along too.
+    static void WindowOwner(string hwndText)
+    {
+        uint pid;
+        GetWindowThreadProcessId(new IntPtr(long.Parse(hwndText)), out pid);
+        if (pid == 0) { WriteJson("{\"error\":\"window not found\"}"); return; }
+        string name = "";
+        try { name = Process.GetProcessById((int)pid).ProcessName; } catch {}
+
+        var children = new Dictionary<uint, List<uint>>();
+        IntPtr snap = CreateToolhelp32Snapshot(0x2 /* TH32CS_SNAPPROCESS */, 0);
+        var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W)) };
+        if (Process32FirstW(snap, ref entry))
+        {
+            do
+            {
+                List<uint> list;
+                if (!children.TryGetValue(entry.th32ParentProcessID, out list)) children[entry.th32ParentProcessID] = list = new List<uint>();
+                list.Add(entry.th32ProcessID);
+            } while (Process32NextW(snap, ref entry));
+        }
+        CloseHandle(snap);
+
+        var descendants = new List<uint>();
+        var queue = new Queue<uint>(new[] { pid });
+        while (queue.Count > 0 && descendants.Count < 200)
+        {
+            List<uint> kids;
+            if (!children.TryGetValue(queue.Dequeue(), out kids)) continue;
+            foreach (var k in kids) { if (k != pid && !descendants.Contains(k)) { descendants.Add(k); queue.Enqueue(k); } }
+        }
+        WriteJson("{\"pid\":" + pid + ",\"name\":\"" + Esc(name) + "\",\"descendants\":[" + string.Join(",", descendants) + "]}");
+    }
+
     static void WriteJson(string json) { Console.Error.WriteLine(json); Console.Error.Flush(); }
     static string Esc(string s) { return s.Replace("\\", "\\\\").Replace("\"", "\\\""); }
 
@@ -445,6 +493,7 @@ class AudioCapture
         {
             if (args[0] == "list") { ListAudioSessions(); return; }
             if (args[0] == "windows") { ListWindows(); return; }
+            if (args[0] == "window-owner" && args.Length > 1) { WindowOwner(args[1]); return; }
             if (args[0] == "gpu-priority" && args.Length > 2) { SetGpuPriority(args); return; }
 
             var stdinThread = new Thread(() => {
