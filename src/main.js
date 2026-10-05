@@ -168,7 +168,8 @@ function setOverlayCompact(compact) {
   overlayWindow.setBounds(bounds);
   // Windows won't make the window shorter than 64px, so the chip would leave an invisible
   // strip below it that swallows clicks; clipping the window region to the chip removes it
-  overlayWindow.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
+  // (setShape exists on Windows and Linux only; macOS has no minimum window height to work around)
+  if (!isMac) overlayWindow.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
   // Expanded again: shrink back after another stretch so it stays out of the way
   if (!compact) overlayCompactTimer = setTimeout(() => setOverlayCompact(true), OVERLAY_COMPACT_AFTER_MS);
 }
@@ -261,7 +262,8 @@ ipcMain.handle('set-stream-status', (event, status) => {
   streamStatus.streaming = !!status.streaming;
   streamStatus.viewers = Number(status.viewers) || 0;
   streamStatus.mode = status.mode === 'sfu' ? 'sfu' : 'direto';
-  if (streamStatus.streaming !== wasStreaming && mainWindow && !mainWindow.isDestroyed()) {
+  // The taskbar badge is a Windows feature (setOverlayIcon doesn't exist on macOS)
+  if (!isMac && streamStatus.streaming !== wasStreaming && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setOverlayIcon(streamStatus.streaming ? liveBadge() : null, streamStatus.streaming ? 'Transmitindo' : '');
   }
   if (!streamStatus.streaming) hideOverlay();
