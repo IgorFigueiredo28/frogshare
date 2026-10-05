@@ -2,7 +2,6 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
-const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const crypto = require('crypto');
 
@@ -11,7 +10,49 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const app = express();
+// Render sits behind a proxy; this makes req.ip the client's address for the rate limits
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
 app.use(cors());
+
+// Baseline browser protections for the site; it loads nothing from elsewhere except Google Fonts
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'X-Frame-Options': 'DENY',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Content-Security-Policy': [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: blob:",
+      "media-src 'self' blob:",
+      "connect-src 'self' wss: https://rtc.live.cloudflare.com",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'"
+    ].join('; ')
+  });
+  next();
+});
+
+// Small per-IP limiter for the routes that write or allocate. In memory: resets on restart, which is fine.
+function rateLimit(max, windowMs) {
+  const hits = new Map();
+  setInterval(() => hits.clear(), windowMs).unref();
+  return (req, res, next) => {
+    const key = req.ip || 'unknown';
+    const n = (hits.get(key) || 0) + 1;
+    hits.set(key, n);
+    if (n > max) return res.status(429).json({ error: 'muitas requisicoes, tente de novo em instantes' });
+    next();
+  };
+}
+
+// Room ids come from links people paste; anything else is refused before it touches the room map
+const ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 // SDP bodies for the SFU routes run to several KB
 app.use(express.json({ limit: '64kb' }));
 const server = http.createServer(app);
@@ -238,9 +279,10 @@ async function usedBytesThisMonth() {
   await loadRelayUsage();
   await refreshOfficialUsage();
   const estimate = relayTotal();
-  if (official.turnBytes == null) return { bytes: estimate, source: 'estimativa' };
-  const measured = official.turnBytes + (official.sfuBytes || 0);
-  return { bytes: Math.max(measured, estimate), source: 'cloudflare' };
+  // Hosts report the estimate without any proof, so once Cloudflare's billing figure is available it
+  // alone decides: otherwise anyone could post inflated numbers and switch relay off for everyone
+  if (official.turnBytes == null || official.error) return { bytes: estimate, source: 'estimativa' };
+  return { bytes: official.turnBytes + (official.sfuBytes || 0), source: 'cloudflare' };
 }
 
 app.get('/api/usage', async (req, res) => {
@@ -264,7 +306,7 @@ app.get('/api/usage', async (req, res) => {
   });
 });
 
-app.post('/api/relay-usage', async (req, res) => {
+app.post('/api/relay-usage', rateLimit(12, 60000), async (req, res) => {
   const bytes = Number(req.body?.bytes);
   if (!Number.isFinite(bytes) || bytes <= 0 || bytes > 5e9) {
     return res.status(400).json({ error: 'invalid bytes' });
@@ -365,15 +407,16 @@ app.get('/api/sfu/status', async (req, res) => {
   res.json(await sfuState());
 });
 
-app.post('/api/sfu/sessions', (req, res) => sfuProxy(req, res, 'POST', '/sessions/new'));
+const sfuLimit = rateLimit(120, 60000);
+app.post('/api/sfu/sessions', sfuLimit, (req, res) => sfuProxy(req, res, 'POST', '/sessions/new'));
 
-app.post('/api/sfu/sessions/:sid/tracks', (req, res) => {
+app.post('/api/sfu/sessions/:sid/tracks', sfuLimit, (req, res) => {
   if (!SFU_ID_RE.test(req.params.sid)) return res.status(400).json({ errorDescription: 'sessao invalida' });
   const { sessionDescription, tracks } = req.body || {};
   sfuProxy(req, res, 'POST', `/sessions/${req.params.sid}/tracks/new`, { sessionDescription, tracks });
 });
 
-app.put('/api/sfu/sessions/:sid/renegotiate', (req, res) => {
+app.put('/api/sfu/sessions/:sid/renegotiate', sfuLimit, (req, res) => {
   if (!SFU_ID_RE.test(req.params.sid)) return res.status(400).json({ errorDescription: 'sessao invalida' });
   sfuProxy(req, res, 'PUT', `/sessions/${req.params.sid}/renegotiate`, { sessionDescription: req.body?.sessionDescription });
 });
@@ -423,13 +466,15 @@ async function loadBlockedRooms() {
   } catch {}
 }
 
+// A key of its own, so the database's master key never has to travel in a request.
+// Without ADMIN_KEY set, the admin routes are simply off.
 function isAdmin(req) {
   const given = Buffer.from(req.get('x-admin-key') || '');
-  const expected = Buffer.from(SUPABASE_KEY || '');
+  const expected = Buffer.from((process.env.ADMIN_KEY || '').trim());
   return expected.length > 0 && given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
 
-app.post('/api/admin/close-room', async (req, res) => {
+app.post('/api/admin/close-room', rateLimit(10, 60000), async (req, res) => {
   if (!isAdmin(req)) return res.status(401).json({ error: 'unauthorized' });
   const roomId = String(req.body?.roomId || '').slice(0, 50);
   if (!roomId) return res.status(400).json({ error: 'roomId required' });
@@ -447,8 +492,11 @@ app.post('/api/admin/close-room', async (req, res) => {
   res.json({ ok: true, ...result, blockedHours: BLOCK_MS / 3600000, persisted });
 });
 
+// Rows the server itself writes and later trusts (usage totals, room blocks) must not be forgeable here
+const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room']);
+
 // Error logging proxy — clients POST here, server forwards to Supabase
-app.post('/api/errors', async (req, res) => {
+app.post('/api/errors', rateLimit(60, 60000), async (req, res) => {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     return res.status(503).json({ error: 'Logging not configured' });
   }
@@ -456,6 +504,9 @@ app.post('/api/errors', async (req, res) => {
   if (!source || !message) {
     return res.status(400).json({ error: 'source and message required' });
   }
+  if (INTERNAL_LOG_SOURCES.has(String(source))) return res.status(403).json({ error: 'reserved source' });
+  const contextJson = context == null ? null : JSON.stringify(context);
+  if (contextJson && contextJson.length > 16000) return res.status(413).json({ error: 'context too large' });
   try {
     const resp = await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
       method: 'POST',
@@ -482,13 +533,23 @@ app.post('/api/errors', async (req, res) => {
   }
 });
 
-app.get('/api/room/create', (req, res) => {
-  const roomId = uuidv4().slice(0, 8);
-  rooms.set(roomId, { host: null, viewers: new Set(), createdAt: Date.now() });
-  res.json({ roomId });
+// The host key proves who created the room. Apps from 1.4.6 send it back when joining as host;
+// without it, a viewer who knows the room id could claim to be the host and take over the stream.
+const newHostKey = () => crypto.randomBytes(24).toString('base64url');
+const sameKey = (a, b) => {
+  const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || ''));
+  return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+
+app.get('/api/room/create', rateLimit(20, 60000), (req, res) => {
+  const roomId = crypto.randomUUID().slice(0, 8);
+  const hostKey = newHostKey();
+  rooms.set(roomId, { host: null, hostKey, strict: false, viewers: new Set(), createdAt: Date.now() });
+  res.json({ roomId, hostKey });
 });
 
 app.get('/api/room/:id', (req, res) => {
+  if (!ROOM_ID_RE.test(req.params.id)) return res.status(404).json({ error: 'Room not found' });
   const room = rooms.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
   res.json({ exists: true, hasHost: !!room.host, viewerCount: room.viewers.size });
@@ -526,18 +587,46 @@ io.on('connection', (socket) => {
   let currentRoom = null;
   let role = null;
 
-  socket.on('join-room', ({ roomId, asHost, appVersion }) => {
+  // Signaling only flows between members of the same room
+  const inMyRoom = (id) => {
+    const room = currentRoom && rooms.get(currentRoom);
+    return !!room && (room.host === id || room.viewers.has(id));
+  };
+
+  socket.on('join-room', ({ roomId, asHost, appVersion, hostKey } = {}) => {
+    if (typeof roomId !== 'string' || !ROOM_ID_RE.test(roomId)) return;
     if (isBlocked(roomId)) {
       // A closed room stays closed: the host gets no viewers and viewers see no host
       if (!asHost) socket.emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false });
       return;
     }
     let room = rooms.get(roomId);
-    if (!room) {
-      room = { host: null, viewers: new Set(), createdAt: Date.now() };
+    if (asHost) {
+      // Who may act as host:
+      // - with the room's key: always (also how a host takes its room back after a reconnect)
+      // - a room this server doesn't know, or only knows from viewers (it restarted): whoever
+      //   brings it back, keeping their key
+      // - builds before 1.4.6 send no key: only while nobody is hosting and no key holder has joined
+      const key = hostKey ? String(hostKey).slice(0, 64) : null;
+      if (!room) {
+        room = { host: null, hostKey: key, strict: !!key, viewers: new Set(), createdAt: Date.now() };
+        rooms.set(roomId, room);
+      } else if (sameKey(key, room.hostKey)) {
+        room.strict = true;
+      } else if (key && !room.hostKey && !room.host && !room.strict) {
+        room.hostKey = key;
+        room.strict = true;
+      } else if (key || room.host || room.strict) {
+        socket.emit('host-rejected', { reason: 'Esta sala pertence a outro host.' });
+        return;
+      }
+    } else if (!room) {
+      room = { host: null, hostKey: null, strict: false, viewers: new Set(), createdAt: Date.now() };
       rooms.set(roomId, room);
     }
 
+    // A socket belongs to one room; switching drops it from the previous one
+    if (currentRoom && currentRoom !== roomId) socket.leave(currentRoom);
     currentRoom = roomId;
     socket.join(roomId);
 
@@ -552,6 +641,7 @@ io.on('connection', (socket) => {
         socket.emit('viewer-joined', { viewerId });
       }
     } else {
+      if (room.viewers.size >= 200) return;
       room.viewers.add(socket.id);
       role = 'viewer';
       if (room.host) {
@@ -563,7 +653,8 @@ io.on('connection', (socket) => {
     emitRoomUpdate(roomId, room);
   });
 
-  socket.on('offer', ({ to, offer, sid }) => {
+  socket.on('offer', ({ to, offer, sid } = {}) => {
+    if (role !== 'host' || !inMyRoom(to)) return;
     io.to(to).emit('offer', { from: socket.id, offer, sid });
     const room = currentRoom && rooms.get(currentRoom);
     if (room && role === 'host' && !room.hostVersion && room.hostLegacy === undefined) {
@@ -572,16 +663,18 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('answer', ({ to, answer, sid }) => {
+  socket.on('answer', ({ to, answer, sid } = {}) => {
+    if (!inMyRoom(to)) return;
     io.to(to).emit('answer', { from: socket.id, answer, sid });
   });
 
-  socket.on('ice-candidate', ({ to, candidate, sid }) => {
+  socket.on('ice-candidate', ({ to, candidate, sid } = {}) => {
+    if (!inMyRoom(to)) return;
     io.to(to).emit('ice-candidate', { from: socket.id, candidate, sid });
   });
 
   // Host switched the room to the SFU: viewers pull the published tracks instead of a P2P offer
-  socket.on('sfu-start', ({ sessionId, tracks }) => {
+  socket.on('sfu-start', ({ sessionId, tracks } = {}) => {
     if (!currentRoom || role !== 'host') return;
     const room = rooms.get(currentRoom);
     if (!room || !SFU_ID_RE.test(String(sessionId)) || !Array.isArray(tracks)) return;

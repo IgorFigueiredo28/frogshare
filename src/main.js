@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.4.5'
+        app_version: '1.4.6'
       })
     }).catch(() => {});
   } catch {}
@@ -308,8 +308,29 @@ ipcMain.handle('overlay-hide', () => {
   return true;
 });
 
+// ======== Web content lockdown ========
+// The app only ever shows its own pages from the local server. Anything that tries to open a new
+// window or navigate elsewhere (a link, or injected content) is stopped; https links go to the browser.
+const isOwnPage = (url) => {
+  try { return new URL(url).origin === `http://127.0.0.1:${serverInstance?.port}`; } catch { return false; }
+};
+app.on('web-contents-created', (event, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  contents.on('will-navigate', (e, url) => { if (!isOwnPage(url)) e.preventDefault(); });
+  contents.on('will-attach-webview', (e) => e.preventDefault());
+});
+
 app.whenReady().then(async () => {
   loadOverlayPrefs();
+  // Only what the app uses: screen capture and the clipboard (copy link). Everything else is refused.
+  const allowed = new Set(['media', 'display-capture', 'clipboard-sanitized-write', 'clipboard-read']);
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+    callback(allowed.has(permission) && isOwnPage(details.requestingUrl || wc.getURL()));
+  });
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin) => allowed.has(permission) && (!origin || isOwnPage(origin)));
   serverInstance = await createServer(3030);
 
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {

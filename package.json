@@ -1,11 +1,10 @@
 {
   "name": "screen-share-app",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Screen sharing with per-process audio capture",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "server": "node src/server-standalone.js",
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
     "build:native:mac": "swiftc -O -target arm64-apple-macos11 native/mac/AudioCapture.swift -o native/AudioCapture-mac",
@@ -80,9 +79,7 @@
     "asar": true
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "socket.io": "^4.7.5",
-    "uuid": "^10.0.0"
+    "express": "^4.21.0"
   },
   "devDependencies": {
     "electron": "^33.0.0",

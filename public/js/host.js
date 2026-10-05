@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.4.5',
+        app_version: '1.4.6',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -42,6 +42,8 @@ let socket = null;
 const peerConnections = new Map();
 let offerSeq = 0;
 let roomId = null;
+// Proves to the server that this app created the room, so nobody else can take it over as host
+let hostKey = null;
 let signalServer = '';
 let isStreaming = false;
 
@@ -261,12 +263,22 @@ function createSourceItem(source, onClick) {
 }
 
 // ======== Audio Sessions ========
+function sessionRow(session) {
+  const span = (className, text) => Object.assign(document.createElement('span'), { className, textContent: text });
+  const active = session.state === 'active';
+  return [
+    span('session-name', String(session.name)),
+    span('session-pid', 'PID ' + session.pid),
+    span('session-state ' + (active ? 'active' : 'inactive'), active ? 'Ativo' : 'Inativo')
+  ];
+}
+
 async function loadAudioSessions() {
   sessionList.innerHTML = '<div class="loading">Procurando apps com som…</div>';
   const result = await window.electronAPI.listAudioSessions();
 
   if (result.error) {
-    sessionList.innerHTML = `<div class="empty">Erro: ${result.error}</div>`;
+    sessionList.replaceChildren(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'Erro: ' + result.error }));
     return;
   }
 
@@ -280,11 +292,7 @@ async function loadAudioSessions() {
   sessions.forEach(session => {
     const item = document.createElement('div');
     item.className = 'session-item' + (session.pid === selectedPid ? ' selected' : '');
-    item.innerHTML = `
-      <span class="session-name">${session.name}</span>
-      <span class="session-pid">PID ${session.pid}</span>
-      <span class="session-state ${session.state}">${session.state === 'active' ? 'Ativo' : 'Inativo'}</span>
-    `;
+    item.append(...sessionRow(session));
     item.addEventListener('click', () => {
       document.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
@@ -416,12 +424,18 @@ async function ensureRoom() {
   const res = await fetch(`${signalServer}/api/room/create`);
   const data = await res.json();
   roomId = data.roomId;
+  hostKey = data.hostKey || null;
 
   socket = io(signalServer);
   socket.on('connect', () => {
-    socket.emit('join-room', { roomId, asHost: true, appVersion });
+    socket.emit('join-room', { roomId, asHost: true, appVersion, hostKey });
     // The server forgets the SFU session when the host socket drops
     if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
+  });
+
+  socket.on('host-rejected', ({ reason }) => {
+    showToast(reason || 'O servidor não aceitou esta sala.');
+    reportError('Host join rejected', null, { roomId });
   });
 
   socket.on('viewer-joined', async ({ viewerId }) => {
@@ -1284,7 +1298,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.5', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.4.6', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1350,11 +1364,7 @@ btnSwitchSource.addEventListener('click', async () => {
   sessions.forEach(s => {
     const item = document.createElement('div');
     item.className = 'session-item';
-    item.innerHTML = `
-      <span class="session-name">${s.name}</span>
-      <span class="session-pid">PID ${s.pid}</span>
-      <span class="session-state ${s.state}">${s.state === 'active' ? 'Ativo' : 'Inativo'}</span>
-    `;
+    item.append(...sessionRow(s));
     item.addEventListener('click', () => {
       switchAudioList.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');
