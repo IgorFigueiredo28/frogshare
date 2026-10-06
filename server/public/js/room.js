@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.0',
+        app_version: '1.6.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -611,6 +611,8 @@ socket.on('ice-candidate', ({ from, candidate, sid }) => {
 // One row per streamer with its frog colour; picking one puts it on stage. The speaker button
 // mutes just that streamer. With the group open and a free slot, viewers can join in from here.
 const SHARE_URL = () => `frogshare://share?room=${encodeURIComponent(roomId)}`;
+// The app runs on Windows and Mac only; on a phone the button would lead nowhere
+const canRunApp = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 function streamState(info) {
   const ch = channels.get(info.id);
@@ -673,7 +675,7 @@ function renderStreamList() {
     Object.assign(document.createElement('p'), { className: 'stream-list-title', textContent: hostsInfo.length > 1 ? 'Transmissões' : 'Transmissão em grupo' }),
     ...items
   ];
-  if (groupOpen && hostsInfo.length < 4) {
+  if (groupOpen && hostsInfo.length < 4 && canRunApp) {
     const share = document.createElement('button');
     share.type = 'button';
     share.className = 'btn btn-secondary stream-share';
@@ -865,7 +867,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.0', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.1', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

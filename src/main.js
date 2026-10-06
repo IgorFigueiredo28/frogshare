@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.6.0'
+        app_version: '1.6.1'
       })
     }).catch(() => {});
   } catch {}
@@ -384,8 +384,10 @@ app.on('web-contents-created', (event, contents) => {
   contents.on('will-attach-webview', (e) => e.preventDefault());
 });
 
-// Windows shows notifications under the installer shortcut's identity, which electron-builder sets to appId
-if (process.platform === 'win32') app.setAppUserModelId('com.screenshare.app');
+// Windows shows notifications under the installer shortcut's identity, which electron-builder sets to appId.
+// A dev run gets its own identity: Electron stamps it on a Start menu "Electron" shortcut, and sharing the
+// real one made the installed app's taskbar button show Electron's icon.
+if (process.platform === 'win32') app.setAppUserModelId(isDev ? 'com.screenshare.app.dev' : 'com.screenshare.app');
 
 app.whenReady().then(async () => {
   loadOverlayPrefs();

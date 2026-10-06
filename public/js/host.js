@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.0',
+        app_version: '1.6.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -873,6 +873,7 @@ btnStart.addEventListener('click', async () => {
 
   try {
     const mode = getAudioMode();
+    if (group.guestRoom && roomId && roomId !== group.guestRoom) leaveRoomConnection();
     const isResume = !!roomId;
 
     // 1. Capture video with cursor hidden
@@ -1082,6 +1083,9 @@ function startLabel() {
 const groupInvite = document.getElementById('group-invite');
 const groupInviteText = document.getElementById('group-invite-text');
 const groupToggle = document.getElementById('group-toggle');
+const groupToggleSetup = document.getElementById('group-toggle-setup');
+const groupJoin = document.getElementById('group-join');
+const groupJoinCode = document.getElementById('group-join-code');
 const groupToggleRow = document.getElementById('group-toggle-row');
 const groupDetails = document.getElementById('group-details');
 const groupList = document.getElementById('group-list');
@@ -1104,6 +1108,7 @@ function renderGroupUi() {
   groupToggleRow.hidden = guest;
   btnStop.lastChild.textContent = guest ? 'Sair do grupo' : 'Parar';
   groupToggle.checked = group.enabled;
+  groupToggleSetup.checked = group.enabled;
   const inGroup = guest || group.enabled;
   groupDetails.hidden = !inGroup;
   roomBarLabel.textContent = guest ? 'Em grupo' : 'Sala ativa';
@@ -1143,10 +1148,31 @@ function renderGroupUi() {
   for (const input of nickInputs) if (document.activeElement !== input) input.value = nickname();
 }
 
-groupToggle.addEventListener('change', () => {
-  group.enabled = groupToggle.checked;
-  socket?.emit('group-mode', { enabled: group.enabled });
+// The same switch lives on the setup screen (before going live) and in the room panel
+function setGroupEnabled(enabled) {
+  group.enabled = enabled;
+  // Without a room yet, joining the room turns it on (see ensureRoom)
+  if (socket && !group.guestRoom) socket.emit('group-mode', { enabled });
   renderGroupUi();
+  if (enabled && !nickname()) {
+    showToast('Coloque seu apelido, para seus amigos saberem qual tela é a sua.');
+    if (panelStreaming.style.display !== 'none') document.getElementById('nickname').focus();
+  }
+}
+groupToggle.addEventListener('change', () => setGroupEnabled(groupToggle.checked));
+groupToggleSetup.addEventListener('change', () => setGroupEnabled(groupToggleSetup.checked));
+
+// A friend's room code, or the room link they sent (…/room.html?room=abc)
+groupJoin.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = groupJoinCode.value.trim();
+  const room = (text.match(/[?&]room=([A-Za-z0-9_-]{1,64})/) || [])[1] || text;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(room)) {
+    showToast('Cole o código da sala ou o link que seu amigo mandou.');
+    return;
+  }
+  groupJoinCode.value = '';
+  handleGroupInvite({ room });
 });
 
 for (const input of nickInputs) {
@@ -1172,8 +1198,9 @@ function handleGroupInvite(invite) {
     showToast('Essa é a sua própria sala. Ligue "Transmissão em grupo" nela para seus amigos entrarem.');
     return;
   }
-  // A paused room of our own, or another group, is left behind
-  leaveRoomConnection();
+  // Switching from another group's invite: leave that room if we were in it. Our own paused room
+  // stays until the start button really joins this one, so "Cancelar" gets it back intact.
+  if (group.guestRoom && roomId === group.guestRoom) leaveRoomConnection();
   group.guestRoom = room;
   group.slot = 0;
   group.ownerName = '';
@@ -1198,7 +1225,7 @@ function leaveRoomConnection() {
 
 function exitGuestMode() {
   if (!group.guestRoom) return;
-  leaveRoomConnection();
+  if (roomId === group.guestRoom) leaveRoomConnection();
   group.guestRoom = null;
   group.slot = 0;
   group.ownerName = '';
@@ -1609,7 +1636,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.0', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.1', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 

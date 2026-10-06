@@ -98,7 +98,7 @@
     <!-- ================= Setup ================= -->
     <div class="panel" id="panel-setup">
       <!-- Group mode: the site sent this app into someone else's room to stream alongside them -->
-      <section class="group-invite card" id="group-invite" aria-labelledby="group-invite-title" hidden>
+      <div class="group-invite card" id="group-invite" role="region" aria-labelledby="group-invite-title" hidden>
         <img class="group-frog" src="/brand/frog-head.svg" alt="" width="52" height="46">
         <div class="group-invite-body">
           <h2 id="group-invite-title">Transmissão em grupo</h2>
@@ -109,7 +109,7 @@
           </label>
         </div>
         <button id="btn-group-cancel" type="button" class="btn btn-ghost">Cancelar</button>
-      </section>
+      </div>
 
       <div class="setup-hero">
         <img src="/brand/frog.svg" alt="" width="88" height="81">
@@ -119,7 +119,24 @@
         </div>
       </div>
 
-      <section class="step card" aria-labelledby="step-source">
+      <!-- Group streaming before going live: open your own room to friends, or join a friend's -->
+      <div class="card group-card" id="group-card" role="region" aria-labelledby="group-card-title">
+        <img class="group-card-frogs" src="/brand/frog-head.svg" alt="" width="40" height="35">
+        <div class="group-card-body">
+          <h2 id="group-card-title">Transmissão em grupo</h2>
+          <label class="switch-row">
+            <input type="checkbox" id="group-toggle-setup" class="switch">
+            <span>Deixar até 4 pessoas mostrarem a tela na minha sala</span>
+          </label>
+          <form class="group-join" id="group-join" autocomplete="off">
+            <label for="group-join-code">Ou entre no grupo de um amigo:</label>
+            <input id="group-join-code" class="input" type="text" maxlength="200" spellcheck="false" placeholder="Código ou link da sala">
+            <button type="submit" class="btn btn-secondary">Entrar</button>
+          </form>
+        </div>
+      </div>
+
+      <section class="step card step-source" aria-labelledby="step-source">
         <div class="step-head">
           <span class="step-num" aria-hidden="true">1</span>
           <h2 id="step-source">O que mostrar</h2>

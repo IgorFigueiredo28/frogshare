@@ -60,12 +60,12 @@ body { min-height: 100vh; user-select: none; }
 #panel-setup {
   display: grid; gap: var(--space-4);
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "hero" "source" "audio" "quality" "start";
+  grid-template-areas: "hero" "group" "source" "audio" "quality" "start";
 }
 @media (min-width: 900px) {
   #panel-setup {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "hero hero" "source source" "audio quality" "start start";
+    grid-template-areas: "hero hero" "group group" "source source" "audio quality" "start start";
   }
 }
 .setup-hero { grid-area: hero; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) 0; }
@@ -73,7 +73,7 @@ body { min-height: 100vh; user-select: none; }
 .setup-hero h1 { font-size: var(--text-2xl); }
 .subtitle { color: var(--text-2); }
 
-#panel-setup > .step:first-of-type { grid-area: source; }
+#panel-setup > .step-source { grid-area: source; }
 #panel-setup > .step-audio { grid-area: audio; }
 #panel-setup > #quality-section { grid-area: quality; }
 
@@ -295,3 +295,13 @@ body.group-guest .setup-hero { display: none; }
 .group-list .group-tag { font-weight: 500; color: var(--text-2); }
 .group-hint { font-size: var(--text-sm); color: var(--text-2); }
 .switch-row[hidden] { display: none; }
+
+/* Setup: the group card (own room open to friends, or join a friend's) */
+.group-card { grid-area: group; display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-4) var(--space-5); }
+.group-card-frogs { width: 40px; height: auto; flex-shrink: 0; margin-top: 2px; }
+.group-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.group-card-body h2 { font-size: var(--text-lg); }
+.group-card .switch-row { padding-top: 0; border-top: 0; }
+.group-join { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-2); font-weight: 600; }
+.group-join .input { flex: 1; min-width: 180px; max-width: 280px; }
+body.group-guest .group-card { display: none; }
