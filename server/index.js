@@ -492,6 +492,27 @@ app.post('/api/admin/close-room', rateLimit(10, 60000), async (req, res) => {
   res.json({ ok: true, ...result, blockedHours: BLOCK_MS / 3600000, persisted });
 });
 
+// Recent stream quality reports (hosts every minute, viewers every minute), to diagnose stutter
+// without a database login. Admin key only: rows carry room ids and user agents.
+app.get('/api/admin/telemetry', rateLimit(20, 60000), async (req, res) => {
+  if (!isAdmin(req)) return res.status(401).json({ error: 'unauthorized' });
+  if (!SUPABASE_URL || !SUPABASE_KEY) return res.status(503).json({ error: 'logging not configured' });
+  const minutes = Math.min(Math.max(parseInt(req.query.minutes, 10) || 180, 1), 7 * 24 * 60);
+  const since = new Date(Date.now() - minutes * 60000).toISOString();
+  const sources = String(req.query.sources || 'host-stats,viewer-stats').split(',').filter(s => /^[a-z-]{1,30}$/.test(s));
+  try {
+    const resp = await fetch(
+      `${SUPABASE_URL}/rest/v1/error_logs?source=in.(${sources.join(',')})&created_at=gte.${since}` +
+      '&order=created_at.desc&limit=1000&select=created_at,source,level,message,room_id,app_version,context',
+      { headers: supabaseHeaders() }
+    );
+    res.set('Cache-Control', 'no-store');
+    res.status(resp.ok ? 200 : 502).json(resp.ok ? await resp.json() : { error: `supabase ${resp.status}` });
+  } catch {
+    res.status(502).json({ error: 'Supabase request failed' });
+  }
+});
+
 // Rows the server itself writes and later trusts (usage totals, room blocks) must not be forgeable here
 const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room']);
 
