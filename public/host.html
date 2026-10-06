@@ -121,7 +121,13 @@
 
       <!-- Group streaming before going live: open your own room to friends, or join a friend's -->
       <div class="card group-card" id="group-card" role="region" aria-labelledby="group-card-title">
-        <img class="group-card-frogs" src="/brand/frog-head.svg" alt="" width="40" height="35">
+        <!-- A little crowd of frogs, one per group colour -->
+        <span class="group-card-frogs" aria-hidden="true">
+          <img class="group-frog slot-1" src="/brand/frog-head.svg" alt="">
+          <img class="group-frog slot-2" src="/brand/frog-head.svg" alt="">
+          <img class="group-frog slot-3" src="/brand/frog-head.svg" alt="">
+          <img class="group-frog slot-0" src="/brand/frog-head.svg" alt="">
+        </span>
         <div class="group-card-body">
           <h2 id="group-card-title">Transmissão em grupo</h2>
           <label class="switch-row">
