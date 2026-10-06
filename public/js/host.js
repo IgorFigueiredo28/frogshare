@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.5.2',
+        app_version: '1.5.3',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -202,6 +202,7 @@ async function loadSources({ silent = false } = {}) {
   const sources = await window.electronAPI.getSources();
   refreshPermissions();
   liveLists.sourceSig = sourceSignature(sources);
+  sources.forEach(s => knownSources.set(s.id, s));
   // The window that was picked may have closed (the game was quit)
   if (selectedSourceId && !sources.some(s => s.id === selectedSourceId)) {
     selectedSourceId = null;
@@ -804,6 +805,7 @@ function gpuBackedTrack(source) {
 
 function stopVideoTrack(track) {
   if (!track) return;
+  if (track.stopCard) track.stopCard();
   track.stop();
   if (track.sourceTrack) track.sourceTrack.stop();
 }
@@ -853,9 +855,14 @@ btnStart.addEventListener('click', async () => {
       }
     }
 
+    // Every stream carries an audio channel, silent when there's no sound, so a sound can be switched
+    // in later on the same connections (adding a track live would mean renegotiating every viewer)
+    const hasSound = tracks.some(t => t.kind === 'audio');
+    if (!hasSound) tracks.push(silentAudioTrack());
     localStream = new MediaStream(tracks);
-    // What viewers hear right now: an app's pid, 'system', or null when the stream has no audio track
-    liveAudio = localStream.getAudioTracks().length ? (mode === 'system' ? 'system' : selectedPid) : null;
+    // What viewers hear right now: an app's pid, 'system', or 'none' for the silent channel
+    liveAudio = hasSound ? (mode === 'system' ? 'system' : selectedPid) : 'none';
+    rememberSource(sourceById(selectedSourceId));
     syncPreview();
 
     // 3. Create or reuse room
@@ -868,7 +875,7 @@ btnStart.addEventListener('click', async () => {
       socket.emit('host-resume');
     }
 
-    (videoTrack.sourceTrack || videoTrack).addEventListener('ended', pauseStreaming);
+    (videoTrack.sourceTrack || videoTrack).addEventListener('ended', (e) => onCaptureEnded(e.target));
 
     // 5. Switch to streaming panel
     roomCodeEl.textContent = roomId;
@@ -957,6 +964,7 @@ btnStop.addEventListener('click', pauseStreaming);
 
 async function pauseStreaming() {
   isStreaming = false;
+  stopStandby();
   window.electronAPI.setStreamingPriority(false);
   flushRelayUsage();
   panelSetup.insertBefore(qualitySection, btnStart);
@@ -965,6 +973,7 @@ async function pauseStreaming() {
     localStream.getTracks().forEach(t => t.kind === 'video' ? stopVideoTrack(t) : t.stop());
     localStream = null;
   }
+  releaseSilentAudio();
 
   await window.electronAPI.stopAudioCapture();
   window.electronAPI.removeAudioListeners();
@@ -1391,7 +1400,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.2', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.3', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1428,6 +1437,7 @@ btnSwitchSource.addEventListener('click', async () => {
 function renderSwitchSources(sources) {
   liveLists.sourceSig = sourceSignature(sources);
   switchPick.sources = sources;
+  sources.forEach(s => knownSources.set(s.id, s));
   // The window being picked may have closed: fall back to what's on air
   if (!sources.some(s => s.id === switchPick.sourceId)) switchPick.sourceId = selectedSourceId;
   const screens = sources.filter(s => s.isScreen);
@@ -1463,7 +1473,8 @@ async function pickSwitchSource(source) {
   switchPick.sourceId = source.id;
   switchSourceGrid.querySelectorAll('.source-item').forEach(el => el.classList.toggle('selected', el.dataset.sourceId === source.id));
   // Like on the setup screen, a game's window brings the game's sound along, unless a sound was picked by hand
-  if (!switchPick.audioByHand && liveAudio !== null) {
+  // Only while an app's sound is on air: a stream left on "Sem som" or "Todo o PC" stays that way
+  if (!switchPick.audioByHand && typeof liveAudio === 'number') {
     let follow = 'keep';
     const owner = source.isScreen ? null : await window.electronAPI.getWindowOwner(source.id);
     if (switchPick.sourceId !== source.id) return;
@@ -1479,6 +1490,7 @@ async function pickSwitchSource(source) {
 
 function switchAudioLabel(value) {
   if (value === 'system') return 'Todo o PC';
+  if (value === 'none') return 'Sem som';
   const s = switchPick.sessions.find(x => x.pid === value);
   return s ? s.name : 'outro app';
 }
@@ -1535,6 +1547,7 @@ function renderSwitchAudio(audioResult) {
 
   addOption('keep', [nameSpan('Manter o som atual')]);
   addOption('system', [nameSpan('Todo o PC')]);
+  addOption('none', [nameSpan('Sem som')]);
   sessions.forEach(s => addOption(s.pid, sessionRow(s)));
   if (sessions.length === 0) {
     switchAudioList.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'Nenhum app tocando som agora' }));
@@ -1543,6 +1556,147 @@ function renderSwitchAudio(audioResult) {
 }
 
 btnSwitchApply.addEventListener('click', applySwitch);
+
+// ======== Silent audio channel ========
+let silentAudio = null;
+function silentAudioTrack() {
+  if (!silentAudio) {
+    const ctx = new AudioContext();
+    const destination = ctx.createMediaStreamDestination();
+    silentAudio = { ctx, track: destination.stream.getAudioTracks()[0] };
+  }
+  return silentAudio.track;
+}
+function releaseSilentAudio() {
+  if (!silentAudio) return;
+  silentAudio.track.stop();
+  silentAudio.ctx.close().catch(() => {});
+  silentAudio = null;
+}
+
+// ======== Video switching ========
+// Names and owners of sources, for the "window closed" recovery below
+const knownSources = new Map();
+const sourceById = (id) => knownSources.get(id) || { id, name: '', isScreen: String(id).startsWith('screen:') };
+let currentSource = { id: null, name: '', isScreen: false, owner: '' };
+
+async function rememberSource(source) {
+  currentSource = { id: source.id, name: source.name, isScreen: source.isScreen, owner: '' };
+  if (source.isScreen) return;
+  const owner = await window.electronAPI.getWindowOwner(source.id);
+  if (owner && currentSource.id === source.id) currentSource.owner = owner.name;
+}
+
+async function replaceVideoTrack(newVideoTrack) {
+  for (const pc of sendingPcs()) {
+    const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video' && t.sender);
+    if (transceiver) await transceiver.sender.replaceTrack(newVideoTrack);
+  }
+  const oldVideoTrack = localStream.getVideoTracks()[0];
+  if (oldVideoTrack) {
+    stopVideoTrack(oldVideoTrack);
+    localStream.removeTrack(oldVideoTrack);
+  }
+  localStream.addTrack(newVideoTrack);
+  syncPreview();
+}
+
+async function switchVideo(source) {
+  const newVideoTrack = await captureVideo(source.id);
+  stopStandby();
+  await replaceVideoTrack(newVideoTrack);
+  selectedSourceId = source.id;
+  rememberSource(source);
+  (newVideoTrack.sourceTrack || newVideoTrack).addEventListener('ended', (e) => onCaptureEnded(e.target));
+}
+
+// ======== Captured window closed ========
+// A game's window closes at the end of every match. Pausing there (as before) dropped every viewer,
+// unnoticed with the app minimized. Now the stream stays up with a "be right back" card, the host
+// gets a notification, and the program's window is picked up again by itself when it reappears
+// (same title, or another window of the same program). A screen that goes away still pauses.
+const standby = { active: false, timer: null, name: '', owner: '', lastIds: '', busy: false };
+
+function standbyCardTrack() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280; canvas.height = 720;
+  const g = canvas.getContext('2d');
+  const draw = (frog) => {
+    g.fillStyle = '#0B1A10'; g.fillRect(0, 0, 1280, 720);
+    if (frog) g.drawImage(frog, 560, 170, 160, 147);
+    g.textAlign = 'center'; g.fillStyle = '#F3F8EC'; g.font = '600 44px Fredoka, sans-serif';
+    g.fillText('O host está trocando de janela…', 640, 400);
+    g.fillStyle = '#A9C6AC'; g.font = '28px Inter, sans-serif';
+    g.fillText('A transmissão volta sozinha em instantes.', 640, 450);
+  };
+  const frog = new Image();
+  frog.src = '/brand/frog-sleep.svg';
+  draw(null);
+  // A canvas only yields frames when it's drawn, so redraw twice a second: viewers who join during the
+  // wait (and keyframe requests) need fresh frames. Identical frames cost almost nothing to encode.
+  const timer = setInterval(() => draw(frog.complete ? frog : null), 500);
+  const track = canvas.captureStream(2).getVideoTracks()[0];
+  track.contentHint = 'detail';
+  track.stopCard = () => clearInterval(timer);
+  return track;
+}
+
+function onCaptureEnded(endedTrack) {
+  if (!isStreaming || !localStream) return;
+  const live = localStream.getVideoTracks()[0];
+  if (!live || (live.sourceTrack || live) !== endedTrack) return; // already switched away
+  if (currentSource.isScreen || !currentSource.id) { pauseStreaming(); return; }
+  enterStandby();
+}
+
+async function enterStandby() {
+  standby.active = true;
+  standby.name = currentSource.name;
+  standby.owner = currentSource.owner;
+  standby.lastIds = '';
+  await replaceVideoTrack(standbyCardTrack());
+  selectedSourceId = null;
+  const name = standby.name || 'A janela';
+  showToast(`"${name}" fechou. Seus amigos veem um aviso; a transmissão volta sozinha quando ela abrir de novo.`);
+  window.electronAPI.notify('A janela da transmissão fechou',
+    `"${name}" fechou. Seus amigos veem um aviso de "já volta". A transmissão volta sozinha quando a janela abrir de novo, ou escolha outra em Trocar janela ou som.`);
+  standby.timer = setInterval(checkStandby, 2000);
+}
+
+function stopStandby() {
+  clearInterval(standby.timer);
+  standby.timer = null;
+  standby.active = false;
+}
+
+async function checkStandby() {
+  if (!isStreaming || !standby.active) return stopStandby();
+  if (standby.busy) return;
+  standby.busy = true;
+  try {
+    // Cheap check first; the full list (thumbnails) only when a window opened or closed
+    const ids = await window.electronAPI.getSourceIds();
+    if (ids === standby.lastIds) return;
+    standby.lastIds = ids;
+    const windows = (await window.electronAPI.getSources()).filter(s => !s.isScreen);
+    windows.forEach(s => knownSources.set(s.id, s));
+    let match = windows.find(s => s.name === standby.name);
+    if (!match && standby.owner) {
+      for (const s of windows) {
+        const owner = await window.electronAPI.getWindowOwner(s.id);
+        if (owner && owner.name === standby.owner) { match = s; break; }
+      }
+    }
+    if (!match || !standby.active) return;
+    await switchVideo(match);
+    showToast(`Voltou: mostrando ${match.name}`);
+    window.electronAPI.notify('A transmissão voltou', `Mostrando "${match.name}" de novo.`);
+  } catch (err) {
+    reportError('Standby recovery failed: ' + err.message, err.stack);
+  } finally {
+    standby.busy = false;
+  }
+}
 document.getElementById('btn-switch-cancel').addEventListener('click', () => { switchModal.style.display = 'none'; });
 
 btnCloseModal.addEventListener('click', () => {
@@ -1560,32 +1714,30 @@ async function switchAudio(newPid, label = '') {
   if (audioWorkletNode) { audioWorkletNode.disconnect(); audioWorkletNode = null; }
   if (audioContext) { audioContext.close(); audioContext = null; }
 
-  // Remove old audio track from stream and PCs
-  const oldAudioTrack = localStream.getAudioTracks()[0];
-  if (oldAudioTrack) {
-    oldAudioTrack.stop();
-    localStream.removeTrack(oldAudioTrack);
-  }
-
-  // Start new audio capture
-  const result = await window.electronAPI.startAudioCapture(newPid);
-  if (result.error) {
-    showToast('Não deu para trocar o som: ' + result.error);
-    return;
-  }
-
-  const newAudioTrack = await createAudioTrackFromProcess(
-    result.sampleRate || 48000,
-    result.channels || 2
-  );
-  localStream.addTrack(newAudioTrack);
-
-  // Replace audio track on all peer connections
-  for (const pc of sendingPcs()) {
-    const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
-    if (audioSender) {
-      await audioSender.replaceTrack(newAudioTrack);
+  // The new sound, or the silent channel for "Sem som" (also the fallback if capture fails)
+  let newAudioTrack = silentAudioTrack();
+  if (newPid !== 'none') {
+    const result = await window.electronAPI.startAudioCapture(newPid);
+    if (result.error) {
+      showToast('Não deu para trocar o som: ' + result.error);
+      newPid = 'none';
+      label = 'Sem som';
+    } else {
+      newAudioTrack = await createAudioTrackFromProcess(result.sampleRate || 48000, result.channels || 2);
     }
+  }
+
+  const oldAudioTrack = localStream.getAudioTracks()[0];
+  if (oldAudioTrack && oldAudioTrack !== newAudioTrack) {
+    localStream.removeTrack(oldAudioTrack);
+    if (oldAudioTrack !== silentAudio?.track) oldAudioTrack.stop();
+  }
+  if (!localStream.getAudioTracks().includes(newAudioTrack)) localStream.addTrack(newAudioTrack);
+
+  // Same audio sender on every connection (and the SFU), so no renegotiation
+  for (const pc of sendingPcs()) {
+    const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'audio' && t.sender);
+    if (transceiver) await transceiver.sender.replaceTrack(newAudioTrack);
   }
 
   if (typeof newPid === 'number') selectedPid = newPid;
@@ -1604,27 +1756,7 @@ async function applySwitch() {
 
   try {
     // Switch video
-    if (videoChanged) {
-      const newVideoTrack = await captureVideo(source.id);
-
-      for (const pc of sendingPcs()) {
-        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (videoSender) {
-          await videoSender.replaceTrack(newVideoTrack);
-        }
-      }
-
-      const oldVideoTrack = localStream.getVideoTracks()[0];
-      if (oldVideoTrack) {
-        stopVideoTrack(oldVideoTrack);
-        localStream.removeTrack(oldVideoTrack);
-      }
-      localStream.addTrack(newVideoTrack);
-
-      syncPreview();
-      selectedSourceId = source.id;
-      (newVideoTrack.sourceTrack || newVideoTrack).addEventListener('ended', pauseStreaming);
-    }
+    if (videoChanged) await switchVideo(source);
 
     // Switch audio
     if (audioChanged) {

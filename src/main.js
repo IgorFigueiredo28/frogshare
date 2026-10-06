@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences, screen, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences, screen, nativeImage, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.5.2'
+        app_version: '1.5.3'
       })
     }).catch(() => {});
   } catch {}
@@ -328,6 +328,9 @@ app.on('web-contents-created', (event, contents) => {
   contents.on('will-navigate', (e, url) => { if (!isOwnPage(url)) e.preventDefault(); });
   contents.on('will-attach-webview', (e) => e.preventDefault());
 });
+
+// Windows shows notifications under the installer shortcut's identity, which electron-builder sets to appId
+if (process.platform === 'win32') app.setAppUserModelId('com.screenshare.app');
 
 app.whenReady().then(async () => {
   loadOverlayPrefs();
@@ -766,6 +769,13 @@ function launchInstaller(args) {
 // No --force-run here: the person chose to close the app, so it stays closed until reopened.
 app.on('will-quit', () => {
   if (downloadedUpdate && !isDev && process.platform === 'win32') launchInstaller(['/S']);
+});
+
+// A system notification reaches the host while a game has the screen, without taking focus
+ipcMain.handle('notify', (event, { title, body } = {}) => {
+  if (!Notification.isSupported()) return false;
+  new Notification({ title: String(title || 'FrogShare').slice(0, 80), body: String(body || '').slice(0, 300) }).show();
+  return true;
 });
 
 ipcMain.handle('get-signal-server', () => {

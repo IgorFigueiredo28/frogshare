@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('audio-capture-error', (_, error) => callback(error));
   },
   getSourceIds: () => ipcRenderer.invoke('get-source-ids'),
+  notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
   getWindowOwner: (sourceId) => ipcRenderer.invoke('get-window-owner', sourceId),
   onWindowMinimized: (callback) => {
     ipcRenderer.on('window-minimized', (_, minimized) => callback(minimized));
