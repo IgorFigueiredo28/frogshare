@@ -295,3 +295,15 @@
 }
 /* The bigfrog's chubby frog takes a little more room than the others */
 .stream-frog.is-big { width: 40px; height: 35px; margin: -3px -3px -2px; }
+
+/* Room header: the way to the app for viewers who want to stream too (desktop only, there's no phone app) */
+.get-app {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: var(--space-2);
+  padding: 6px var(--space-3); border-radius: var(--radius-pill);
+  font-size: var(--text-sm); color: var(--text-2); text-decoration: none;
+  border: 1px solid var(--border); transition: border-color var(--dur-fast), color var(--dur-fast);
+}
+.get-app b { color: var(--accent); font-weight: 600; }
+.get-app:hover { color: var(--text); border-color: var(--accent); }
+.get-app:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+@media (max-width: 900px), (pointer: coarse) { .get-app { display: none; } }
