@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.1',
+        app_version: '1.6.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1096,6 +1096,9 @@ const chipGroupText = document.getElementById('chip-group-text');
 const roomBarLabel = document.getElementById('room-bar-label');
 const nickInputs = [document.getElementById('nickname'), document.getElementById('guest-nickname')];
 
+// Whoever calls themselves "bigfrog" gets the chubby frog
+const frogIcon = (name) => /^big\s*frog$/i.test(String(name || '').trim()) ? '/brand/frog-head-big.svg' : '/brand/frog-head.svg';
+
 function renderGroupUi() {
   const guest = !!group.guestRoom;
   document.body.classList.toggle('group-guest', guest);
@@ -1117,12 +1120,13 @@ function renderGroupUi() {
   const others = group.hosts.length - 1;
   chipGroup.hidden = !(guest || (group.enabled && others > 0));
   chipGroupFrog.className = `group-frog slot-${guest ? group.slot : 0}`;
+  chipGroupFrog.src = frogIcon(nickname());
   chipGroupText.textContent = guest ? `Em grupo${group.ownerName ? ' com ' + group.ownerName : ''}` : `Em grupo · ${group.hosts.length} transmitindo`;
 
   const items = group.hosts.slice().sort((a, b) => a.slot - b.slot).map(h => {
     const li = document.createElement('li');
     li.className = `slot-${h.slot}`;
-    const frog = Object.assign(document.createElement('img'), { className: 'group-frog', src: '/brand/frog-head.svg', alt: '' });
+    const frog = Object.assign(document.createElement('img'), { className: 'group-frog' + (frogIcon(h.name).includes('big') ? ' is-big' : ''), src: frogIcon(h.name), alt: '' });
     const name = Object.assign(document.createElement('span'), { className: 'group-name', textContent: h.name });
     const tags = [h.id === me ? 'você' : '', h.owner ? 'dono' : '', h.paused ? 'pausado' : ''].filter(Boolean).join(' · ');
     if (tags) name.append(' ', Object.assign(document.createElement('span'), { className: 'group-tag', textContent: `(${tags})` }));
@@ -1636,7 +1640,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.1', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.2', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 

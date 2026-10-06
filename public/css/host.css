@@ -305,3 +305,4 @@ body.group-guest .setup-hero { display: none; }
 .group-join { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-2); font-weight: 600; }
 .group-join .input { flex: 1; min-width: 180px; max-width: 280px; }
 body.group-guest .group-card { display: none; }
+.group-list .group-frog.is-big { width: 31px; margin: -2px -2px -2px -3px; }

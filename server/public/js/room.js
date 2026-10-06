@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.1',
+        app_version: '1.6.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -614,6 +614,9 @@ const SHARE_URL = () => `frogshare://share?room=${encodeURIComponent(roomId)}`;
 // The app runs on Windows and Mac only; on a phone the button would lead nowhere
 const canRunApp = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
+// Whoever calls themselves "bigfrog" gets the chubby frog
+const frogIcon = (name) => /^big\s*frog$/i.test(String(name || '').trim()) ? '/brand/frog-head-big.svg' : '/brand/frog-head.svg';
+
 function streamState(info) {
   const ch = channels.get(info.id);
   if (info.paused || ch?.paused) return 'pausado';
@@ -643,7 +646,7 @@ function renderStreamList() {
     pick.className = 'stream-pick';
     pick.setAttribute('aria-pressed', String(info.id === selectedId));
     pick.title = `Assistir ${info.name} (tecla ${i + 1})`;
-    const frog = Object.assign(document.createElement('img'), { src: '/brand/frog-head.svg', alt: '', className: 'stream-frog' });
+    const frog = Object.assign(document.createElement('img'), { src: frogIcon(info.name), alt: '', className: 'stream-frog' + (frogIcon(info.name).includes('big') ? ' is-big' : '') });
     const text = document.createElement('span');
     text.className = 'stream-text';
     text.append(
@@ -704,6 +707,9 @@ document.getElementById('share-help-close')?.addEventListener('click', () => { d
 function toggleFullscreen() {
   if (document.fullscreenElement) {
     document.exitFullscreen();
+  } else if (remoteVideo.style.display !== 'block') {
+    // Nothing on stage yet (waiting, paused, reconnecting): a fullscreen of the empty placeholder helps no one
+    return;
   } else if (document.fullscreenEnabled && videoArea.requestFullscreen) {
     videoArea.requestFullscreen().then(lockLandscape).catch(() => {});
   } else if (remoteVideo.webkitEnterFullscreen) {
@@ -867,7 +873,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.1', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.2', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

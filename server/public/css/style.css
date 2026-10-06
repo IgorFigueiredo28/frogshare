@@ -223,7 +223,10 @@
 .stats-overlay .ok { color: #B7EB6A; }
 
 .video-area:fullscreen { background: #000; border-radius: 0; border: 0; width: 100vw; height: 100vh; }
-.video-area:fullscreen #remote-video { display: block !important; width: 100%; height: 100%; max-width: none; max-height: none; }
+.video-area:fullscreen #remote-video { width: 100%; height: 100%; max-width: none; max-height: none; }
+/* Double-clicking the stage (fullscreen) must not select the words of the waiting message */
+.video-area { user-select: none; -webkit-user-select: none; }
+.video-area input { user-select: text; -webkit-user-select: text; }
 
 @media (max-width: 720px) {
   .room-top { padding: var(--space-2) var(--space-3); }
@@ -290,3 +293,5 @@
   .stream-share { margin-top: 0; flex: 0 0 auto; white-space: nowrap; }
   .share-help { margin: var(--space-2) var(--space-2) 0; }
 }
+/* The bigfrog's chubby frog takes a little more room than the others */
+.stream-frog.is-big { width: 40px; height: 35px; margin: -3px -3px -2px; }
