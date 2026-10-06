@@ -1,6 +1,6 @@
 # FrogShare 🐸
 
-Uma alternativa ao "Go Live" do Discord: transmita um jogo, uma janela ou a tela inteira **com o som de um app específico** (só o jogo, sem o Discord e sem as notificações) para os seus amigos, que assistem direto no navegador, sem instalar nada.
+Transmita um jogo, uma janela ou a tela inteira **com o som de um app específico** (só o jogo, sem o Discord e sem as notificações) para os seus amigos, que assistem direto no navegador, sem instalar nada.
 
 - **Site:** [frogshare.onrender.com](https://frogshare.onrender.com), de onde se baixa o app e onde os amigos assistem.
 - **Host:** app para Windows (e macOS com Apple Silicon) que captura e transmite.
