@@ -257,6 +257,7 @@ function renderStage() {
     volumeControl.style.display = '';
     statusText.textContent = '';
     if (isNewStream) { applyInitialAudio(); setInfoOpen(infoWanted); resetAgg(); }
+    updateVolumeUI();
   } else {
     remoteVideo.style.display = 'none';
     remoteVideo.srcObject = null;
@@ -287,7 +288,9 @@ function routeAudio() {
         ch.audioEl.srcObject = new MediaStream(ch.stream.getAudioTracks());
       }
       ch.audioEl.volume = remoteVideo.volume;
-      ch.audioEl.muted = remoteVideo.muted;
+      // Off stage, a stream is silent only when muted itself. The player's mute is the stage stream's
+      // own; before the first click the browser may still block sound, as it does for the video.
+      ch.audioEl.muted = ch.muted || (remoteVideo.muted && !navigator.userActivation?.hasBeenActive);
       ch.audioEl.play().catch(() => {});
     } else if (ch.audioEl) {
       ch.audioEl.srcObject = null;
@@ -295,6 +298,21 @@ function routeAudio() {
   }
 }
 remoteVideo.addEventListener('volumechange', routeAudio);
+
+// The speaker button in the list and the player's mute (for the stream on stage) both land here
+function setChannelMuted(ch, muted) {
+  ch.muted = muted;
+  if (!muted && ch.stream === remoteVideo.srcObject && remoteVideo.muted) {
+    // Turning a stream back on means "I want to hear it", also when the browser started muted
+    wantMuted = false;
+    remoteVideo.muted = false;
+    remoteVideo.play().catch(() => {});
+    saveVolume();
+  }
+  routeAudio();
+  renderStreamList();
+  updateVolumeUI();
+}
 
 function showStream(ch, stream, peer) {
   ch.stream = stream;
@@ -667,9 +685,7 @@ function renderStreamList() {
       : '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/><path d="M15 8a5 5 0 0 1 0 8"/></svg>';
     mute.addEventListener('click', () => {
       const c = channelFor(info.id);
-      c.muted = !c.muted;
-      routeAudio();
-      renderStreamList();
+      setChannelMuted(c, !c.muted);
     });
     row.append(pick, mute);
     return row;
@@ -903,8 +919,16 @@ function saveVolume() {
   } catch {}
 }
 
+// In a group room the player bar belongs to the stream on stage: muting it there or in the side list
+// is the same switch, and the other streams keep playing
+function stageChannel() {
+  const ch = selectedId && channels.get(selectedId);
+  return ch && ch.stream && ch.stream === remoteVideo.srcObject ? ch : null;
+}
+const stageSilent = () => remoteVideo.muted || remoteVideo.volume === 0 || !!stageChannel()?.muted;
+
 function updateVolumeUI() {
-  const silent = remoteVideo.muted || remoteVideo.volume === 0;
+  const silent = stageSilent();
   const pct = silent ? 0 : Math.round(remoteVideo.volume * 100);
   volumeSlider.value = pct;
   volumeSlider.style.setProperty('--fill', pct + '%');
@@ -928,7 +952,7 @@ function showVolumeOsd() {
     osdEl.className = 'volume-osd';
     videoArea.appendChild(osdEl);
   }
-  const silent = remoteVideo.muted || remoteVideo.volume === 0;
+  const silent = stageSilent();
   osdEl.textContent = silent ? 'Mudo' : `Volume ${Math.round(remoteVideo.volume * 100)}%`;
   osdEl.classList.add('visible');
   clearTimeout(osdTimer);
@@ -937,6 +961,9 @@ function showVolumeOsd() {
 
 function setVolume(v) {
   v = Math.min(1, Math.max(0, v));
+  // Raising the volume of a stream muted in the list means "I want to hear it"
+  const ch = stageChannel();
+  if (ch?.muted && v > 0) setChannelMuted(ch, false);
   remoteVideo.volume = v;
   wantMuted = v === 0;
   remoteVideo.muted = wantMuted;
@@ -945,6 +972,21 @@ function setVolume(v) {
 }
 
 function toggleMute() {
+  const ch = stageChannel();
+  if (ch && channels.size > 1) {
+    // Group room: the player's mute is this stream's mute, like its speaker button in the list
+    if (stageSilent()) {
+      setChannelMuted(ch, false);
+      if (remoteVideo.volume === 0) remoteVideo.volume = 0.5;
+      wantMuted = false;
+      remoteVideo.muted = false;
+      remoteVideo.play().catch(() => {});
+    } else {
+      setChannelMuted(ch, true);
+    }
+    saveVolume();
+    return;
+  }
   if (remoteVideo.muted || remoteVideo.volume === 0) {
     if (remoteVideo.volume === 0) remoteVideo.volume = 0.5;
     wantMuted = false;
@@ -976,6 +1018,7 @@ function applyInitialAudio() {
 // viewer's permission, so the sound comes on with the first one instead of needing the speaker
 // button. Not when the viewer muted on purpose, and not for taps on the volume controls themselves.
 function unmuteOnInteraction(e) {
+  if (channels.size > 1) setTimeout(routeAudio);
   if (e.target?.closest?.('#btn-mute, #volume-slider, #unmute-cta')) return;
   if (remoteVideo.style.display !== 'block' || !remoteVideo.muted || wantMuted) return;
   remoteVideo.muted = false;
