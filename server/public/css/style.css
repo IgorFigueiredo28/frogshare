@@ -171,6 +171,34 @@
 .stats-close:hover, .stats-close:focus-visible { opacity: 1; background: rgba(231, 245, 227, 0.12); }
 #btn-info[aria-pressed="true"] { background: var(--accent-soft); color: var(--on-accent-soft); }
 .stats-overlay .bad { color: #FFB3B5; }
+
+/* ---------- Player controls over the video ----------
+   Fixed light-on-dark colours: they sit on the picture in both themes */
+.player-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-8) var(--space-4) var(--space-3);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.35) 55%, transparent);
+  color: #F3F8EC;
+  opacity: 0; transform: translateY(6px); pointer-events: none;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+.page-room[data-state="live"] .video-area.controls-visible .player-bar { opacity: 1; transform: none; pointer-events: auto; }
+.player-spacer { flex: 1; }
+.player-bar .volume-control { padding-right: 0; margin-right: 0; border-right: 0; }
+.player-bar .volume-value { color: rgba(243, 248, 236, 0.85); }
+.player-bar .btn-ghost, .player-bar .btn-icon { color: #F3F8EC; }
+.player-bar .btn-ghost:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.player-bar .btn-label { display: none; }
+.player-bar #volume-slider { background: linear-gradient(to right, #F3F8EC var(--fill), rgba(255, 255, 255, 0.28) var(--fill)); }
+.player-bar #volume-slider::-webkit-slider-thumb { background: #F3F8EC; border-color: #F3F8EC; }
+.player-bar #volume-slider::-moz-range-thumb { background: #F3F8EC; border-color: #F3F8EC; }
+.player-bar #btn-info[aria-pressed="true"] { background: rgba(183, 235, 106, 0.22); color: #B7EB6A; }
+/* Out of the way while the bar is up */
+.stats-overlay { transition: bottom var(--dur) var(--ease-out); }
+.video-area.controls-visible .stats-overlay { bottom: 72px; }
+/* Idle in fullscreen: no bar, no pointer, just the picture */
+.video-area.player-idle { cursor: none; }
 .stats-overlay .ok { color: #B7EB6A; }
 
 .video-area:fullscreen { background: #000; border-radius: 0; border: 0; width: 100vw; height: 100vh; }

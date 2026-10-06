@@ -33,23 +33,6 @@
       </div>
 
       <div class="room-controls">
-        <div class="volume-control" id="volume-control" style="display:none">
-          <button id="btn-mute" type="button" class="btn btn-ghost btn-icon" aria-label="Mutar" title="Mutar (M)">
-            <svg id="icon-vol" class="ico" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/>
-              <path id="icon-vol-wave1" d="M15 8a5 5 0 0 1 0 8"/>
-              <path id="icon-vol-wave2" d="M17.7 5a9 9 0 0 1 0 14"/>
-              <path id="icon-vol-x" d="M16 10l4 4m0 -4l-4 4" style="display:none"/>
-            </svg>
-          </button>
-          <input type="range" id="volume-slider" min="0" max="100" step="1" value="100" aria-label="Volume">
-          <span class="volume-value" id="volume-value">100%</span>
-        </div>
-        <button id="btn-info" type="button" class="btn btn-ghost btn-icon" style="display:none"
-                aria-label="Informações da transmissão" aria-pressed="false" title="Mostrar ou esconder as informações da transmissão (I)">
-          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-info"/></svg>
-        </button>
-        <button id="btn-fullscreen" type="button" class="btn btn-secondary" style="display:none">Tela cheia</button>
         <button type="button" class="btn btn-ghost btn-icon theme-toggle" data-theme-toggle>
           <svg class="ico i-moon" aria-hidden="true"><use href="/brand/icons.svg#i-moon"/></svg>
           <svg class="ico i-sun" aria-hidden="true"><use href="/brand/icons.svg#i-sun"/></svg>
@@ -76,6 +59,27 @@
           </div>
         </div>
         <video id="remote-video" autoplay playsinline muted style="display:none"></video>
+        <!-- Controls over the video, like a video player: they show while the mouse moves and stay in fullscreen -->
+        <div class="player-bar" id="player-bar">
+          <div class="volume-control" id="volume-control" style="display:none">
+            <button id="btn-mute" type="button" class="btn btn-ghost btn-icon" aria-label="Mutar" title="Mutar (M)">
+              <svg id="icon-vol" class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/>
+                <path id="icon-vol-wave1" d="M15 8a5 5 0 0 1 0 8"/>
+                <path id="icon-vol-wave2" d="M17.7 5a9 9 0 0 1 0 14"/>
+                <path id="icon-vol-x" d="M16 10l4 4m0 -4l-4 4" style="display:none"/>
+              </svg>
+            </button>
+            <input type="range" id="volume-slider" min="0" max="100" step="1" value="100" aria-label="Volume">
+            <span class="volume-value" id="volume-value">100%</span>
+            </div>
+            <span class="player-spacer"></span>
+            <button id="btn-info" type="button" class="btn btn-ghost btn-icon" style="display:none"
+                    aria-label="Informações da transmissão" aria-pressed="false" title="Mostrar ou esconder as informações da transmissão (I)">
+              <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-info"/></svg>
+            </button>
+            <button id="btn-fullscreen" type="button" class="btn btn-ghost btn-icon" style="display:none">Tela cheia</button>
+        </div>
         <div class="stats-overlay" id="stats-overlay" style="display:none">
           <button id="stats-close" type="button" class="stats-close" aria-label="Esconder informações da transmissão" title="Esconder (I)">
             <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>

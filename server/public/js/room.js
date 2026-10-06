@@ -412,7 +412,8 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 btnFullscreen.addEventListener('click', toggleFullscreen);
-videoArea.addEventListener('dblclick', toggleFullscreen);
+// Double-click on the picture toggles fullscreen; quick clicks on the control bar must not
+videoArea.addEventListener('dblclick', (e) => { if (!e.target.closest('.player-bar')) toggleFullscreen(); });
 
 // ======== Stream info & viewer telemetry ========
 const btnInfo = document.getElementById('btn-info');

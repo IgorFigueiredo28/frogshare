@@ -69,6 +69,40 @@
     fullscreenBtn.title = exiting ? 'Sair da tela cheia (F)' : 'Tela cheia (F)';
   }
 
+  // Player bar: shows on mouse movement or a tap, hides after a few idle seconds unless the pointer
+  // is on it or the volume is being dragged. Keyboard focus inside it keeps it up too.
+  const videoArea = document.getElementById('video-area');
+  const bar = document.getElementById('player-bar');
+  let hideTimer = null;
+  let overBar = false;
+  let dragging = false;
+  function showControls() {
+    videoArea.classList.add('controls-visible');
+    videoArea.classList.remove('player-idle');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (overBar || dragging || bar.contains(document.activeElement)) return showControls();
+      videoArea.classList.remove('controls-visible');
+      if (document.fullscreenElement) videoArea.classList.add('player-idle');
+    }, 2500);
+  }
+  videoArea.addEventListener('mousemove', showControls);
+  videoArea.addEventListener('touchstart', showControls, { passive: true });
+  videoArea.addEventListener('mouseleave', () => {
+    if (dragging) return;
+    clearTimeout(hideTimer);
+    videoArea.classList.remove('controls-visible');
+  });
+  bar.addEventListener('mouseenter', () => { overBar = true; showControls(); });
+  bar.addEventListener('mouseleave', () => { overBar = false; });
+  bar.addEventListener('focusin', showControls);
+  const slider = document.getElementById('volume-slider');
+  slider.addEventListener('pointerdown', () => { dragging = true; });
+  window.addEventListener('pointerup', () => { if (dragging) { dragging = false; showControls(); } });
+  // Keyboard shortcuts (M, F, I, arrows) change things the bar shows: surface it briefly
+  document.addEventListener('keydown', (e) => { if (/^(m|f|i|ArrowUp|ArrowDown)$/i.test(e.key)) showControls(); });
+  document.addEventListener('fullscreenchange', showControls);
+
   new MutationObserver(render).observe(statusEl, { childList: true, characterData: true, subtree: true });
   new MutationObserver(render).observe(video, { attributes: true, attributeFilter: ['style'] });
   document.addEventListener('fullscreenchange', decorateFullscreen);
