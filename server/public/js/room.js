@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.5.3',
+        app_version: '1.6.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -77,8 +77,8 @@ async function iceDiagnostics(peer) {
   return out;
 }
 
+// The connection of the stream on stage (stats and the info panel read it); see the channels below
 let pc = null;
-let hostPaused = false;
 
 // Main first: it's the only H264 profile the host's GPU encoder accepts; others fall back to CPU
 function preferH264(sdp) {
@@ -179,79 +179,203 @@ document.getElementById('host-notice-close').addEventListener('click', () => {
   hostNotice.style.display = 'none';
 });
 
-socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated }) => {
-  viewerCount.textContent = `${count} assistindo`;
-  if (!hasHost) {
-    statusText.textContent = 'Esperando o host entrar…';
+// ======== Streams: one channel per streamer ========
+// A room has its owner and, in group mode, up to 3 more streamers. Each gets a channel with its own
+// connection (direct or through the SFU). The stage shows the selected channel; the others keep
+// playing their sound (each can be muted on its own) and are asked not to send video meanwhile.
+const channels = new Map();
+let selectedId = null;
+let hostsInfo = [];
+let groupOpen = false;
+const streamList = document.getElementById('stream-list');
+
+function channelFor(hostId) {
+  let ch = channels.get(hostId);
+  if (!ch) {
+    ch = { hostId, pc: null, paused: false, stream: null, audioEl: null, muted: false, offerToken: 0, sfuToken: 0, earlyIce: [], status: 'Abrindo a tela…' };
+    channels.set(hostId, ch);
   }
-  hostNotice.style.display = hostOutdated && !hostNoticeDismissed ? '' : 'none';
-});
-
-socket.on('host-joined', () => {
-  hostPaused = false;
-  statusText.textContent = 'Host conectado, abrindo a tela…';
-  placeholder.style.display = '';
-});
-
-socket.on('host-left', () => {
-  hostPaused = false;
-  statusText.textContent = 'O host desconectou';
-  remoteVideo.style.display = 'none';
-  placeholder.style.display = '';
-  btnFullscreen.style.display = 'none';
-  btnInfo.style.display = 'none';
-  setInfoOpen(false);
-  volumeControl.style.display = 'none';
-  if (pc) {
-    pc.close();
-    pc = null;
-  }
-});
-
-socket.on('host-paused', () => {
-  hostPaused = true;
-  statusText.textContent = 'O host pausou a transmissão';
-  remoteVideo.style.display = 'none';
-  placeholder.style.display = '';
-  btnFullscreen.style.display = 'none';
-  btnInfo.style.display = 'none';
-  setInfoOpen(false);
-  volumeControl.style.display = 'none';
-  if (pc) {
-    pc.close();
-    pc = null;
-  }
-});
-
-function requestNewOffer(message) {
-  if (pc) { try { pc.close(); } catch {} }
-  pc = null;
-  if (hostPaused) return;
-  statusText.textContent = message;
-  socket.emit('join-room', { roomId, asHost: false });
+  return ch;
 }
 
-function showStream(stream, peer) {
-  const isNewStream = remoteVideo.srcObject !== stream;
-  remoteVideo.srcObject = stream;
-  remoteVideo.style.display = 'block';
-  placeholder.style.display = 'none';
-  btnFullscreen.style.display = '';
-  btnInfo.style.display = '';
-  volumeControl.style.display = '';
-  if (isNewStream) { applyInitialAudio(); setInfoOpen(infoWanted); }
+const infoFor = (hostId) => hostsInfo.find(h => h.id === hostId) || null;
 
-  for (const receiver of peer.getReceivers()) {
-    if (receiver.jitterBufferTarget !== undefined) {
-      receiver.jitterBufferTarget = 0;
+function closeChannelPc(ch) {
+  if (ch.pc) { try { ch.pc.close(); } catch {} }
+  ch.pc = null;
+  ch.stream = null;
+}
+
+function dropChannel(hostId) {
+  const ch = channels.get(hostId);
+  if (!ch) return;
+  closeChannelPc(ch);
+  ch.sfuToken++;
+  ch.offerToken++;
+  if (ch.audioEl) { ch.audioEl.srcObject = null; ch.audioEl.remove(); }
+  channels.delete(hostId);
+}
+
+// The stream that goes on stage when the current one ends: anything that's playing, owner first
+function pickPlayable() {
+  const playable = [...channels.values()].filter(c => c.stream && !c.paused);
+  playable.sort((a, b) => (infoFor(a.hostId)?.slot ?? 9) - (infoFor(b.hostId)?.slot ?? 9));
+  return playable[0]?.hostId || null;
+}
+
+function select(hostId) {
+  selectedId = hostId;
+  renderStage();
+  updateWatching();
+  syncSfuVideo();
+  renderStreamList();
+}
+
+// Viewers tell each streamer whether they want its video right now (audio always flows)
+function updateWatching() {
+  for (const ch of channels.values()) {
+    if (!ch.pc || ch.pc.isSfu) continue;
+    const video = ch.hostId === selectedId;
+    if (ch.pc.watchSent === video) continue;
+    ch.pc.watchSent = video;
+    socket.emit('watch', { hostId: ch.hostId, video });
+  }
+}
+
+function renderStage() {
+  const ch = selectedId ? channels.get(selectedId) : null;
+  pc = ch?.pc || null; // stats and the info panel follow the stream on stage
+  syncSfuVideo();
+  // A stream that only brought its sound (media server, off stage) waits for its video here
+  if (ch && ch.stream && !ch.paused && ch.stream.getVideoTracks().length) {
+    const isNewStream = remoteVideo.srcObject !== ch.stream;
+    remoteVideo.srcObject = ch.stream;
+    remoteVideo.style.display = 'block';
+    placeholder.style.display = 'none';
+    btnFullscreen.style.display = '';
+    btnInfo.style.display = '';
+    volumeControl.style.display = '';
+    statusText.textContent = '';
+    if (isNewStream) { applyInitialAudio(); setInfoOpen(infoWanted); resetAgg(); }
+  } else {
+    remoteVideo.style.display = 'none';
+    remoteVideo.srcObject = null;
+    placeholder.style.display = '';
+    btnFullscreen.style.display = 'none';
+    btnInfo.style.display = 'none';
+    setInfoOpen(false);
+    volumeControl.style.display = 'none';
+    statusText.textContent = ch ? ch.status : (hostsInfo.length ? 'Host conectado, abrindo a tela…' : 'Esperando o host entrar…');
+  }
+  routeAudio();
+}
+
+// The stage's sound plays through the video element (volume, mute and autoplay rules live there).
+// Other channels play through their own hidden audio element that copies the stage's volume.
+function routeAudio() {
+  for (const ch of channels.values()) {
+    for (const t of ch.stream?.getAudioTracks() || []) t.enabled = !ch.muted;
+    const offStage = ch.stream && !ch.paused && ch.stream !== remoteVideo.srcObject && ch.stream.getAudioTracks().length;
+    if (offStage) {
+      if (!ch.audioEl) {
+        ch.audioEl = document.createElement('audio');
+        ch.audioEl.autoplay = true;
+        ch.audioEl.hidden = true;
+        document.body.appendChild(ch.audioEl);
+      }
+      if (ch.audioEl.srcObject?.getAudioTracks()[0] !== ch.stream.getAudioTracks()[0]) {
+        ch.audioEl.srcObject = new MediaStream(ch.stream.getAudioTracks());
+      }
+      ch.audioEl.volume = remoteVideo.volume;
+      ch.audioEl.muted = remoteVideo.muted;
+      ch.audioEl.play().catch(() => {});
+    } else if (ch.audioEl) {
+      ch.audioEl.srcObject = null;
     }
   }
 }
+remoteVideo.addEventListener('volumechange', routeAudio);
+
+function showStream(ch, stream, peer) {
+  ch.stream = stream;
+  ch.paused = false;
+  for (const receiver of peer.getReceivers()) {
+    if (receiver.jitterBufferTarget !== undefined) receiver.jitterBufferTarget = 0;
+  }
+  const current = selectedId && channels.get(selectedId);
+  if (!current || !current.stream || current.paused) selectedId = ch.hostId;
+  renderStage();
+  updateWatching();
+  renderStreamList();
+}
+
+function setChannelStatus(ch, text) {
+  ch.status = text;
+  if (ch.hostId === selectedId && !(ch.stream && !ch.paused)) statusText.textContent = text;
+  renderStreamList();
+}
+
+// Ask one streamer for a fresh connection, leaving the other channels alone
+function requestNewOffer(ch, message) {
+  closeChannelPc(ch);
+  if (ch.paused) return;
+  setChannelStatus(ch, message);
+  if (ch.hostId === selectedId) renderStage();
+  socket.emit('request-offer', { hostId: ch.hostId });
+}
+
+socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated, group, hosts }) => {
+  viewerCount.textContent = `${count} assistindo`;
+  hostsInfo = Array.isArray(hosts) ? hosts : [];
+  groupOpen = !!group;
+  // Channels of streamers no longer in the room
+  if (Array.isArray(hosts)) {
+    for (const id of [...channels.keys()]) if (!hostsInfo.some(h => h.id === id)) dropChannel(id);
+  }
+  if (selectedId && !channels.has(selectedId)) selectedId = pickPlayable();
+  if (!hasHost && !channels.size) statusText.textContent = 'Esperando o host entrar…';
+  hostNotice.style.display = hostOutdated && !hostNoticeDismissed ? '' : 'none';
+  renderStage();
+  renderStreamList();
+});
+
+socket.on('host-joined', ({ hostId } = {}) => {
+  if (!hostId) return;
+  const ch = channelFor(hostId);
+  ch.paused = false;
+  setChannelStatus(ch, 'Host conectado, abrindo a tela…');
+  if (!selectedId) { selectedId = hostId; renderStage(); }
+});
+
+socket.on('host-left', ({ hostId } = {}) => {
+  const wasSelected = hostId === selectedId;
+  dropChannel(hostId);
+  if (wasSelected) {
+    selectedId = pickPlayable();
+    if (!selectedId && !channels.size) statusText.textContent = 'O host desconectou';
+  }
+  renderStage();
+  updateWatching();
+  renderStreamList();
+});
+
+socket.on('host-paused', ({ hostId } = {}) => {
+  const ch = channels.get(hostId);
+  if (!ch) return;
+  closeChannelPc(ch);
+  ch.paused = true;
+  ch.sfuToken++;
+  ch.offerToken++;
+  setChannelStatus(ch, 'O host pausou a transmissão');
+  // Keep watching someone else if there is anyone
+  if (hostId === selectedId) selectedId = pickPlayable() || hostId;
+  renderStage();
+  updateWatching();
+  renderStreamList();
+});
 
 // ======== SFU mode ========
-// With 3+ viewers the host publishes once to a media server and everyone pulls from it.
-let sfuToken = 0;
-
+// With 3+ viewers a streamer publishes once to a media server and everyone pulls from it.
 async function sfuFetch(method, path, body) {
   const res = await fetch(`/api/sfu${path}`, {
     method,
@@ -278,27 +402,62 @@ function waitConnected(peer, timeoutMs) {
   });
 }
 
-socket.on('sfu-start', async ({ sessionId, tracks }) => {
-  const myToken = ++sfuToken;
-  offerToken++;
-  hostPaused = false;
+socket.on('sfu-start', ({ hostId, sessionId, tracks } = {}) => {
+  if (!hostId || !Array.isArray(tracks)) return;
+  const ch = channelFor(hostId);
+  ch.sfuInfo = { sessionId, tracks };
+  pullSfu(ch);
+});
+
+// The media server bills every track it sends out, so a stream that isn't on stage pulls only
+// its sound; picking it pulls again with the video (the old connection plays until the new one is up)
+function sfuWantsVideo(ch) {
+  return !selectedId || ch.hostId === selectedId;
+}
+
+function syncSfuVideo() {
+  for (const ch of channels.values()) {
+    if (!ch.pc?.isSfu || !ch.sfuInfo || ch.paused) continue;
+    const want = sfuWantsVideo(ch);
+    if (want === ch.pc.hasVideo) { clearTimeout(ch.sfuDropTimer); ch.sfuDropTimer = null; continue; }
+    if (ch.sfuPulling === want) continue;
+    if (want) { clearTimeout(ch.sfuDropTimer); ch.sfuDropTimer = null; pullSfu(ch); }
+    // Dropping the video waits a little, in case the viewer flips straight back
+    else if (!ch.sfuDropTimer) {
+      ch.sfuDropTimer = setTimeout(() => {
+        ch.sfuDropTimer = null;
+        if (ch.pc?.isSfu && ch.pc.hasVideo && !sfuWantsVideo(ch)) pullSfu(ch);
+      }, 8000);
+    }
+  }
+}
+
+async function pullSfu(ch) {
+  const { sessionId, tracks } = ch.sfuInfo;
+  const withVideo = sfuWantsVideo(ch) || !tracks.includes('audio');
+  const wanted = withVideo ? tracks : tracks.filter(t => t !== 'video');
+  const myToken = ++ch.sfuToken;
+  ch.sfuPulling = wanted.includes('video');
+  ch.offerToken++;
+  ch.paused = false;
   let sfuPc = null;
   try {
     const iceConfig = await getIceConfig();
     const session = await sfuFetch('POST', '/sessions');
-    if (myToken !== sfuToken) return;
+    if (myToken !== ch.sfuToken) return;
 
     sfuPc = new RTCPeerConnection({ ...iceConfig, bundlePolicy: 'max-bundle' });
     sfuPc.isSfu = true;
+    sfuPc.hasVideo = wanted.includes('video');
     sfuPc.pendingIce = [];
     const stream = new MediaStream();
     sfuPc.ontrack = (e) => {
       stream.addTrack(e.track);
-      if (pc === sfuPc) showStream(stream, sfuPc);
+      if (ch.pc === sfuPc) showStream(ch, stream, sfuPc);
     };
 
     const pulled = await sfuFetch('POST', `/sessions/${session.sessionId}/tracks`, {
-      tracks: tracks.map(trackName => ({ location: 'remote', sessionId, trackName }))
+      tracks: wanted.map(trackName => ({ location: 'remote', sessionId, trackName }))
     });
     const ok = (pulled.tracks || []).filter(t => !t.errorCode);
     if (ok.length === 0) throw new Error(pulled.tracks?.[0]?.errorDescription || 'no tracks');
@@ -311,114 +470,115 @@ socket.on('sfu-start', async ({ sessionId, tracks }) => {
       });
     }
     await waitConnected(sfuPc, 10000);
-    if (myToken !== sfuToken) { sfuPc.close(); return; }
+    if (myToken !== ch.sfuToken) { sfuPc.close(); return; }
 
     // The previous direct connection kept playing until now, so the swap has no black gap
-    const previous = pc;
-    pc = sfuPc;
+    const previous = ch.pc;
+    ch.pc = sfuPc;
     if (previous) { try { previous.close(); } catch {} }
-    statusText.textContent = '';
-    if (stream.getTracks().length) showStream(stream, sfuPc);
+    if (stream.getTracks().length) showStream(ch, stream, sfuPc);
 
     // The host sends H264 Main through an SFU that advertises baseline. A decoder that can't
     // take it shows a connected stream with no picture, so check that frames really decode.
     setTimeout(async () => {
-      if (pc !== sfuPc || hostPaused) return;
+      if (ch.pc !== sfuPc || ch.paused) return;
       let decoded = 0;
       try {
         for (const r of (await sfuPc.getStats()).values()) {
           if (r.type === 'inbound-rtp' && r.kind === 'video') decoded = r.framesDecoded || 0;
         }
       } catch {}
-      if (decoded === 0 && pc === sfuPc) {
+      // Off-stage channels may legitimately not decode video; only the one being watched counts
+      if (decoded === 0 && sfuPc.hasVideo && ch.pc === sfuPc && ch.hostId === selectedId) {
         reportError('SFU video not decoding', null, { sessionId });
-        sfuToken++;
-        socket.emit('sfu-fallback');
+        ch.sfuToken++;
+        socket.emit('sfu-fallback', { hostId: ch.hostId });
       }
     }, 8000);
 
     sfuPc.onconnectionstatechange = () => {
-      if (pc !== sfuPc || hostPaused) return;
+      if (ch.pc !== sfuPc || ch.paused) return;
       const state = sfuPc.connectionState;
       if (state === 'failed') {
         reportError('SFU connection failed', null, { sessionId });
-        requestNewOffer('Conexão perdida. Reconectando…');
+        requestNewOffer(ch, 'Conexão perdida. Reconectando…');
       } else if (state === 'disconnected') {
         setTimeout(() => {
-          if (pc === sfuPc && sfuPc.connectionState === 'disconnected') requestNewOffer('Reconectando…');
+          if (ch.pc === sfuPc && sfuPc.connectionState === 'disconnected') requestNewOffer(ch, 'Reconectando…');
         }, 3000);
       }
     };
   } catch (err) {
     if (sfuPc) sfuPc.close();
-    if (myToken !== sfuToken) return;
+    if (myToken !== ch.sfuToken) return;
     reportError('SFU pull failed: ' + err.message, err.stack, { sessionId });
-    // Ask the host for a direct connection instead; the 'offer' handler takes it from there
-    socket.emit('sfu-fallback');
+    // Ask the streamer for a direct connection instead; the 'offer' handler takes it from there
+    socket.emit('sfu-fallback', { hostId: ch.hostId });
+  } finally {
+    if (myToken === ch.sfuToken) ch.sfuPulling = undefined;
   }
-});
+}
 
-socket.on('sfu-stop', () => {
-  sfuToken++;
-  if (pc && pc.isSfu) requestNewOffer('Reconectando…');
+socket.on('sfu-stop', ({ hostId } = {}) => {
+  const ch = channels.get(hostId);
+  if (!ch) return;
+  ch.sfuToken++;
+  ch.sfuInfo = null;
+  if (ch.pc && ch.pc.isSfu) requestNewOffer(ch, 'Reconectando…');
 });
-
-// Candidates that arrive while the offer handler is still awaiting the ICE config
-let earlyIce = [];
-let offerToken = 0;
 
 socket.on('offer', async ({ from, offer, sid }) => {
-  if (pc) {
-    try { pc.close(); } catch {}
+  const ch = channelFor(from);
+  if (ch.pc) {
+    try { ch.pc.close(); } catch {}
   }
 
-  hostPaused = false;
-  pc = null;
-  sfuToken++;
-  const myToken = ++offerToken;
+  ch.paused = false;
+  ch.pc = null;
+  ch.sfuToken++;
+  const myToken = ++ch.offerToken;
   const iceConfig = await getIceConfig();
-  if (myToken !== offerToken) return;
+  if (myToken !== ch.offerToken) return;
 
-  pc = new RTCPeerConnection(iceConfig);
-  pc.pendingIce = earlyIce.filter(e => e.sid === sid).map(e => e.candidate);
-  earlyIce = [];
-  pc.sid = sid;
-  const thisPc = pc;
+  const thisPc = new RTCPeerConnection(iceConfig);
+  ch.pc = thisPc;
+  thisPc.pendingIce = ch.earlyIce.filter(e => e.sid === sid).map(e => e.candidate);
+  ch.earlyIce = [];
+  thisPc.sid = sid;
 
   setTimeout(async () => {
-    if (pc === thisPc && thisPc.connectionState !== 'connected') {
+    if (ch.pc === thisPc && thisPc.connectionState !== 'connected') {
       const diag = await iceDiagnostics(thisPc);
       reportError('ICE timeout 10s', null, { state: thisPc.connectionState, sid, ...diag });
-      if (pc === thisPc) requestNewOffer('A conexão está demorando, tentando de novo…');
+      if (ch.pc === thisPc) requestNewOffer(ch, 'A conexão está demorando, tentando de novo…');
     }
   }, 10000);
 
-  pc.ontrack = (e) => showStream(e.streams[0], thisPc);
+  thisPc.ontrack = (e) => showStream(ch, e.streams[0], thisPc);
 
-  pc.onicecandidate = (e) => {
+  thisPc.onicecandidate = (e) => {
     if (e.candidate) {
       socket.emit('ice-candidate', { to: from, candidate: e.candidate, sid });
     }
   };
 
-  pc.onconnectionstatechange = () => {
-    if (pc !== thisPc) return;
+  thisPc.onconnectionstatechange = () => {
+    if (ch.pc !== thisPc) return;
     const state = thisPc.connectionState;
     if (state === 'connected') {
-      statusText.textContent = '';
+      setChannelStatus(ch, 'Abrindo a tela…');
+      updateWatching();
     } else if (state === 'disconnected') {
-      if (hostPaused) return;
-      statusText.textContent = 'Reconectando…';
+      if (ch.paused) return;
+      setChannelStatus(ch, 'Reconectando…');
       setTimeout(() => {
-        if (pc === thisPc && thisPc.connectionState === 'disconnected') {
-          requestNewOffer('Reconectando…');
+        if (ch.pc === thisPc && thisPc.connectionState === 'disconnected') {
+          requestNewOffer(ch, 'Reconectando…');
         }
       }, 3000);
     } else if (state === 'failed') {
       iceDiagnostics(thisPc).then(diag => reportError('PeerConnection failed', null, { sid, ...diag }));
-      remoteVideo.style.display = 'none';
-      placeholder.style.display = '';
-      requestNewOffer('Conexão perdida. Reconectando…');
+      requestNewOffer(ch, 'Conexão perdida. Reconectando…');
     }
   };
 
@@ -428,7 +588,7 @@ socket.on('offer', async ({ from, offer, sid }) => {
     const answer = await thisPc.createAnswer();
     const h264Answer = { type: answer.type, sdp: preferH264(answer.sdp) };
     await thisPc.setLocalDescription(h264Answer);
-    if (pc !== thisPc) return;
+    if (ch.pc !== thisPc) return;
     socket.emit('answer', { to: from, answer: h264Answer, sid });
   } catch (err) {
     console.error('Negotiation failed', err);
@@ -436,15 +596,107 @@ socket.on('offer', async ({ from, offer, sid }) => {
   }
 });
 
-socket.on('ice-candidate', ({ candidate, sid }) => {
-  if (!pc) {
-    if (earlyIce.length < 100) earlyIce.push({ sid, candidate });
+socket.on('ice-candidate', ({ from, candidate, sid }) => {
+  const ch = channelFor(from);
+  if (!ch.pc) {
+    if (ch.earlyIce.length < 100) ch.earlyIce.push({ sid, candidate });
     return;
   }
-  if (sid !== undefined && sid !== pc.sid) return;
-  if (pc.remoteDescription) pc.addIceCandidate(candidate).catch(() => {});
-  else pc.pendingIce.push(candidate);
+  if (sid !== undefined && sid !== ch.pc.sid) return;
+  if (ch.pc.remoteDescription) ch.pc.addIceCandidate(candidate).catch(() => {});
+  else ch.pc.pendingIce.push(candidate);
 });
+
+// ======== Stream list (group rooms) ========
+// One row per streamer with its frog colour; picking one puts it on stage. The speaker button
+// mutes just that streamer. With the group open and a free slot, viewers can join in from here.
+const SHARE_URL = () => `frogshare://share?room=${encodeURIComponent(roomId)}`;
+
+function streamState(info) {
+  const ch = channels.get(info.id);
+  if (info.paused || ch?.paused) return 'pausado';
+  if (ch?.stream) return 'ao vivo';
+  return 'conectando…';
+}
+
+function renderStreamList() {
+  if (!streamList) return;
+  const show = hostsInfo.length > 1 || groupOpen;
+  streamList.hidden = !show;
+  document.body.classList.toggle('has-stream-list', show);
+  if (!show) {
+    // Without the list there's no way to undo a per-stream mute: the player's volume is the only control
+    if ([...channels.values()].some(c => c.muted)) {
+      for (const c of channels.values()) c.muted = false;
+      routeAudio();
+    }
+    return;
+  }
+  const items = hostsInfo.slice().sort((a, b) => a.slot - b.slot).map((info, i) => {
+    const ch = channels.get(info.id);
+    const row = document.createElement('div');
+    row.className = `stream-item slot-${info.slot}` + (info.id === selectedId ? ' selected' : '');
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'stream-pick';
+    pick.setAttribute('aria-pressed', String(info.id === selectedId));
+    pick.title = `Assistir ${info.name} (tecla ${i + 1})`;
+    const frog = Object.assign(document.createElement('img'), { src: '/brand/frog-head.svg', alt: '', className: 'stream-frog' });
+    const text = document.createElement('span');
+    text.className = 'stream-text';
+    text.append(
+      Object.assign(document.createElement('span'), { className: 'stream-name', textContent: info.name + (info.owner ? ' · dono' : '') }),
+      Object.assign(document.createElement('span'), { className: 'stream-state', textContent: streamState(info) })
+    );
+    pick.append(frog, text);
+    pick.addEventListener('click', () => { if (ch?.stream && !ch.paused) select(info.id); else { selectedId = info.id; renderStage(); renderStreamList(); } });
+    const mute = document.createElement('button');
+    mute.type = 'button';
+    mute.className = 'btn btn-ghost btn-icon stream-mute';
+    const muted = !!ch?.muted;
+    mute.setAttribute('aria-pressed', String(muted));
+    mute.setAttribute('aria-label', (muted ? 'Ativar o som de ' : 'Mutar ') + info.name);
+    mute.title = muted ? 'Ativar o som' : 'Mutar só esta transmissão';
+    mute.innerHTML = muted
+      ? '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/><path d="M16 10l4 4m0 -4l-4 4"/></svg>'
+      : '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/><path d="M15 8a5 5 0 0 1 0 8"/></svg>';
+    mute.addEventListener('click', () => {
+      const c = channelFor(info.id);
+      c.muted = !c.muted;
+      routeAudio();
+      renderStreamList();
+    });
+    row.append(pick, mute);
+    return row;
+  });
+  const children = [
+    Object.assign(document.createElement('p'), { className: 'stream-list-title', textContent: hostsInfo.length > 1 ? 'Transmissões' : 'Transmissão em grupo' }),
+    ...items
+  ];
+  if (groupOpen && hostsInfo.length < 4) {
+    const share = document.createElement('button');
+    share.type = 'button';
+    share.className = 'btn btn-secondary stream-share';
+    share.textContent = 'Compartilhar minha tela aqui';
+    share.addEventListener('click', openShareInApp);
+    children.push(share);
+  }
+  streamList.replaceChildren(...children);
+}
+
+// Opens the FrogShare app straight into this room. If nothing takes the link (app not installed),
+// the page is still in focus a moment later: offer the download instead.
+function openShareInApp() {
+  let left = false;
+  const onBlur = () => { left = true; };
+  window.addEventListener('blur', onBlur, { once: true });
+  window.location.href = SHARE_URL();
+  setTimeout(() => {
+    window.removeEventListener('blur', onBlur);
+    if (!left && !document.hidden) document.getElementById('share-help').hidden = false;
+  }, 2500);
+}
+document.getElementById('share-help-close')?.addEventListener('click', () => { document.getElementById('share-help').hidden = true; });
 
 // Fullscreen
 function toggleFullscreen() {
@@ -613,7 +865,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.3', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.0', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }
@@ -735,8 +987,15 @@ videoArea.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 document.addEventListener('keydown', (e) => {
-  if (volumeControl.style.display === 'none') return;
   if (e.target instanceof HTMLInputElement || e.ctrlKey || e.metaKey || e.altKey) return;
+  // 1-4 pick a stream in group rooms; also works in fullscreen, where the list is out of view
+  if (/^[1-4]$/.test(e.key) && hostsInfo.length > 1) {
+    const info = hostsInfo.slice().sort((a, b) => a.slot - b.slot)[Number(e.key) - 1];
+    const ch = info && channels.get(info.id);
+    if (ch?.stream && !ch.paused) { select(info.id); showToast(`Assistindo ${info.name}`); }
+    return;
+  }
+  if (volumeControl.style.display === 'none') return;
   const base = remoteVideo.muted ? 0 : remoteVideo.volume;
   if (e.key === 'ArrowUp') setVolume(base + 0.05);
   else if (e.key === 'ArrowDown') setVolume(base - 0.05);

@@ -244,3 +244,49 @@
   .room-meta { flex: 1; min-width: 0; }
   .room-controls { flex-shrink: 0; }
 }
+
+/* Group rooms: the list of streamers beside the video (a strip above it on phones) */
+.share-help { margin: var(--space-3) var(--space-4) 0; }
+.share-help[hidden] { display: none; }
+.share-help .btn-icon { color: inherit; margin: -6px -8px -6px 0; }
+.stream-list[hidden] { display: none; }
+.stream-list {
+  width: 232px; flex-shrink: 0; margin-right: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto;
+}
+.stream-list-title { margin: 0 0 var(--space-1); font-size: var(--text-sm); font-weight: 600; color: var(--text-2); }
+.stream-item {
+  --slot: #58B44A;
+  display: flex; align-items: center; gap: var(--space-1);
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--slot);
+  border-radius: var(--radius-md); padding: var(--space-1);
+}
+.stream-item.selected { background: var(--surface-2); border-color: var(--slot); box-shadow: inset 0 0 0 1px var(--slot); }
+.stream-pick {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2);
+  background: none; border: 0; padding: var(--space-1); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  border-radius: var(--radius-md);
+}
+.stream-pick:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.stream-frog { width: 34px; height: 30px; flex-shrink: 0; }
+.stream-text { display: flex; flex-direction: column; min-width: 0; }
+.stream-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream-state { font-size: var(--text-xs); color: var(--text-2); }
+.stream-mute[aria-pressed="true"] { color: var(--text-2); }
+.stream-share { margin-top: var(--space-1); }
+/* Each streamer gets a frog of their own colour: green (owner), blue, orange, purple */
+.slot-1 { --slot: #3D8BE0; }
+.slot-2 { --slot: #E8903A; }
+.slot-3 { --slot: #9A5BD8; }
+.slot-1 .stream-frog { filter: hue-rotate(95deg); }
+.slot-2 .stream-frog { filter: hue-rotate(-80deg) saturate(1.3); }
+.slot-3 .stream-frog { filter: hue-rotate(160deg); }
+
+@media (max-width: 720px) {
+  .stage:has(.stream-list:not([hidden])) { flex-direction: column; }
+  .stream-list { width: auto; margin: 0 0 var(--space-2); flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .stream-list-title { display: none; }
+  .stream-item { flex: 0 0 auto; max-width: 70vw; }
+  .stream-share { margin-top: 0; flex: 0 0 auto; white-space: nowrap; }
+  .share-help { margin: var(--space-2) var(--space-2) 0; }
+}

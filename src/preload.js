@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   requestPermission: (kind) => ipcRenderer.invoke('request-permission', kind),
   relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
+  takeGroupInvite: () => ipcRenderer.invoke('take-group-invite'),
+  onGroupInvite: (callback) => {
+    ipcRenderer.on('group-invite', (_, invite) => callback(invite));
+  },
 
   onAudioData: (callback) => {
     ipcRenderer.on('audio-data', (_, data) => callback(data));

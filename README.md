@@ -13,6 +13,7 @@ Uma alternativa ao "Go Live" do Discord: transmita um jogo, uma janela ou a tela
 - **Qualidade ajustável ao vivo:** 720p, 1080p ou nativa, em 30 ou 60 fps.
 - **Funciona atrás de qualquer rede:** conexão direta (P2P) quando possível, com relay TURN da Cloudflare para NAT restritivo e CGNAT de operadora móvel.
 - **Muitos espectadores:** a partir de 3 pessoas, o host envia uma única cópia para o SFU da Cloudflare, que distribui para todos.
+- **Transmissão em grupo:** o dono da sala libera e até 4 pessoas mostram a tela na mesma sala, cada uma com um sapo de cor própria. Quem assiste escolhe qual tela ver (teclas 1 a 4) e muta cada uma separadamente. Só a tela escolhida manda vídeo; as outras mandam só o som.
 - **Leve durante o jogo:** com o app minimizado ou atrás do jogo, nada na interface é redesenhado.
 - **Aviso "ao vivo":** ao minimizar, aparece um aviso pequeno que fica fora da própria transmissão.
 - **Atualização pelo próprio app**, com verificação SHA-512 do instalador.

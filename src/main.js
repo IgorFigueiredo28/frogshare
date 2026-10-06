@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.5.3'
+        app_version: '1.6.0'
       })
     }).catch(() => {});
   } catch {}
@@ -45,6 +45,61 @@ process.on('unhandledRejection', (reason) => {
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-features', 'WGCCapturerWin,WGCScreenCapturer');
+
+// Group invites from the site: frogshare://share?room=<id> opens this app in that room's group.
+// Only one copy of the app runs; a link clicked while it's open reaches it as a second instance.
+const PROTOCOL = 'frogshare';
+let pendingInvite = null;
+let inviteReady = false; // the page has asked for invites, so it is listening
+function inviteFrom(argv) {
+  const link = (argv || []).find(a => typeof a === 'string' && a.toLowerCase().startsWith(`${PROTOCOL}://`));
+  if (!link) return null;
+  try {
+    const room = new URL(link).searchParams.get('room') || '';
+    return /^[A-Za-z0-9_-]{1,64}$/.test(room) ? { room } : null;
+  } catch {
+    return null;
+  }
+}
+function deliverInvite(invite) {
+  if (!invite) return;
+  if (!mainWindow || mainWindow.isDestroyed() || !inviteReady) {
+    pendingInvite = invite;
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('group-invite', invite);
+}
+// FROGSHARE_MULTI=1 (dev only) runs a second copy with its own profile, to test a group on one PC
+if (isDev && process.env.FROGSHARE_MULTI === '1') {
+  app.setPath('userData', path.join(app.getPath('userData'), `instance-${process.pid}`));
+} else if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+} else {
+  app.on('second-instance', (event, argv) => {
+    const invite = inviteFrom(argv);
+    if (invite) deliverInvite(invite);
+    else if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+pendingInvite = inviteFrom(process.argv);
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deliverInvite(inviteFrom([url]));
+});
+if (!isDev) app.setAsDefaultProtocolClient(PROTOCOL);
+ipcMain.handle('take-group-invite', () => {
+  inviteReady = true;
+  const invite = pendingInvite;
+  pendingInvite = null;
+  return invite;
+});
 
 let mainWindow;
 let tray;

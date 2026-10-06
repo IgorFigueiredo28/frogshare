@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.5.3',
+        app_version: '1.6.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -46,6 +46,17 @@ let roomId = null;
 let hostKey = null;
 let signalServer = '';
 let isStreaming = false;
+
+// Group streaming: the room owner can let up to 3 friends stream in the same room, and viewers pick
+// whose screen to watch. A friend's app joins as a guest, opened by the site's "Compartilhar minha
+// tela aqui" (frogshare://share?room=...).
+const group = { enabled: false, guestRoom: null, slot: 0, ownerName: '', hosts: [] };
+// Viewers watching someone else in a group room don't need our video meanwhile: viewerId -> false
+const viewerWatch = new Map();
+const NICK_KEY = 'fs-nickname';
+function nickname() {
+  try { return (localStorage.getItem(NICK_KEY) || '').trim().slice(0, 24); } catch { return ''; }
+}
 
 const FALLBACK_ICE = {
   iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
@@ -505,21 +516,57 @@ async function ensureRoom() {
   if (roomId && socket) return;
 
   signalServer = await window.electronAPI.getSignalServer();
-  const res = await fetch(`${signalServer}/api/room/create`);
-  const data = await res.json();
-  roomId = data.roomId;
-  hostKey = data.hostKey || null;
+  if (group.guestRoom) {
+    roomId = group.guestRoom;
+    hostKey = null;
+  } else {
+    const res = await fetch(`${signalServer}/api/room/create`);
+    const data = await res.json();
+    roomId = data.roomId;
+    hostKey = data.hostKey || null;
+  }
 
   socket = io(signalServer);
   socket.on('connect', () => {
-    socket.emit('join-room', { roomId, asHost: true, appVersion, hostKey });
+    if (group.guestRoom) {
+      socket.emit('join-room', { roomId, asHost: true, coHost: true, appVersion, name: nickname() });
+    } else {
+      socket.emit('join-room', { roomId, asHost: true, appVersion, hostKey, name: nickname() });
+      // A restarted server forgets the room; bring the group back with it
+      if (group.enabled) socket.emit('group-mode', { enabled: true });
+    }
     // The server forgets the SFU session when the host socket drops
     if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
   });
 
-  socket.on('host-rejected', ({ reason }) => {
+  socket.on('host-rejected', ({ reason, group: isGroup }) => {
     showToast(reason || 'O servidor não aceitou esta sala.');
+    if (isGroup && group.guestRoom) {
+      if (isStreaming) pauseStreaming();
+      else exitGuestMode();
+      return;
+    }
     reportError('Host join rejected', null, { roomId });
+  });
+
+  socket.on('cohost-accepted', ({ slot, ownerName }) => {
+    group.slot = slot;
+    group.ownerName = ownerName || '';
+    renderGroupUi();
+  });
+
+  // The owner removed us, closed the group or the room closed
+  socket.on('group-ended', ({ reason } = {}) => {
+    if (!group.guestRoom) return;
+    showToast(reason || 'A transmissão em grupo terminou.');
+    if (isStreaming) pauseStreaming();
+    else exitGuestMode();
+  });
+
+  socket.on('viewer-watch', ({ viewerId, video }) => {
+    if (video) viewerWatch.delete(viewerId);
+    else viewerWatch.set(viewerId, false);
+    applyWatch(viewerId);
   });
 
   socket.on('viewer-joined', async ({ viewerId }) => {
@@ -544,6 +591,7 @@ async function ensureRoom() {
     const pc = peerConnections.get(viewerId);
     if (pc) pc.close();
     peerConnections.delete(viewerId);
+    viewerWatch.delete(viewerId);
   });
 
   socket.on('answer', async ({ from, answer, sid }) => {
@@ -567,8 +615,11 @@ async function ensureRoom() {
     else pc.pendingIce.push(candidate);
   });
 
-  socket.on('room-update', ({ viewerCount: count }) => {
+  socket.on('room-update', ({ viewerCount: count, group: groupOn, hosts }) => {
     roomViewerCount = count;
+    group.hosts = Array.isArray(hosts) ? hosts : [];
+    if (!group.guestRoom) group.enabled = !!groupOn;
+    renderGroupUi();
     viewerCountEl.textContent = `${count} assistindo`;
     viewerCountBar.textContent = `${count} assistindo`;
   });
@@ -889,7 +940,7 @@ btnStart.addEventListener('click', async () => {
     showToast('Erro: ' + err.message);
     reportError('Start streaming failed: ' + err.message, err.stack);
     btnStart.disabled = false;
-    btnStart.textContent = roomId ? 'Voltar a transmitir' : 'Começar a transmitir';
+    btnStart.textContent = startLabel();
   }
 });
 
@@ -904,6 +955,7 @@ async function configureVideoSender(pc, maxBitrate, label) {
     }
     params.encodings[0].maxBitrate = maxBitrate;
     params.encodings[0].maxFramerate = quality.fps;
+    params.encodings[0].active = viewerWatch.get(label) !== false;
     params.encodings[0].networkPriority = 'high';
     params.encodings[0].priority = 'high';
     // maintain-framerate collapses resolution under bandwidth pressure, which is what makes it look blocky
@@ -959,6 +1011,19 @@ async function createOfferForViewer(viewerId) {
   socket.emit('offer', { to: viewerId, offer: h264Offer, sid: pc.sid });
 }
 
+// In a group room a viewer watches one streamer at a time; the others keep only the sound flowing to it
+function applyWatch(viewerId) {
+  const pc = peerConnections.get(viewerId);
+  const sender = pc?.getSenders().find(s => s.track?.kind === 'video');
+  if (!sender) return;
+  const params = sender.getParameters();
+  if (!params.encodings?.length) return;
+  const active = viewerWatch.get(viewerId) !== false;
+  if (params.encodings[0].active === active) return;
+  params.encodings[0].active = active;
+  sender.setParameters(params).catch(() => {});
+}
+
 // ======== Pause Streaming (room stays alive) ========
 btnStop.addEventListener('click', pauseStreaming);
 
@@ -995,7 +1060,7 @@ async function pauseStreaming() {
   stopSfu(false);
 
   if (socket) {
-    socket.emit('host-pause');
+    socket.emit(group.guestRoom ? 'leave-group' : 'host-pause');
   }
 
   syncPreview();
@@ -1003,9 +1068,149 @@ async function pauseStreaming() {
   panelStreaming.style.display = 'none';
   panelSetup.style.display = '';
   btnStart.disabled = false;
-  btnStart.textContent = 'Voltar a transmitir';
+  if (group.guestRoom) exitGuestMode();
+  btnStart.textContent = startLabel();
   updateStartButton();
 }
+
+function startLabel() {
+  if (group.guestRoom) return 'Entrar na transmissão em grupo';
+  return roomId ? 'Voltar a transmitir' : 'Começar a transmitir';
+}
+
+// ======== Group streaming ========
+const groupInvite = document.getElementById('group-invite');
+const groupInviteText = document.getElementById('group-invite-text');
+const groupToggle = document.getElementById('group-toggle');
+const groupToggleRow = document.getElementById('group-toggle-row');
+const groupDetails = document.getElementById('group-details');
+const groupList = document.getElementById('group-list');
+const groupHint = document.getElementById('group-hint');
+const chipGroup = document.getElementById('chip-group');
+const chipGroupFrog = document.getElementById('chip-group-frog');
+const chipGroupText = document.getElementById('chip-group-text');
+const roomBarLabel = document.getElementById('room-bar-label');
+const nickInputs = [document.getElementById('nickname'), document.getElementById('guest-nickname')];
+
+function renderGroupUi() {
+  const guest = !!group.guestRoom;
+  document.body.classList.toggle('group-guest', guest);
+  groupInvite.hidden = !guest;
+  if (guest) {
+    groupInviteText.textContent = group.ownerName
+      ? `Você está entrando na sala de ${group.ownerName} (${group.guestRoom}). Escolha a tela e o som e clique em "Entrar na transmissão em grupo".`
+      : `Sala ${group.guestRoom}. Escolha a tela e o som e clique em "Entrar na transmissão em grupo". Sua tela aparece para quem está na sala, junto com a do dono.`;
+  }
+  groupToggleRow.hidden = guest;
+  btnStop.lastChild.textContent = guest ? 'Sair do grupo' : 'Parar';
+  groupToggle.checked = group.enabled;
+  const inGroup = guest || group.enabled;
+  groupDetails.hidden = !inGroup;
+  roomBarLabel.textContent = guest ? 'Em grupo' : 'Sala ativa';
+
+  const me = socket?.id;
+  const others = group.hosts.length - 1;
+  chipGroup.hidden = !(guest || (group.enabled && others > 0));
+  chipGroupFrog.className = `group-frog slot-${guest ? group.slot : 0}`;
+  chipGroupText.textContent = guest ? `Em grupo${group.ownerName ? ' com ' + group.ownerName : ''}` : `Em grupo · ${group.hosts.length} transmitindo`;
+
+  const items = group.hosts.slice().sort((a, b) => a.slot - b.slot).map(h => {
+    const li = document.createElement('li');
+    li.className = `slot-${h.slot}`;
+    const frog = Object.assign(document.createElement('img'), { className: 'group-frog', src: '/brand/frog-head.svg', alt: '' });
+    const name = Object.assign(document.createElement('span'), { className: 'group-name', textContent: h.name });
+    const tags = [h.id === me ? 'você' : '', h.owner ? 'dono' : '', h.paused ? 'pausado' : ''].filter(Boolean).join(' · ');
+    if (tags) name.append(' ', Object.assign(document.createElement('span'), { className: 'group-tag', textContent: `(${tags})` }));
+    li.append(frog, name);
+    if (!guest && !h.owner) {
+      const kick = document.createElement('button');
+      kick.type = 'button';
+      kick.className = 'btn btn-ghost btn-icon';
+      kick.title = `Tirar ${h.name} da transmissão`;
+      kick.setAttribute('aria-label', kick.title);
+      kick.innerHTML = '<svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>';
+      kick.addEventListener('click', () => socket?.emit('kick-host', { hostId: h.id }));
+      li.append(kick);
+    }
+    return li;
+  });
+  groupList.replaceChildren(...items);
+  groupHint.textContent = guest
+    ? 'Quem está na sala escolhe qual tela assistir. Para sair, clique em "Sair do grupo".'
+    : (group.hosts.length >= 4
+      ? 'O grupo está cheio (4 pessoas).'
+      : 'Quem estiver assistindo pode clicar em "Compartilhar minha tela aqui" no site para transmitir junto.');
+  for (const input of nickInputs) if (document.activeElement !== input) input.value = nickname();
+}
+
+groupToggle.addEventListener('change', () => {
+  group.enabled = groupToggle.checked;
+  socket?.emit('group-mode', { enabled: group.enabled });
+  renderGroupUi();
+});
+
+for (const input of nickInputs) {
+  input.addEventListener('change', () => {
+    const name = input.value.trim().slice(0, 24);
+    try { localStorage.setItem(NICK_KEY, name); } catch {}
+    socket?.emit('set-name', { name });
+    renderGroupUi();
+  });
+}
+
+// The site asked this app to stream in its room. Nothing is shared until the person picks a
+// screen and clicks the start button.
+function handleGroupInvite(invite) {
+  const room = invite?.room;
+  if (typeof room !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(room)) return;
+  if (group.guestRoom === room) return;
+  if (isStreaming) {
+    showToast('Pare a sua transmissão antes de entrar na transmissão em grupo.');
+    return;
+  }
+  if (!group.guestRoom && room === roomId) {
+    showToast('Essa é a sua própria sala. Ligue "Transmissão em grupo" nela para seus amigos entrarem.');
+    return;
+  }
+  // A paused room of our own, or another group, is left behind
+  leaveRoomConnection();
+  group.guestRoom = room;
+  group.slot = 0;
+  group.ownerName = '';
+  group.hosts = [];
+  renderGroupUi();
+  btnStart.textContent = startLabel();
+  panelSetup.scrollIntoView?.({ block: 'start' });
+  showToast('Escolha a tela e o som para transmitir na sala do grupo.');
+}
+
+function leaveRoomConnection() {
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+  }
+  socket = null;
+  roomId = null;
+  hostKey = null;
+  viewerWatch.clear();
+  roomBar.style.display = 'none';
+}
+
+function exitGuestMode() {
+  if (!group.guestRoom) return;
+  leaveRoomConnection();
+  group.guestRoom = null;
+  group.slot = 0;
+  group.ownerName = '';
+  group.hosts = [];
+  renderGroupUi();
+  btnStart.textContent = startLabel();
+}
+
+document.getElementById('btn-group-cancel').addEventListener('click', exitGuestMode);
+window.electronAPI.onGroupInvite?.(handleGroupInvite);
+window.electronAPI.takeGroupInvite?.().then(handleGroupInvite).catch(() => {});
+renderGroupUi();
 
 // ======== Copy buttons ========
 btnCopyCode.addEventListener('click', () => {
@@ -1205,7 +1410,7 @@ function isExcluded(viewerId) {
 function viewerBitrateCap(viewerId) {
   const preset = presetBitrate();
   if (share.mode === 'off' || (viewerId && isExcluded(viewerId))) return preset;
-  const sharing = [...peerConnections.keys()].filter(id => !isExcluded(id)).length || 1;
+  const sharing = [...peerConnections.keys()].filter(id => !isExcluded(id) && viewerWatch.get(id) !== false).length || 1;
   return Math.round(Math.min(preset, share.budget / sharing));
 }
 
@@ -1301,6 +1506,8 @@ async function collectSenderStats() {
           samples.push({
             id: viewerId,
             sfu: isSfu,
+            // Not watching us right now (group room): no video goes to it on purpose
+            idle: !isSfu && viewerWatch.get(viewerId) === false,
             viewer: viewerId.slice(0, 6),
             ageMs: Math.round(performance.now() - (pc.createdAt || 0)),
             enc: r.encoderImplementation,
@@ -1351,14 +1558,16 @@ function startStatsUpdate() {
     const samples = await collectSenderStats();
     if (samples.length === 0) {
       streamStatsEl.textContent = localStream ? 'Transmitindo (aguardando viewers)' : '';
+    } else if (samples.every(x => x.idle)) {
+      streamStatsEl.textContent = 'Em grupo: quem está na sala está vendo outra tela agora (o seu som continua indo)';
     } else {
-      const s = samples.find(x => x.sfu) || samples[0];
+      const s = samples.find(x => x.sfu) || samples.find(x => !x.idle) || samples[0];
       const kbps = samples.map(x => (x.targetBitrate / 1e6).toFixed(1)).join('/');
       const mode = sfu.active ? 'servidor (SFU)' : 'direto';
       streamStatsEl.textContent =
         `${s.res} @ ${s.fps}fps | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${mode} | ${roomViewerCount} viewer(s)`;
     }
-    updateUploadBudget(samples.filter(x => !x.sfu));
+    updateUploadBudget(samples.filter(x => !x.sfu && !x.idle));
     updateSfuMode();
     if (statsTicks % 30 === 0) {
       const pipeline = pipelineRates();
@@ -1400,7 +1609,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.5.3', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 

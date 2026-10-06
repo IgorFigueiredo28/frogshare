@@ -263,3 +263,35 @@ body:has(#panel-streaming:not([style*="none"])) #room-bar { display: none !impor
   .stream-actions .btn { flex: 1; }
   #panel-streaming > #quality-section .quality-row { flex-direction: column; align-items: stretch; }
 }
+
+/* ================= Group streaming ================= */
+/* Each streamer has a frog of their own colour: green (room owner), blue, orange, purple */
+.slot-1 .group-frog, .group-frog.slot-1 { filter: hue-rotate(95deg); }
+.slot-2 .group-frog, .group-frog.slot-2 { filter: hue-rotate(-80deg) saturate(1.3); }
+.slot-3 .group-frog, .group-frog.slot-3 { filter: hue-rotate(160deg); }
+
+/* Joining someone else's room: the invite takes the hero's place */
+.group-invite[hidden] { display: none; }
+.group-invite { grid-area: hero; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-4) var(--space-5); }
+.group-invite > .group-frog { width: 52px; height: auto; flex-shrink: 0; }
+.group-invite-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.group-invite-body h2 { font-size: var(--text-xl); }
+body.group-guest .setup-hero { display: none; }
+
+.field-row { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); font-weight: 600; color: var(--text-2); }
+.field-row .input { max-width: 280px; }
+
+.chip-group[hidden] { display: none; }
+.chip-group { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); color: var(--text); }
+.chip-group .group-frog { width: 20px; height: auto; }
+
+.group-section { display: flex; flex-direction: column; gap: var(--space-3); }
+.group-details[hidden] { display: none; }
+.group-details { display: flex; flex-direction: column; gap: var(--space-3); }
+.group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.group-list li { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: 600; }
+.group-list .group-frog { width: 26px; height: auto; flex-shrink: 0; }
+.group-list .group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-list .group-tag { font-weight: 500; color: var(--text-2); }
+.group-hint { font-size: var(--text-sm); color: var(--text-2); }
+.switch-row[hidden] { display: none; }

@@ -59,7 +59,17 @@
       </button>
     </div>
 
+    <div class="notice share-help" id="share-help" role="status" hidden>
+      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
+      <span class="notice-text">O FrogShare não abriu. Para transmitir nesta sala, baixe e instale o app em <a href="/" target="_blank" rel="noopener">frogshare.onrender.com</a> e clique em "Compartilhar minha tela aqui" de novo.</span>
+      <button id="share-help-close" type="button" class="btn btn-ghost btn-icon" aria-label="Fechar aviso">
+        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+      </button>
+    </div>
+
     <main class="stage">
+      <!-- Group rooms: one row per streamer (frog colour + nickname); pick one to watch, mute any -->
+      <aside class="stream-list" id="stream-list" aria-label="Transmissões da sala" hidden></aside>
       <div class="video-area" id="video-area">
         <div class="placeholder" id="placeholder">
           <div class="empty-state">

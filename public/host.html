@@ -16,7 +16,7 @@
     </span>
 
     <div id="room-bar" class="room-bar" style="display:none">
-      <span class="chip chip-ok">Sala ativa</span>
+      <span class="chip chip-ok" id="room-bar-label">Sala ativa</span>
       <span class="chip chip-code"><span class="sr-only">Código</span><span id="room-code-bar"></span></span>
       <button id="btn-copy-code-bar" type="button" class="btn btn-ghost btn-icon" aria-label="Copiar código da sala" title="Copiar código">
         <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-copy"/></svg>
@@ -97,6 +97,20 @@
 
     <!-- ================= Setup ================= -->
     <div class="panel" id="panel-setup">
+      <!-- Group mode: the site sent this app into someone else's room to stream alongside them -->
+      <section class="group-invite card" id="group-invite" aria-labelledby="group-invite-title" hidden>
+        <img class="group-frog" src="/brand/frog-head.svg" alt="" width="52" height="46">
+        <div class="group-invite-body">
+          <h2 id="group-invite-title">Transmissão em grupo</h2>
+          <p class="subtitle" id="group-invite-text"></p>
+          <label class="field-row" for="guest-nickname">
+            <span>Seu apelido na sala</span>
+            <input id="guest-nickname" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Como seus amigos te veem">
+          </label>
+        </div>
+        <button id="btn-group-cancel" type="button" class="btn btn-ghost">Cancelar</button>
+      </section>
+
       <div class="setup-hero">
         <img src="/brand/frog.svg" alt="" width="88" height="81">
         <div>
@@ -186,6 +200,9 @@
           <button id="btn-copy-code" type="button" class="btn btn-ghost btn-icon" aria-label="Copiar código da sala" title="Copiar código">
             <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-copy"/></svg>
           </button>
+          <span class="chip chip-group" id="chip-group" hidden>
+            <img class="group-frog" id="chip-group-frog" src="/brand/frog-head.svg" alt="" width="20" height="18"><span id="chip-group-text">Em grupo</span>
+          </span>
         </div>
         <div class="stream-actions">
           <button id="btn-switch-source" type="button" class="btn btn-secondary">
@@ -229,6 +246,20 @@
             <input type="checkbox" id="overlay-toggle" class="switch" checked>
             <span>Mostrar o aviso "ao vivo" quando eu minimizar o app</span>
           </label>
+          <div class="group-section" id="group-section">
+            <label class="switch-row" id="group-toggle-row">
+              <input type="checkbox" id="group-toggle" class="switch">
+              <span>Transmissão em grupo: até 4 pessoas mostram a tela nesta sala</span>
+            </label>
+            <div class="group-details" id="group-details" hidden>
+              <label class="field-row" for="nickname">
+                <span>Seu apelido na sala</span>
+                <input id="nickname" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Como seus amigos te veem">
+              </label>
+              <ul class="group-list" id="group-list" aria-label="Quem está transmitindo"></ul>
+              <p class="group-hint" id="group-hint"></p>
+            </div>
+          </div>
         </aside>
       </div>
     </div>

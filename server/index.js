@@ -66,7 +66,7 @@ const rooms = new Map();
 setInterval(() => {
   const now = Date.now();
   for (const [id, room] of rooms) {
-    if (!room.host && room.viewers.size === 0 && now - room.createdAt > 600000) {
+    if (hostSockets(room).length === 0 && room.viewers.size === 0 && now - room.createdAt > 600000) {
       rooms.delete(id);
     }
   }
@@ -438,12 +438,16 @@ function closeRoom(roomId) {
   const room = rooms.get(roomId);
   if (!room) return { hadHost: false, viewers: 0 };
   const result = { hadHost: !!room.host, viewers: room.viewers.size };
+  const hosts = hostSockets(room);
   for (const viewerId of room.viewers) {
-    // Viewer pages tear down on 'host-left'; the host app drops each peer on 'viewer-left'
-    io.to(viewerId).emit('host-left');
-    if (room.host) io.to(room.host).emit('viewer-left', { viewerId });
+    // Viewer pages tear down on 'host-left'; the host apps drop each peer on 'viewer-left'
+    for (const hostId of hosts) {
+      io.to(viewerId).emit('host-left', { hostId });
+      io.to(hostId).emit('viewer-left', { viewerId });
+    }
   }
-  io.to(roomId).emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false });
+  for (const [id] of room.cohosts || []) io.to(id).emit('group-ended', { reason: 'A sala foi fechada.' });
+  io.to(roomId).emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false, group: false, hosts: [] });
   rooms.delete(roomId);
   return result;
 }
@@ -565,7 +569,7 @@ const sameKey = (a, b) => {
 app.get('/api/room/create', rateLimit(20, 60000), (req, res) => {
   const roomId = crypto.randomUUID().slice(0, 8);
   const hostKey = newHostKey();
-  rooms.set(roomId, { host: null, hostKey, strict: false, viewers: new Set(), createdAt: Date.now() });
+  rooms.set(roomId, newRoom({ hostKey }));
   res.json({ roomId, hostKey });
 });
 
@@ -596,32 +600,114 @@ function hostOutdated(room) {
   return room.hostLegacy === true;
 }
 
+// ======== Group streaming ========
+// The room's owner (the host that created it) can open it to up to 3 more streamers. Anyone in the
+// room may then join as a co-host; the owner can remove one or close the group (which removes all).
+// Each streamer has a slot (0 = owner) that picks its frog colour on every screen.
+const MAX_COHOSTS = 3;
+const cleanName = (name, fallback) => {
+  const s = String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 24);
+  return s || fallback;
+};
+const newRoom = (extra) => ({ host: null, hostKey: null, strict: false, viewers: new Set(), cohosts: new Map(), group: false, createdAt: Date.now(), ...extra });
+
+function hostSockets(room) {
+  return [room.host, ...(room.cohosts ? room.cohosts.keys() : [])].filter(Boolean);
+}
+
+function hostsList(room) {
+  const list = [];
+  if (room.host) list.push({ id: room.host, name: room.hostName || 'Host', slot: 0, paused: !!room.hostPaused, owner: true });
+  for (const [id, c] of room.cohosts || []) list.push({ id, name: c.name, slot: c.slot, paused: !!c.paused, owner: false });
+  return list;
+}
+
+function freeSlot(room) {
+  const used = new Set([...(room.cohosts || new Map()).values()].map(c => c.slot));
+  for (let slot = 1; slot <= MAX_COHOSTS; slot++) if (!used.has(slot)) return slot;
+  return null;
+}
+
+// Removes a co-host from the room: it stops streaming there and every viewer drops that stream
+function removeCohost(roomId, room, id, reason) {
+  if (!room.cohosts?.has(id)) return;
+  room.cohosts.delete(id);
+  io.to(id).emit('group-ended', { reason });
+  for (const viewerId of room.viewers) io.to(viewerId).emit('host-left', { hostId: id });
+  const s = io.sockets.sockets.get(id);
+  if (s) s.leave(roomId);
+}
+
 function emitRoomUpdate(roomId, room) {
   io.to(roomId).emit('room-update', {
-    hasHost: !!room.host,
+    hasHost: hostSockets(room).length > 0,
     viewerCount: room.viewers.size,
-    hostOutdated: hostOutdated(room)
+    hostOutdated: hostOutdated(room),
+    group: !!room.group,
+    hosts: hostsList(room)
   });
 }
 
 io.on('connection', (socket) => {
   let currentRoom = null;
-  let role = null;
+  let role = null; // 'host' (owner), 'cohost' or 'viewer'
+  const isStreamer = () => role === 'host' || role === 'cohost';
+  const offerRequests = new Map(); // hostId -> last request-offer time
+  const myRoom = () => (currentRoom && rooms.get(currentRoom)) || null;
 
   // Signaling only flows between members of the same room
   const inMyRoom = (id) => {
-    const room = currentRoom && rooms.get(currentRoom);
-    return !!room && (room.host === id || room.viewers.has(id));
+    const room = myRoom();
+    return !!room && (room.host === id || room.viewers.has(id) || !!room.cohosts?.has(id));
   };
 
-  socket.on('join-room', ({ roomId, asHost, appVersion, hostKey } = {}) => {
+  function enterRoom(roomId) {
+    if (currentRoom && currentRoom !== roomId) socket.leave(currentRoom);
+    currentRoom = roomId;
+    socket.join(roomId);
+  }
+
+  // A streamer (owner or co-host) going live: tell viewers and get an offer to each of them
+  function announceStreamer(room) {
+    socket.to(currentRoom).emit('host-joined', { hostId: socket.id });
+    for (const viewerId of room.viewers) socket.emit('viewer-joined', { viewerId });
+  }
+
+  socket.on('join-room', ({ roomId, asHost, appVersion, hostKey, coHost, name } = {}) => {
     if (typeof roomId !== 'string' || !ROOM_ID_RE.test(roomId)) return;
     if (isBlocked(roomId)) {
       // A closed room stays closed: the host gets no viewers and viewers see no host
-      if (!asHost) socket.emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false });
+      if (!asHost) socket.emit('room-update', { hasHost: false, viewerCount: 0, hostOutdated: false, group: false, hosts: [] });
       return;
     }
     let room = rooms.get(roomId);
+
+    // ---- Co-host: joins someone else's room while its group is open ----
+    if (asHost && coHost) {
+      if (!room || !room.group) {
+        socket.emit('host-rejected', { reason: 'O dono da sala não abriu a transmissão em grupo.', group: true });
+        return;
+      }
+      if (room.host === socket.id) return;
+      let entry = room.cohosts.get(socket.id);
+      if (!entry) {
+        const slot = freeSlot(room);
+        if (slot == null) {
+          socket.emit('host-rejected', { reason: 'O grupo já tem 4 pessoas transmitindo.', group: true });
+          return;
+        }
+        entry = { slot, name: cleanName(name, 'Amigo ' + slot), paused: false, sfu: null };
+        room.cohosts.set(socket.id, entry);
+      }
+      enterRoom(roomId);
+      role = 'cohost';
+      room.viewers.delete(socket.id);
+      socket.emit('cohost-accepted', { slot: entry.slot, ownerName: room.hostName || 'Host' });
+      announceStreamer(room);
+      emitRoomUpdate(roomId, room);
+      return;
+    }
+
     if (asHost) {
       // Who may act as host:
       // - with the room's key: always (also how a host takes its room back after a reconnect)
@@ -630,7 +716,7 @@ io.on('connection', (socket) => {
       // - builds before 1.4.6 send no key: only while nobody is hosting and no key holder has joined
       const key = hostKey ? String(hostKey).slice(0, 64) : null;
       if (!room) {
-        room = { host: null, hostKey: key, strict: !!key, viewers: new Set(), createdAt: Date.now() };
+        room = newRoom({ hostKey: key, strict: !!key });
         rooms.set(roomId, room);
       } else if (sameKey(key, room.hostKey)) {
         room.strict = true;
@@ -642,42 +728,87 @@ io.on('connection', (socket) => {
         return;
       }
     } else if (!room) {
-      room = { host: null, hostKey: null, strict: false, viewers: new Set(), createdAt: Date.now() };
+      room = newRoom();
       rooms.set(roomId, room);
     }
 
-    // A socket belongs to one room; switching drops it from the previous one
-    if (currentRoom && currentRoom !== roomId) socket.leave(currentRoom);
-    currentRoom = roomId;
-    socket.join(roomId);
+    enterRoom(roomId);
 
     if (asHost) {
       room.host = socket.id;
+      room.hostName = cleanName(name, 'Host');
+      room.hostPaused = false;
       // Builds before 1.3.1 don't send a version at all
       room.hostVersion = typeof appVersion === 'string' ? appVersion.slice(0, 20) : null;
       room.hostLegacy = undefined;
       role = 'host';
-      socket.to(roomId).emit('host-joined');
-      for (const viewerId of room.viewers) {
-        socket.emit('viewer-joined', { viewerId });
-      }
+      announceStreamer(room);
     } else {
       if (room.viewers.size >= 200) return;
       room.viewers.add(socket.id);
       role = 'viewer';
-      if (room.host) {
-        io.to(room.host).emit('viewer-joined', { viewerId: socket.id });
-      }
-      if (room.sfu) socket.emit('sfu-start', room.sfu);
+      for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-joined', { viewerId: socket.id });
+      if (room.sfu) socket.emit('sfu-start', { hostId: room.host, ...room.sfu });
+      for (const [id, c] of room.cohosts) if (c.sfu) socket.emit('sfu-start', { hostId: id, ...c.sfu });
     }
 
     emitRoomUpdate(roomId, room);
   });
 
+  // ---- Owner controls for the group ----
+  socket.on('group-mode', ({ enabled } = {}) => {
+    const room = myRoom();
+    if (!room || role !== 'host' || room.host !== socket.id) return;
+    room.group = !!enabled;
+    if (!room.group) {
+      for (const id of [...room.cohosts.keys()]) removeCohost(currentRoom, room, id, 'O dono da sala encerrou a transmissão em grupo.');
+    }
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  socket.on('kick-host', ({ hostId } = {}) => {
+    const room = myRoom();
+    if (!room || role !== 'host' || room.host !== socket.id) return;
+    removeCohost(currentRoom, room, String(hostId), 'O dono da sala tirou você do grupo.');
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  socket.on('set-name', ({ name } = {}) => {
+    const room = myRoom();
+    if (!room) return;
+    if (role === 'host' && room.host === socket.id) room.hostName = cleanName(name, 'Host');
+    else if (role === 'cohost' && room.cohosts.has(socket.id)) room.cohosts.get(socket.id).name = cleanName(name, 'Amigo');
+    else return;
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  // A viewer watching one stream tells the others it doesn't need their video for now
+  socket.on('watch', ({ hostId, video } = {}) => {
+    if (role !== 'viewer' || !inMyRoom(hostId)) return;
+    io.to(hostId).emit('viewer-watch', { viewerId: socket.id, video: video !== false });
+  });
+
+  // A viewer lost one streamer's connection: reconnect just that one (the media server if it
+  // publishes there, otherwise a fresh direct offer), leaving the other streams alone.
+  socket.on('request-offer', ({ hostId } = {}) => {
+    const room = myRoom();
+    if (role !== 'viewer' || !room || typeof hostId !== 'string') return;
+    // A broken connection retries every few seconds at most; anything faster is not a real viewer
+    const now = Date.now();
+    if (now - (offerRequests.get(hostId) || 0) < 1500) return;
+    offerRequests.set(hostId, now);
+    let sfu;
+    if (room.host === hostId) sfu = room.sfu;
+    else if (room.cohosts.has(hostId)) sfu = room.cohosts.get(hostId).sfu;
+    else return;
+    if (sfu) socket.emit('sfu-start', { hostId, ...sfu });
+    else io.to(hostId).emit('viewer-joined', { viewerId: socket.id });
+  });
+
   socket.on('offer', ({ to, offer, sid } = {}) => {
-    if (role !== 'host' || !inMyRoom(to)) return;
+    if (!isStreamer() || !inMyRoom(to)) return;
     io.to(to).emit('offer', { from: socket.id, offer, sid });
-    const room = currentRoom && rooms.get(currentRoom);
+    const room = myRoom();
     if (room && role === 'host' && !room.hostVersion && room.hostLegacy === undefined) {
       room.hostLegacy = offerLooksLegacy(offer?.sdp);
       if (room.hostLegacy) emitRoomUpdate(currentRoom, room);
@@ -694,50 +825,65 @@ io.on('connection', (socket) => {
     io.to(to).emit('ice-candidate', { from: socket.id, candidate, sid });
   });
 
-  // Host switched the room to the SFU: viewers pull the published tracks instead of a P2P offer
+  // A streamer switched to the SFU: viewers pull its published tracks instead of a P2P offer
   socket.on('sfu-start', ({ sessionId, tracks } = {}) => {
-    if (!currentRoom || role !== 'host') return;
-    const room = rooms.get(currentRoom);
-    if (!room || !SFU_ID_RE.test(String(sessionId)) || !Array.isArray(tracks)) return;
-    room.sfu = { sessionId, tracks: tracks.slice(0, 4).map(t => String(t).slice(0, 32)) };
-    socket.to(currentRoom).emit('sfu-start', room.sfu);
+    const room = myRoom();
+    if (!room || !isStreamer() || !SFU_ID_RE.test(String(sessionId)) || !Array.isArray(tracks)) return;
+    const sfu = { sessionId, tracks: tracks.slice(0, 4).map(t => String(t).slice(0, 32)) };
+    if (role === 'host') room.sfu = sfu;
+    else if (room.cohosts.has(socket.id)) room.cohosts.get(socket.id).sfu = sfu;
+    else return;
+    socket.to(currentRoom).emit('sfu-start', { hostId: socket.id, ...sfu });
   });
 
   socket.on('sfu-stop', () => {
-    if (!currentRoom || role !== 'host') return;
-    const room = rooms.get(currentRoom);
-    if (!room || !room.sfu) return;
-    room.sfu = null;
-    socket.to(currentRoom).emit('sfu-stop');
+    const room = myRoom();
+    if (!room || !isStreamer()) return;
+    if (role === 'host') { if (!room.sfu) return; room.sfu = null; }
+    else { const c = room.cohosts.get(socket.id); if (!c?.sfu) return; c.sfu = null; }
+    socket.to(currentRoom).emit('sfu-stop', { hostId: socket.id });
   });
 
-  // A viewer that can't reach the SFU asks the host for a direct connection instead
-  socket.on('sfu-fallback', () => {
-    if (!currentRoom || role !== 'viewer') return;
-    const room = rooms.get(currentRoom);
-    if (room?.host) io.to(room.host).emit('viewer-needs-p2p', { viewerId: socket.id });
+  // A viewer that can't reach the SFU asks that streamer for a direct connection instead
+  socket.on('sfu-fallback', ({ hostId } = {}) => {
+    const room = myRoom();
+    if (!room || role !== 'viewer') return;
+    const target = hostId && inMyRoom(hostId) ? hostId : room.host;
+    if (target) io.to(target).emit('viewer-needs-p2p', { viewerId: socket.id });
   });
 
   socket.on('host-pause', () => {
-    if (!currentRoom || role !== 'host') return;
-    const room = rooms.get(currentRoom);
-    if (room) room.sfu = null;
-    socket.to(currentRoom).emit('host-paused');
+    const room = myRoom();
+    if (!room || !isStreamer()) return;
+    if (role === 'host') { room.sfu = null; room.hostPaused = true; }
+    else if (room.cohosts.has(socket.id)) Object.assign(room.cohosts.get(socket.id), { sfu: null, paused: true });
+    socket.to(currentRoom).emit('host-paused', { hostId: socket.id });
+    emitRoomUpdate(currentRoom, room);
   });
 
   socket.on('host-resume', () => {
-    if (!currentRoom || role !== 'host') return;
-    const room = rooms.get(currentRoom);
-    if (!room) return;
-    socket.to(currentRoom).emit('host-joined');
-    for (const viewerId of room.viewers) {
-      socket.emit('viewer-joined', { viewerId });
-    }
+    const room = myRoom();
+    if (!room || !isStreamer()) return;
+    if (role === 'host') room.hostPaused = false;
+    else if (room.cohosts.has(socket.id)) room.cohosts.get(socket.id).paused = false;
+    announceStreamer(room);
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  // A co-host leaving on purpose (stopped in the app) frees its slot right away
+  socket.on('leave-group', () => {
+    const room = myRoom();
+    if (!room || role !== 'cohost') return;
+    room.cohosts.delete(socket.id);
+    socket.to(currentRoom).emit('host-left', { hostId: socket.id });
+    socket.leave(currentRoom);
+    emitRoomUpdate(currentRoom, room);
+    currentRoom = null;
+    role = null;
   });
 
   socket.on('disconnect', () => {
-    if (!currentRoom) return;
-    const room = rooms.get(currentRoom);
+    const room = myRoom();
     if (!room) return;
 
     if (role === 'host') {
@@ -745,18 +891,18 @@ io.on('connection', (socket) => {
       if (room.host === socket.id) {
         room.host = null;
         room.sfu = null;
-        socket.to(currentRoom).emit('host-left');
+        socket.to(currentRoom).emit('host-left', { hostId: socket.id });
       }
+    } else if (role === 'cohost') {
+      if (room.cohosts.delete(socket.id)) socket.to(currentRoom).emit('host-left', { hostId: socket.id });
     } else {
       room.viewers.delete(socket.id);
-      if (room.host) {
-        io.to(room.host).emit('viewer-left', { viewerId: socket.id });
-      }
+      for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-left', { viewerId: socket.id });
     }
 
     emitRoomUpdate(currentRoom, room);
 
-    if (!room.host && room.viewers.size === 0) {
+    if (hostSockets(room).length === 0 && room.viewers.size === 0) {
       rooms.delete(currentRoom);
     }
   });
