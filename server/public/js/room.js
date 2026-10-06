@@ -450,13 +450,28 @@ socket.on('ice-candidate', ({ candidate, sid }) => {
 function toggleFullscreen() {
   if (document.fullscreenElement) {
     document.exitFullscreen();
-  } else {
-    videoArea.requestFullscreen().catch(() => {});
+  } else if (document.fullscreenEnabled && videoArea.requestFullscreen) {
+    videoArea.requestFullscreen().then(lockLandscape).catch(() => {});
+  } else if (remoteVideo.webkitEnterFullscreen) {
+    // iPhone Safari can't put a page element in fullscreen, only a video, in the system player
+    // (which turns with the phone on its own)
+    remoteVideo.webkitEnterFullscreen();
   }
+}
+
+// On a phone, fullscreen means sideways, like a video app. Android Chrome allows the lock only while
+// in fullscreen; elsewhere it's rejected and the page simply follows the phone.
+function lockLandscape() {
+  const orientation = screen.orientation;
+  if (!orientation || !orientation.lock || !matchMedia('(pointer: coarse)').matches) return;
+  orientation.lock('landscape').catch(() => {});
 }
 
 document.addEventListener('fullscreenchange', () => {
   btnFullscreen.textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
+  if (!document.fullscreenElement) {
+    try { screen.orientation?.unlock?.(); } catch {}
+  }
 });
 
 btnFullscreen.addEventListener('click', toggleFullscreen);
@@ -690,12 +705,23 @@ function applyInitialAudio() {
     if (remoteVideo.paused) {
       remoteVideo.muted = true;
       remoteVideo.play().catch(() => {});
-      showToast('O navegador abriu sem som: clique em "Ativar som"');
+      showToast('O navegador abriu sem som: toque na tela para ouvir');
     }
   }).catch(() => {
-    showToast('O navegador abriu sem som: clique em "Ativar som"');
+    showToast('O navegador abriu sem som: toque na tela para ouvir');
   });
 }
+
+// Phones (and most browsers) start the video muted. Any tap or key on the page counts as the
+// viewer's permission, so the sound comes on with the first one instead of needing the speaker
+// button. Not when the viewer muted on purpose, and not for taps on the volume controls themselves.
+function unmuteOnInteraction(e) {
+  if (e.target?.closest?.('#btn-mute, #volume-slider, #unmute-cta')) return;
+  if (remoteVideo.style.display !== 'block' || !remoteVideo.muted || wantMuted) return;
+  remoteVideo.muted = false;
+  remoteVideo.play().catch(() => {});
+}
+for (const type of ['pointerup', 'click', 'keydown']) document.addEventListener(type, unmuteOnInteraction, true);
 
 volumeSlider.addEventListener('input', () => setVolume(volumeSlider.value / 100));
 btnMute.addEventListener('click', toggleMute);
