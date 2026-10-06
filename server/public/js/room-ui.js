@@ -16,12 +16,25 @@
     waiting: { chip: 'Esperando', cls: '', frog: 'frog-sleep', hint: 'A transmissão aparece aqui sozinha assim que começar.' },
     paused: { chip: 'Pausado', cls: 'chip-warn', frog: 'frog-sleep', hint: 'Fique por aqui: quando o host voltar, o vídeo reaparece sozinho.' },
     reconnecting: { chip: 'Reconectando', cls: 'chip-warn', frog: 'frog-sad', hint: 'A conexão oscilou. Já estamos tentando de novo.', bubbles: true },
-    left: { chip: 'Host saiu', cls: 'chip-danger', frog: 'frog-sad', hint: 'Quando o host abrir a sala de novo, a transmissão volta aqui.' }
+    left: { chip: 'Host saiu', cls: 'chip-danger', frog: 'frog-sad', hint: 'Quando o host abrir a sala de novo, a transmissão volta aqui.' },
+    notfound: { chip: 'Não encontrada', cls: 'chip-danger', frog: 'frog-sad', hint: 'Confira o código com quem te mandou o link, ou digite outro:' }
+  };
+
+  // The tab says what's going on, for a viewer who left it in the background
+  const TITLES = {
+    live: '🔴 Ao vivo · FrogShare',
+    starting: 'Conectando… · FrogShare',
+    waiting: 'Esperando o host · FrogShare',
+    paused: 'Pausado · FrogShare',
+    reconnecting: 'Reconectando… · FrogShare',
+    left: 'Host saiu · FrogShare',
+    notfound: 'Sala não encontrada · FrogShare'
   };
 
   function detect() {
     if (video.style.display === 'block') return 'live';
     const text = statusEl.textContent.toLowerCase();
+    if (text.includes('não existe')) return 'notfound';
     if (text.includes('pausou')) return 'paused';
     if (text.includes('desconectou') || text.includes('saiu')) return 'left';
     if (text.includes('reconect') || text.includes('demorando') || text.includes('perdida')) return 'reconnecting';
@@ -33,6 +46,7 @@
     const state = detect();
     if (body.dataset.state === state) return;
     body.dataset.state = state;
+    document.title = TITLES[state];
     const s = STATES[state];
 
     chip.className = 'chip ' + s.cls;
@@ -76,12 +90,26 @@
   let hideTimer = null;
   let overBar = false;
   let dragging = false;
+
+  // Browsers start the video muted unless the viewer has interacted with the page. Until the sound is
+  // on (and the viewer didn't mute it on purpose), a big button says so and the controls stay up.
+  const unmuteCta = document.getElementById('unmute-cta');
+  const needsUnmute = () => body.dataset.state === 'live' && video.muted && typeof wantMuted !== 'undefined' && !wantMuted;
+  function renderUnmute() {
+    const show = needsUnmute();
+    unmuteCta.hidden = !show;
+    // Through showControls, so the bar still hides on its own once the sound is on
+    if (show) showControls();
+  }
+  unmuteCta.addEventListener('click', () => { if (typeof toggleMute === 'function') toggleMute(); renderUnmute(); });
+  video.addEventListener('volumechange', renderUnmute);
+  video.addEventListener('playing', renderUnmute);
   function showControls() {
     videoArea.classList.add('controls-visible');
     videoArea.classList.remove('player-idle');
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (overBar || dragging || bar.contains(document.activeElement)) return showControls();
+      if (overBar || dragging || bar.contains(document.activeElement) || needsUnmute()) return showControls();
       videoArea.classList.remove('controls-visible');
       if (document.fullscreenElement) videoArea.classList.add('player-idle');
     }, 2500);
@@ -107,6 +135,9 @@
   new MutationObserver(render).observe(video, { attributes: true, attributeFilter: ['style'] });
   document.addEventListener('fullscreenchange', decorateFullscreen);
 
+  new MutationObserver(renderUnmute).observe(body, { attributes: true, attributeFilter: ['data-state'] });
+
   decorateFullscreen();
   render();
+  renderUnmute();
 })();

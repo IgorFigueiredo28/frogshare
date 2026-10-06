@@ -134,7 +134,8 @@
 .page-room[data-state="starting"] .video-area,
 .page-room[data-state="paused"] .video-area,
 .page-room[data-state="reconnecting"] .video-area,
-.page-room[data-state="left"] .video-area {
+.page-room[data-state="left"] .video-area,
+.page-room[data-state="notfound"] .video-area {
   background: var(--surface-2); border: 1px dashed var(--border-strong);
 }
 
@@ -172,6 +173,24 @@
 #btn-info[aria-pressed="true"] { background: var(--accent-soft); color: var(--on-accent-soft); }
 .stats-overlay .bad { color: #FFB3B5; }
 
+/* ---------- Room not found: try another code ---------- */
+.room-retry { display: flex; gap: var(--space-2); margin-top: var(--space-4); width: min(360px, 100%); }
+.room-retry[hidden], .unmute-cta[hidden] { display: none; }
+.room-retry .input { flex: 1; min-width: 0; font-family: var(--font-mono); letter-spacing: 1px; }
+
+/* ---------- Sound blocked by the browser: one obvious way to turn it on ---------- */
+.unmute-cta {
+  position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 7;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5); border: 0; border-radius: var(--radius-pill);
+  background: #F3F8EC; color: #0B1A10; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font: 600 var(--text-md) var(--font-ui); cursor: pointer;
+}
+.unmute-cta .ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.unmute-cta:hover { background: #fff; }
+.unmute-cta:focus-visible { box-shadow: var(--focus-ring); }
+.page-room:not([data-state="live"]) .unmute-cta { display: none; }
+
 /* ---------- Player controls over the video ----------
    Fixed light-on-dark colours: they sit on the picture in both themes */
 .player-bar {
@@ -207,7 +226,6 @@
 @media (max-width: 720px) {
   .room-top { padding: var(--space-2) var(--space-3); }
   .room-top .brand-name { display: none; }
-  .room-controls { width: 100%; margin-left: 0; justify-content: space-between; }
   .volume-control { flex: 1; border-right: 0; padding-right: 0; }
   #volume-slider { flex: 1; width: auto; }
   #btn-fullscreen { width: var(--tap); padding: 0; }
@@ -219,5 +237,8 @@
 @media (max-width: 460px) {
   /* Room code and status matter more than the logo on a phone */
   .room-top .brand { display: none; }
-  .room-meta { width: 100%; }
+  /* Chips take the row and wrap among themselves; the theme button stays on the right of the first line */
+  .room-top { flex-wrap: nowrap; align-items: flex-start; }
+  .room-meta { flex: 1; min-width: 0; }
+  .room-controls { flex-shrink: 0; }
 }

@@ -4,6 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sala · FrogShare</title>
+  <meta name="description" content="Seu amigo está compartilhando a tela. Abra o link e assista ao vivo, com som, direto no navegador.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FrogShare">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:title" content="Assista à transmissão no FrogShare">
+  <meta property="og:description" content="Seu amigo está compartilhando a tela. Abra o link e assista ao vivo, com som, direto no navegador.">
+  <meta property="og:image" content="https://frogshare.onrender.com/brand/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="O sapo do FrogShare e o texto: Assista à tela do seu amigo, ao vivo">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#F3F8EC" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0B1A10" media="(prefers-color-scheme: dark)">
   <link rel="icon" href="/brand/icon.svg" type="image/svg+xml">
@@ -56,9 +67,18 @@
             <p id="status-text" class="empty-title">Esperando o host compartilhar a tela…</p>
             <p id="placeholder-hint" class="empty-text">A transmissão aparece aqui sozinha assim que começar.</p>
             <span class="bubbles" id="placeholder-bubbles" aria-hidden="true"><i></i><i></i><i></i></span>
+            <form class="room-retry" id="room-retry" hidden>
+              <label class="sr-only" for="retry-code">Código da sala</label>
+              <input id="retry-code" class="input" type="text" placeholder="Código da sala" autocomplete="off" spellcheck="false" maxlength="64">
+              <button type="submit" class="btn btn-primary">Entrar</button>
+            </form>
           </div>
         </div>
         <video id="remote-video" autoplay playsinline muted style="display:none"></video>
+        <button id="unmute-cta" type="button" class="unmute-cta" hidden>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/><path d="M16 10l4 4m0 -4l-4 4"/></svg>
+          Ativar som
+        </button>
         <!-- Controls over the video, like a video player: they show while the mouse moves and stay in fullscreen -->
         <div class="player-bar" id="player-bar">
           <div class="volume-control" id="volume-control" style="display:none">

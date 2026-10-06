@@ -119,8 +119,56 @@ function showToast(msg) {
   setTimeout(() => el.remove(), 3000);
 }
 
+// A mistyped or expired code would otherwise wait forever: check the room exists before joining.
+// (Joining also creates it, so the check has to come first.) The server may have just woken up with
+// the host still reconnecting, so a missing room gets a few tries before the page says so, and keeps
+// being checked afterwards in case the host comes back.
+let roomConfirmed = false;
+let roomWatch = null;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function roomExists() {
+  try {
+    const res = await fetch(`/api/room/${encodeURIComponent(roomId)}`, { cache: 'no-store' });
+    if (res.status === 404) return false;
+    return true;
+  } catch {
+    return true; // network trouble is not proof the room is gone
+  }
+}
+
+function showRoomNotFound() {
+  statusText.textContent = 'Essa sala não existe ou já foi fechada';
+  const form = document.getElementById('room-retry');
+  form.hidden = false;
+  clearInterval(roomWatch);
+  roomWatch = setInterval(async () => {
+    if (!(await roomExists())) return;
+    clearInterval(roomWatch);
+    form.hidden = true;
+    roomConfirmed = true;
+    statusText.textContent = 'Esperando o host compartilhar a tela…';
+    socket.emit('join-room', { roomId, asHost: false });
+  }, 5000);
+}
+
+document.getElementById('room-retry').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = document.getElementById('retry-code').value.trim().toLowerCase();
+  if (code) window.location.href = `/room.html?room=${encodeURIComponent(code)}`;
+});
+
 // Join room as viewer (re-joins automatically on reconnection)
-socket.on('connect', () => {
+socket.on('connect', async () => {
+  if (!roomConfirmed) {
+    let found = false;
+    for (let i = 0; i < 4 && !found; i++) {
+      found = await roomExists();
+      if (!found && i < 3) await sleep(2500);
+    }
+    if (!found) { showRoomNotFound(); return; }
+    roomConfirmed = true;
+  }
   socket.emit('join-room', { roomId, asHost: false });
 });
 
@@ -642,10 +690,10 @@ function applyInitialAudio() {
     if (remoteVideo.paused) {
       remoteVideo.muted = true;
       remoteVideo.play().catch(() => {});
-      showToast('Toque no alto-falante para ativar o som');
+      showToast('O navegador abriu sem som: clique em "Ativar som"');
     }
   }).catch(() => {
-    showToast('Toque no alto-falante para ativar o som');
+    showToast('O navegador abriu sem som: clique em "Ativar som"');
   });
 }
 
