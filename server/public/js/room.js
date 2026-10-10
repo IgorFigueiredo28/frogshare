@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.3',
+        app_version: '1.6.4',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -192,7 +192,7 @@ const streamList = document.getElementById('stream-list');
 function channelFor(hostId) {
   let ch = channels.get(hostId);
   if (!ch) {
-    ch = { hostId, pc: null, paused: false, stream: null, audioEl: null, muted: false, offerToken: 0, sfuToken: 0, earlyIce: [], status: 'Abrindo a tela…' };
+    ch = { hostId, pc: null, paused: false, stream: null, audioEl: null, muted: false, offerToken: 0, sfuToken: 0, earlyIce: [], status: 'Abrindo a tela…', waitingSince: Date.now() };
     channels.set(hostId, ch);
   }
   return ch;
@@ -337,10 +337,30 @@ function setChannelStatus(ch, text) {
 function requestNewOffer(ch, message) {
   closeChannelPc(ch);
   if (ch.paused) return;
+  ch.waitingSince = Date.now();
   setChannelStatus(ch, message);
   if (ch.hostId === selectedId) renderStage();
   socket.emit('request-offer', { hostId: ch.hostId });
 }
+
+// Safety net: a streamer that's live but has had no connection to us for a while (an offer lost
+// on the way, a request that never got an answer) gets asked again, instead of the viewer having
+// to reload the page. Connections being set up (an offer or an SFU pull in progress) are left alone.
+const firstSeenLive = new Map();
+setInterval(() => {
+  if (!socket.connected) return;
+  const now = Date.now();
+  for (const info of hostsInfo) {
+    if (info.paused) { firstSeenLive.delete(info.id); continue; }
+    const ch = channels.get(info.id);
+    if (ch && (ch.paused || ch.pc || ch.sfuPulling !== undefined)) continue;
+    if (!ch && !firstSeenLive.has(info.id)) firstSeenLive.set(info.id, now);
+    const since = ch ? ch.waitingSince || 0 : firstSeenLive.get(info.id);
+    if (now - since < 10000) continue;
+    requestNewOffer(ch || channelFor(info.id), 'Reconectando…');
+  }
+  for (const id of [...firstSeenLive.keys()]) if (!hostsInfo.some(h => h.id === id)) firstSeenLive.delete(id);
+}, 3000);
 
 socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated, group, hosts }) => {
   viewerCount.textContent = `${count} assistindo`;
@@ -889,7 +909,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.3', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.4', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

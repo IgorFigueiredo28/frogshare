@@ -277,7 +277,10 @@ async function refreshOfficialUsage() {
 // larger of Cloudflare's figure and our own running estimate is the safe one to act on.
 async function usedBytesThisMonth() {
   await loadRelayUsage();
-  await refreshOfficialUsage();
+  // Cloudflare's analytics query takes seconds. Once there's a figure, refresh it in the background:
+  // viewers joining through the SFU must not wait on billing numbers.
+  if (official.at) refreshOfficialUsage().catch(() => {});
+  else await refreshOfficialUsage();
   const estimate = relayTotal();
   // Hosts report the estimate without any proof, so once Cloudflare's billing figure is available it
   // alone decides: otherwise anyone could post inflated numbers and switch relay off for everyone
@@ -389,16 +392,22 @@ async function sfuProxy(req, res, method, path, body) {
   const roomId = String(req.body?.roomId || req.query.roomId || '');
   if (!rooms.has(roomId)) return res.status(403).json({ errorDescription: 'sala invalida' });
   const { appId, secret } = sfuCredentials();
-  try {
-    const resp = await fetch(`${SFU_BASE}/${appId}${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
-    });
-    const text = await resp.text();
-    res.status(resp.status).type('application/json').send(text || '{}');
-  } catch (err) {
-    res.status(502).json({ errorDescription: 'SFU inacessivel: ' + err.message });
+  // A dropped connection to Cloudflare is retried once; otherwise the viewer gives up on the SFU
+  // and falls back to a direct link, which costs the host another upload.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const resp = await fetch(`${SFU_BASE}/${appId}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(8000)
+      });
+      const text = await resp.text();
+      return res.status(resp.status).type('application/json').send(text || '{}');
+    } catch (err) {
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 400)); continue; }
+      return res.status(502).json({ errorDescription: 'SFU inacessivel: ' + err.message });
+    }
   }
 }
 
@@ -652,7 +661,7 @@ io.on('connection', (socket) => {
   let currentRoom = null;
   let role = null; // 'host' (owner), 'cohost' or 'viewer'
   const isStreamer = () => role === 'host' || role === 'cohost';
-  const offerRequests = new Map(); // hostId -> last request-offer time
+  const offerRequests = new Map(); // hostId -> { at: last request-offer sent, timer: one queued }
   const myRoom = () => (currentRoom && rooms.get(currentRoom)) || null;
 
   // Signaling only flows between members of the same room
@@ -791,18 +800,27 @@ io.on('connection', (socket) => {
   // A viewer lost one streamer's connection: reconnect just that one (the media server if it
   // publishes there, otherwise a fresh direct offer), leaving the other streams alone.
   socket.on('request-offer', ({ hostId } = {}) => {
-    const room = myRoom();
-    if (role !== 'viewer' || !room || typeof hostId !== 'string') return;
-    // A broken connection retries every few seconds at most; anything faster is not a real viewer
-    const now = Date.now();
-    if (now - (offerRequests.get(hostId) || 0) < 1500) return;
-    offerRequests.set(hostId, now);
-    let sfu;
-    if (room.host === hostId) sfu = room.sfu;
-    else if (room.cohosts.has(hostId)) sfu = room.cohosts.get(hostId).sfu;
-    else return;
-    if (sfu) socket.emit('sfu-start', { hostId, ...sfu });
-    else io.to(hostId).emit('viewer-joined', { viewerId: socket.id });
+    if (role !== 'viewer' || typeof hostId !== 'string' || !inMyRoom(hostId)) return;
+    // Requests closer than 1.5 s apart are merged into one, sent when the interval is up. Dropping
+    // the later one instead could leave a viewer whose link just broke waiting for an offer forever.
+    const entry = offerRequests.get(hostId) || { at: 0, timer: null };
+    offerRequests.set(hostId, entry);
+    if (entry.timer) return;
+    const wait = entry.at + 1500 - Date.now();
+    const send = () => {
+      entry.timer = null;
+      entry.at = Date.now();
+      const room = myRoom();
+      if (!room || !socket.connected) return;
+      let sfu;
+      if (room.host === hostId) sfu = room.sfu;
+      else if (room.cohosts.has(hostId)) sfu = room.cohosts.get(hostId).sfu;
+      else return;
+      if (sfu) socket.emit('sfu-start', { hostId, ...sfu });
+      else io.to(hostId).emit('viewer-joined', { viewerId: socket.id });
+    };
+    if (wait > 0) entry.timer = setTimeout(send, wait);
+    else send();
   });
 
   socket.on('offer', ({ to, offer, sid } = {}) => {

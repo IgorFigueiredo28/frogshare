@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.3',
+        app_version: '1.6.4',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1430,6 +1430,10 @@ async function updateSfuMode() {
 // or behind its own slow downlink (sharing would only hurt the others). A 10s trial of an even
 // split tells them apart: if the throttled viewer climbs, keep sharing; if not, exclude it.
 const share = { mode: 'off', budget: Infinity, trialStart: 0, trialIds: [], excluded: new Map() };
+// Sharing never squeezes a viewer below this. The budget is learned from what the encoders send, so
+// a cap below what a stream needs reads as "uplink full" on the next pass and ratchets down: seen
+// live in 1.6.3, 2 Mbps -> 63 kbps in two minutes, 320x180 on the CPU encoder until a reconnect.
+const MIN_SHARE_BPS = 1200000;
 
 function isExcluded(viewerId) {
   const until = share.excluded.get(viewerId);
@@ -1442,7 +1446,7 @@ function viewerBitrateCap(viewerId) {
   const preset = presetBitrate();
   if (share.mode === 'off' || (viewerId && isExcluded(viewerId))) return preset;
   const sharing = [...peerConnections.keys()].filter(id => !isExcluded(id) && viewerWatch.get(id) !== false).length || 1;
-  return Math.round(Math.min(preset, share.budget / sharing));
+  return Math.round(Math.min(preset, Math.max(MIN_SHARE_BPS, share.budget / sharing)));
 }
 
 function applySenderLimits() {
@@ -1468,16 +1472,19 @@ function resetShare() {
   share.trialIds = [];
 }
 
-function updateUploadBudget(samples) {
+function updateUploadBudget(samples, captureSteady) {
   const eligible = samples.filter(s => !isExcluded(s.id));
-  // A fresh connection is still ramping up bandwidth estimation, which looks like throttling
-  if (eligible.length < 2 || samples.some(s => s.ageMs < 10000)) {
+  // A fresh connection is still ramping up bandwidth estimation, which looks like throttling.
+  // So does a capture that stalled (a game hitch, a window switch): fewer frames, lower bitrate,
+  // nothing to do with the uplink. Neither may move the budget.
+  if (eligible.length < 2 || samples.some(s => s.ageMs < 10000) || !captureSteady) {
     if (eligible.length < 2) resetShare();
     applySenderLimits();
     return;
   }
-  const limited = eligible.filter(s => s.targetBitrate < viewerBitrateCap(s.id) * 0.85);
-  const total = eligible.reduce((sum, s) => sum + s.targetBitrate, 0);
+  // Throttled means WebRTC itself says bandwidth is the limit, not just "sending less than the cap"
+  const limited = eligible.filter(s => s.limit === 'bandwidth' && s.targetBitrate < viewerBitrateCap(s.id) * 0.85);
+  const total = Math.max(eligible.reduce((sum, s) => sum + s.targetBitrate, 0), MIN_SHARE_BPS * eligible.length);
 
   if (share.mode === 'off') {
     if (limited.length > 0 && limited.length < eligible.length) {
@@ -1488,7 +1495,7 @@ function updateUploadBudget(samples) {
     }
   } else if (share.mode === 'trial') {
     if (Date.now() - share.trialStart >= 10000) {
-      const stillLow = eligible.filter(s => share.trialIds.includes(s.id) && s.targetBitrate < viewerBitrateCap(s.id) * 0.85);
+      const stillLow = eligible.filter(s => share.trialIds.includes(s.id) && s.limit === 'bandwidth' && s.targetBitrate < viewerBitrateCap(s.id) * 0.85);
       if (stillLow.length === 0) {
         share.mode = 'on';
       } else {
@@ -1505,6 +1512,27 @@ function updateUploadBudget(samples) {
     if (share.budget > presetBitrate() * eligible.length * 1.2) resetShare();
   }
   applySenderLimits();
+}
+
+// ======== Stuck encoder recovery ========
+// When a link's bitrate drops very low, or the hardware encoder hiccups, WebRTC switches that sender to
+// the software encoder (OpenH264) and keeps it there for good, even after things recover: viewers got
+// 320x180 at 7 fps until someone reconnected. While the GPU encoder works here, rebuild just that link
+// (the viewer swaps to the new one on its own). Not during the standby card, which is software on purpose.
+const encoderHeal = { gpuSeen: false, softTicks: new Map(), lastAt: new Map() };
+function healStuckEncoders(samples) {
+  if (samples.some(s => s.gpu)) encoderHeal.gpuSeen = true;
+  for (const s of samples) {
+    const stuck = encoderHeal.gpuSeen && !s.gpu && !s.idle && !standby.active && s.ageMs > 15000 && /openh264/i.test(s.enc || '');
+    const ticks = stuck ? (encoderHeal.softTicks.get(s.id) || 0) + 1 : 0;
+    encoderHeal.softTicks.set(s.id, ticks);
+    if (ticks < 3 || Date.now() - (encoderHeal.lastAt.get(s.id) || 0) < 60000) continue;
+    encoderHeal.lastAt.set(s.id, Date.now());
+    encoderHeal.softTicks.set(s.id, 0);
+    reportError('Encoder stuck on software, rebuilding link', null, { viewer: s.viewer, sfu: s.sfu, res: s.res, kbps: Math.round(s.targetBitrate / 1000) });
+    if (s.sfu) stopSfu(); // the next stats pass publishes again on a fresh connection
+    else createOfferForViewer(s.id).catch(() => {});
+  }
 }
 
 // ======== Stats ========
@@ -1581,9 +1609,17 @@ function pipelineRates() {
   return rates;
 }
 
+let tickPipe = { inFrames: 0, longGaps: 0 };
+function captureSteadySinceLastTick() {
+  const steady = pipe.inFrames > tickPipe.inFrames && pipe.longGaps === tickPipe.longGaps;
+  tickPipe = { inFrames: pipe.inFrames, longGaps: pipe.longGaps };
+  return steady;
+}
+
 function startStatsUpdate() {
   clearInterval(statsInterval);
   lastPipe = { ...pipe, at: performance.now() };
+  tickPipe = { inFrames: pipe.inFrames, longGaps: pipe.longGaps };
   statsInterval = setInterval(async () => {
     statsTicks++;
     const samples = await collectSenderStats();
@@ -1598,7 +1634,8 @@ function startStatsUpdate() {
       streamStatsEl.textContent =
         `${s.res} @ ${s.fps}fps | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${mode} | ${roomViewerCount} viewer(s)`;
     }
-    updateUploadBudget(samples.filter(x => !x.sfu && !x.idle));
+    updateUploadBudget(samples.filter(x => !x.sfu && !x.idle), captureSteadySinceLastTick() && !standby.active);
+    healStuckEncoders(samples);
     updateSfuMode();
     if (statsTicks % 30 === 0) {
       const pipeline = pipelineRates();
@@ -1640,7 +1677,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.3', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.4', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
