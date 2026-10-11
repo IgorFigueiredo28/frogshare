@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.6.4'
+        app_version: '1.6.5'
       })
     }).catch(() => {});
   } catch {}
@@ -453,6 +453,14 @@ ipcMain.handle('get-window-owner', async (event, sourceId) => {
   return owner.pid ? owner : null;
 });
 
+// The top process of a program (Discord runs as several Discord.exe), to leave its sound out of
+// "all of the PC". Windows only; 0 when it isn't running.
+ipcMain.handle('find-app-root', async (event, exeName) => {
+  if (isMac || !/^[\w .-]{1,64}\.exe$/i.test(String(exeName))) return 0;
+  const out = await runHelperJson(['proc-root', exeName]);
+  return Array.isArray(out.roots) && out.roots.length ? out.roots[0] : 0;
+});
+
 ipcMain.handle('get-sources', async () => {
   let sources;
   try {
@@ -558,9 +566,11 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       stopAudioCapture();
     }
 
+    // 'system', 'system-except:<pid>' (all of the PC but that program) or an app's pid
+    const except = /^system-except:(\d+)$/.exec(String(pidOrMode));
     const args = pidOrMode === 'system'
       ? ['capture-system']
-      : ['capture', pidOrMode.toString()];
+      : except ? ['capture-exclude', except[1]] : ['capture', String(parseInt(pidOrMode, 10))];
 
     const proc = spawn(AUDIO_CAPTURE_EXE, args);
     audioCaptureProcess = proc;

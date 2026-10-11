@@ -240,7 +240,9 @@ class AudioCapture
     }
 
     // ======== Process Audio Loopback ========
-    static void CaptureProcessAudio(uint targetPid)
+    // exclude=false: only this process tree's sound. exclude=true: everything the PC plays except this
+    // process tree ("all of the PC but Discord"), which Windows does in the same loopback mode.
+    static void CaptureProcessAudio(uint targetPid, bool exclude)
     {
         CoInitializeEx(IntPtr.Zero, 0);
         try
@@ -250,7 +252,7 @@ class AudioCapture
             IntPtr paramsPtr = Marshal.AllocHGlobal(12);
             Marshal.WriteInt32(paramsPtr, 0, 1);  // AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK
             Marshal.WriteInt32(paramsPtr, 4, (int)targetPid);
-            Marshal.WriteInt32(paramsPtr, 8, 0);  // PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
+            Marshal.WriteInt32(paramsPtr, 8, exclude ? 1 : 0);  // PROCESS_LOOPBACK_MODE_EXCLUDE / INCLUDE_TARGET_PROCESS_TREE
 
             // Build PROPVARIANT VT_BLOB (24 bytes on x64)
             IntPtr propVarPtr = Marshal.AllocHGlobal(24);
@@ -482,12 +484,35 @@ class AudioCapture
         WriteJson("{\"pid\":" + pid + ",\"name\":\"" + Esc(name) + "\",\"descendants\":[" + string.Join(",", descendants) + "]}");
     }
 
+    // The top process of a program that runs as several (Discord: Discord.exe and its helpers, all named
+    // the same): the one whose parent isn't the same program. Excluding its tree takes them all.
+    static void ProcessRoot(string exeName)
+    {
+        var byPid = new Dictionary<uint, PROCESSENTRY32W>();
+        IntPtr snap = CreateToolhelp32Snapshot(0x2 /* TH32CS_SNAPPROCESS */, 0);
+        var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W)) };
+        if (Process32FirstW(snap, ref entry))
+        {
+            do { byPid[entry.th32ProcessID] = entry; } while (Process32NextW(snap, ref entry));
+        }
+        CloseHandle(snap);
+        var roots = new List<uint>();
+        foreach (var p in byPid.Values)
+        {
+            if (!string.Equals(p.szExeFile, exeName, StringComparison.OrdinalIgnoreCase)) continue;
+            PROCESSENTRY32W parent;
+            bool parentSame = byPid.TryGetValue(p.th32ParentProcessID, out parent) && string.Equals(parent.szExeFile, exeName, StringComparison.OrdinalIgnoreCase);
+            if (!parentSame) roots.Add(p.th32ProcessID);
+        }
+        WriteJson("{\"roots\":[" + string.Join(",", roots) + "]}");
+    }
+
     static void WriteJson(string json) { Console.Error.WriteLine(json); Console.Error.Flush(); }
     static string Esc(string s) { return s.Replace("\\", "\\\\").Replace("\"", "\\\""); }
 
     static void Main(string[] args)
     {
-        if (args.Length == 0) { Console.Error.WriteLine("Usage: AudioCapture.exe list | capture <pid> | capture-system"); Environment.Exit(1); }
+        if (args.Length == 0) { Console.Error.WriteLine("Usage: AudioCapture.exe list | capture <pid> | capture-exclude <pid> | capture-system | proc-root <exe>"); Environment.Exit(1); }
 
         try
         {
@@ -495,6 +520,7 @@ class AudioCapture
             if (args[0] == "windows") { ListWindows(); return; }
             if (args[0] == "window-owner" && args.Length > 1) { WindowOwner(args[1]); return; }
             if (args[0] == "gpu-priority" && args.Length > 2) { SetGpuPriority(args); return; }
+            if (args[0] == "proc-root" && args.Length > 1) { ProcessRoot(args[1]); return; }
 
             var stdinThread = new Thread(() => {
                 try { while (true) { string l = Console.In.ReadLine(); if (l == null || l.Trim() == "stop") { capturing = false; break; } } }
@@ -504,7 +530,9 @@ class AudioCapture
             stdinThread.Start();
 
             if (args[0] == "capture" && args.Length > 1)
-                CaptureProcessAudio(uint.Parse(args[1]));
+                CaptureProcessAudio(uint.Parse(args[1]), false);
+            else if (args[0] == "capture-exclude" && args.Length > 1)
+                CaptureProcessAudio(uint.Parse(args[1]), true);
             else if (args[0] == "capture-system")
                 CaptureSystemAudio();
         }

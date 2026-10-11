@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.4',
+        app_version: '1.6.5',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -382,6 +382,7 @@ audioModeRadios.forEach(radio => {
   radio.addEventListener('change', () => {
     const mode = getAudioMode();
     sessionsContainer.style.display = mode === 'process' ? '' : 'none';
+    renderExcludeDiscord();
     selectedPid = null;
     document.querySelectorAll('.session-item.selected').forEach(el => el.classList.remove('selected'));
     updateStartButton();
@@ -894,7 +895,7 @@ btnStart.addEventListener('click', async () => {
         showToast(`Som do app capturado (${result.sampleRate} Hz, ${result.channels} canais)`);
       }
     } else if (mode === 'system') {
-      const result = await window.electronAPI.startAudioCapture('system');
+      const result = await window.electronAPI.startAudioCapture(await systemAudioTarget());
       if (result.error) {
         showToast('Não deu para capturar o som do PC: ' + result.error);
       } else {
@@ -920,6 +921,7 @@ btnStart.addEventListener('click', async () => {
     // 3. Create or reuse room
     await ensureRoom();
     isStreaming = true;
+    renderExcludeDiscord();
     window.electronAPI.setStreamingPriority(true);
 
     // 4. If resuming, notify server — it re-sends viewer-joined for each viewer
@@ -1029,6 +1031,7 @@ function applyWatch(viewerId) {
 btnStop.addEventListener('click', pauseStreaming);
 
 async function pauseStreaming() {
+  queueMicrotask(renderExcludeDiscord);
   isStreaming = false;
   stopStandby();
   window.electronAPI.setStreamingPriority(false);
@@ -1677,7 +1680,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.4', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.5', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1766,7 +1769,7 @@ async function pickSwitchSource(source) {
 }
 
 function switchAudioLabel(value) {
-  if (value === 'system') return 'Todo o PC';
+  if (value === 'system') return systemAudioName();
   if (value === 'none') return 'Sem som';
   const s = switchPick.sessions.find(x => x.pid === value);
   return s ? s.name : 'outro app';
@@ -1823,7 +1826,7 @@ function renderSwitchAudio(audioResult) {
   const nameSpan = (text) => Object.assign(document.createElement('span'), { className: 'session-name', textContent: text });
 
   addOption('keep', [nameSpan('Manter o som atual')]);
-  addOption('system', [nameSpan('Todo o PC')]);
+  addOption('system', [nameSpan(systemAudioName())]);
   addOption('none', [nameSpan('Sem som')]);
   sessions.forEach(s => addOption(s.pid, sessionRow(s)));
   if (sessions.length === 0) {
@@ -1984,7 +1987,7 @@ switchModal.addEventListener('click', (e) => {
   if (e.target === switchModal) switchModal.style.display = 'none';
 });
 
-async function switchAudio(newPid, label = '') {
+async function switchAudio(newPid, label = '', { quiet = false } = {}) {
   // Stop old audio
   await window.electronAPI.stopAudioCapture();
   window.electronAPI.removeAudioListeners();
@@ -1994,7 +1997,7 @@ async function switchAudio(newPid, label = '') {
   // The new sound, or the silent channel for "Sem som" (also the fallback if capture fails)
   let newAudioTrack = silentAudioTrack();
   if (newPid !== 'none') {
-    const result = await window.electronAPI.startAudioCapture(newPid);
+    const result = await window.electronAPI.startAudioCapture(newPid === 'system' ? await systemAudioTarget() : newPid);
     if (result.error) {
       showToast('Não deu para trocar o som: ' + result.error);
       newPid = 'none';
@@ -2019,8 +2022,77 @@ async function switchAudio(newPid, label = '') {
 
   if (typeof newPid === 'number') selectedPid = newPid;
   liveAudio = newPid;
-  showToast(`Som trocado para ${label || 'o app escolhido'}`);
+  if (newPid !== 'system') excludedDiscordPid = 0;
+  renderExcludeDiscord();
+  if (!quiet) showToast(`Som trocado para ${label || 'o app escolhido'}`);
 }
+
+// ======== "Todo o PC" without Discord ========
+// Windows can capture everything the PC plays except one program's process tree. Discord is the one
+// people want out (friends would hear the call). On by default, remembered, and switchable live.
+const EXCLUDE_KEY = 'fs-exclude-discord';
+const excludeDiscord = document.getElementById('exclude-discord');
+const excludeDiscordRow = document.getElementById('exclude-discord-row');
+const excludeDiscordLive = document.getElementById('exclude-discord-live');
+const excludeDiscordLiveRow = document.getElementById('exclude-discord-live-row');
+let excludeSupported = false;
+let excludedDiscordPid = 0; // Discord's top process left out of the live sound, 0 when none
+function excludeWanted() {
+  try { return localStorage.getItem(EXCLUDE_KEY) !== '0'; } catch { return true; }
+}
+
+// What to ask the capture helper for when "Todo o PC" is picked
+async function systemAudioTarget() {
+  excludedDiscordPid = 0;
+  if (!excludeSupported || !excludeWanted()) return 'system';
+  const root = await window.electronAPI.findAppRoot('Discord.exe').catch(() => 0);
+  excludedDiscordPid = root || 0;
+  return root ? `system-except:${root}` : 'system';
+}
+
+const systemAudioName = () => (excludeSupported && excludeWanted() ? 'Todo o PC, menos o Discord' : 'Todo o PC');
+
+function renderExcludeDiscord() {
+  const wanted = excludeWanted();
+  excludeDiscord.checked = wanted;
+  excludeDiscordLive.checked = wanted;
+  excludeDiscordRow.hidden = !excludeSupported || getAudioMode() !== 'system';
+  excludeDiscordLiveRow.hidden = !excludeSupported || !isStreaming || liveAudio !== 'system';
+}
+
+async function setExcludeDiscord(on) {
+  try { localStorage.setItem(EXCLUDE_KEY, on ? '1' : '0'); } catch {}
+  renderExcludeDiscord();
+  // Live with the whole PC's sound: apply right away
+  if (isStreaming && liveAudio === 'system') {
+    await switchAudio('system', '', { quiet: true });
+    showToast(on ? 'O som do Discord saiu da transmissão' : 'O som do Discord voltou para a transmissão');
+  }
+}
+excludeDiscord.addEventListener('change', () => setExcludeDiscord(excludeDiscord.checked));
+excludeDiscordLive.addEventListener('change', () => setExcludeDiscord(excludeDiscordLive.checked));
+
+// Discord opened after the stream started, or restarted (updates do that): its new process isn't
+// excluded yet, so pick it up. A cheap helper call every 8 s, only while live with the whole PC.
+let excludeWatchBusy = false;
+setInterval(async () => {
+  if (!excludeSupported || !isStreaming || liveAudio !== 'system' || !excludeWanted() || excludeWatchBusy) return;
+  excludeWatchBusy = true;
+  try {
+    const root = await window.electronAPI.findAppRoot('Discord.exe').catch(() => 0);
+    if (root && root !== excludedDiscordPid && isStreaming && liveAudio === 'system') {
+      await switchAudio('system', '', { quiet: true });
+    }
+  } finally {
+    excludeWatchBusy = false;
+  }
+}, 8000);
+
+window.electronAPI.getPlatform().then(p => {
+  // Process loopback (and so leaving one program out) exists on Windows only
+  excludeSupported = p === 'win32' && typeof window.electronAPI.findAppRoot === 'function';
+  renderExcludeDiscord();
+});
 
 async function applySwitch() {
   const source = switchPick.sources.find(s => s.id === switchPick.sourceId);

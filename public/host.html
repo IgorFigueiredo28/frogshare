@@ -177,6 +177,11 @@
               <span>Sem som</span>
             </label>
           </div>
+          <!-- "Todo o PC" can leave one program out; Discord, so friends don't hear the call -->
+          <label class="switch-row exclude-row" id="exclude-discord-row" hidden>
+            <input type="checkbox" id="exclude-discord" class="switch">
+            <span>Tirar o som do Discord (quem assiste não ouve a chamada)</span>
+          </label>
           <div id="audio-sessions-container">
             <div class="session-list" id="session-list">
               <div class="loading">Procurando apps com som…</div>
@@ -268,6 +273,10 @@
           <label class="switch-row">
             <input type="checkbox" id="overlay-toggle" class="switch" checked>
             <span>Mostrar o aviso "ao vivo" quando eu minimizar o app</span>
+          </label>
+          <label class="switch-row" id="exclude-discord-live-row" hidden>
+            <input type="checkbox" id="exclude-discord-live" class="switch">
+            <span>Tirar o som do Discord da transmissão</span>
           </label>
           <div class="group-section" id="group-section">
             <label class="switch-row" id="group-toggle-row">

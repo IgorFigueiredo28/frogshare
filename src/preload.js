@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   takeGroupInvite: () => ipcRenderer.invoke('take-group-invite'),
+  findAppRoot: (exeName) => ipcRenderer.invoke('find-app-root', exeName),
   onGroupInvite: (callback) => {
     ipcRenderer.on('group-invite', (_, invite) => callback(invite));
   },
