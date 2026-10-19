@@ -120,17 +120,17 @@ app.get('/health', (req, res) => res.send('ok'));
 // Hosts on old builds encode on the CPU once per viewer and stutter badly, and nothing told
 // anyone. The app checks this on start; viewers are told when the room's host is behind.
 const LATEST_APP = {
-  version: '1.7.0',
+  version: '1.7.1',
   // Below this, viewers are asked to have the host update. Before 1.6.6 the screen was captured the old
   // way (DXGI): ~32 fps at most, ~12% of a heavy game's FPS, and the mouse cursor drawn into the stream
   // (Chromium composites it whatever getDisplayMedia asks; measured 2026-10-19). 1.6.6+ uses Windows
   // Graphics Capture, which never draws it.
   minimum: '1.6.6',
   // The Windows installer attached to this version's GitHub release (the repo is public)
-  url: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.7.0/FrogShare.Setup.1.7.0.exe',
+  url: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.7.1/FrogShare.Setup.1.7.1.exe',
   // Exactly that file: the in-app updater refuses anything that doesn't match
-  size: 112041127,
-  sha512: 'ivKTemqiPn8ulJV/gyk0ZTVPi+lO2xdHujkolqqVRZrhWOcaJplSutBgGp6N1SeTS8qkKe0Cbx7E00GK8wF75g==',
+  size: 112043632,
+  sha512: 'Z9lwY05fDzocp6Tb0GzyYrvOyzW5+tvNee2S9O9x20/N8oi18tNx2lAeaEkOl13+ejDfkKOlzAczEQdxwmLt+Q==',
   // Apple Silicon .dmg; the site hides its download button while this is null
   macUrl: 'https://drive.usercontent.google.com/download?id=17eAsGhGXXWTauVKpL8l7T2Xkyvn_wr-E&export=download'
 };
@@ -575,7 +575,7 @@ app.get('/api/admin/telemetry', rateLimit(20, 60000), async (req, res) => {
 });
 
 // Rows the server itself writes and later trusts (usage totals, room blocks) must not be forgeable here
-const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room', 'room-name']);
+const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room', 'room-name', 'room-ban', 'room-unban']);
 
 // Error logging proxy — clients POST here, server forwards to Supabase
 app.post('/api/errors', rateLimit(60, 60000), async (req, res) => {
@@ -755,7 +755,7 @@ const newRoom = (extra) => ({
   host: null, hostKey: null, strict: false, viewers: new Set(), cohosts: new Map(), group: false, createdAt: Date.now(),
   // Viewers: the name each one picked, and the key their page keeps (it survives reconnects, so a locked
   // room still lets its own viewers back in and a removed viewer can't simply reload)
-  viewerNames: new Map(), viewerKeys: new Map(), knownKeys: new Set(), banned: new Map(), locked: false,
+  viewerNames: new Map(), viewerKeys: new Map(), knownKeys: new Set(), locked: false,
   ...extra
 });
 
@@ -770,13 +770,64 @@ function hostsList(room) {
   return list;
 }
 
-// Removed by the room's owner: out for a couple of hours, by the key their page keeps
-const KICK_BAN_MS = 2 * 3600 * 1000;
-function isBanned(room, key) {
-  const until = key && room.banned.get(key);
-  if (!until) return false;
-  if (until < Date.now()) { room.banned.delete(key); return false; }
-  return true;
+// Removed by the room's owner: out for the time the owner picked, by a hash of the key their page keeps.
+// Kept apart from the room (which goes away when everyone leaves) and stored, so a day really is a day
+// even if the server restarts in between.
+const KICK_BAN_MS = 2 * 3600 * 1000; // apps before 1.7.1 don't pick a time
+const KICK_MINUTES = new Set([10, 60, 1440, 10080]);
+const MAX_BAN_MS = 10080 * 60000;
+const roomBans = new Map(); // roomId -> Map(hash of a viewer's key -> until)
+
+function banUntil(roomId, key) {
+  const bans = key && roomBans.get(roomId);
+  const h = bans && keyHash(key);
+  const until = h && bans.get(h);
+  if (!until) return 0;
+  if (until < Date.now()) {
+    bans.delete(h);
+    if (!bans.size) roomBans.delete(roomId);
+    return 0;
+  }
+  return until;
+}
+
+function banCount(roomId) {
+  const bans = roomBans.get(roomId);
+  if (!bans) return 0;
+  const now = Date.now();
+  for (const [h, until] of bans) if (until < now) bans.delete(h);
+  return bans.size;
+}
+
+function storeBanRow(source, roomId, context) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+    method: 'POST',
+    headers: { ...supabaseHeaders(), Prefer: 'return=minimal' },
+    body: JSON.stringify({ source, level: 'info', message: source === 'room-ban' ? 'viewer removed' : 'removed viewers let back', room_id: roomId, context })
+  }).catch(() => {});
+}
+
+// Bans still running, and "let everyone back" from the owner, in the order they happened
+async function loadBans() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  try {
+    const since = new Date(Date.now() - MAX_BAN_MS).toISOString();
+    const resp = await fetch(
+      `${SUPABASE_URL}/rest/v1/error_logs?source=in.(room-ban,room-unban)&created_at=gte.${since}&select=source,room_id,context&order=created_at.asc&limit=10000`,
+      { headers: supabaseHeaders() }
+    );
+    if (!resp.ok) return;
+    const now = Date.now();
+    for (const row of await resp.json()) {
+      if (!row.room_id) continue;
+      if (row.source === 'room-unban') { roomBans.delete(row.room_id); continue; }
+      const { keyHash: h, until } = row.context || {};
+      if (typeof h !== 'string' || !(until > now)) continue;
+      if (!roomBans.has(row.room_id)) roomBans.set(row.room_id, new Map());
+      roomBans.get(row.room_id).set(h, until);
+    }
+  } catch {}
 }
 
 function forgetViewer(room, viewerId) {
@@ -824,9 +875,10 @@ function emitRoomUpdate(roomId, room) {
     viewerNames: [...room.viewerNames.values()].slice(0, 50),
     locked: !!room.locked
   });
-  // Streamers also get each viewer's id, which the owner needs to remove someone
+  // Streamers also get each viewer's id, which the owner needs to remove someone, and how many are out
   const list = [...room.viewers].slice(0, 200).map(id => ({ id, name: room.viewerNames.get(id) || 'Sapo' }));
-  for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-list', { viewers: list });
+  const banned = banCount(roomId);
+  for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-list', { viewers: list, banned });
 }
 
 io.on('connection', (socket) => {
@@ -927,7 +979,8 @@ io.on('connection', (socket) => {
     // Viewers the owner removed stay out; a locked room only lets back in those who were already there
     const vKey = !asHost && typeof viewerKey === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(viewerKey) ? viewerKey : '';
     if (!asHost) {
-      if (isBanned(room, vKey)) { socket.emit('kicked', {}); return; }
+      const until = banUntil(roomId, vKey);
+      if (until) { socket.emit('kicked', { until }); return; }
       if (room.locked && !room.viewers.has(socket.id) && !(vKey && room.knownKeys.has(vKey))) { socket.emit('room-locked', {}); return; }
       if (room.viewers.size >= 200 && !room.viewers.has(socket.id)) return;
     }
@@ -1018,18 +1071,32 @@ io.on('connection', (socket) => {
   });
 
   // ---- Owner controls for viewers ----
-  socket.on('kick-viewer', ({ viewerId } = {}) => {
+  socket.on('kick-viewer', ({ viewerId, minutes } = {}) => {
     const room = myRoom();
     if (!room || role !== 'host' || room.host !== socket.id || typeof viewerId !== 'string' || !room.viewers.has(viewerId)) return;
+    const until = Date.now() + (KICK_MINUTES.has(minutes) ? minutes * 60000 : KICK_BAN_MS);
     const key = room.viewerKeys.get(viewerId);
-    if (key) room.banned.set(key, Date.now() + KICK_BAN_MS);
+    if (key) {
+      if (!roomBans.has(currentRoom)) roomBans.set(currentRoom, new Map());
+      roomBans.get(currentRoom).set(keyHash(key), until);
+      storeBanRow('room-ban', currentRoom, { keyHash: keyHash(key), until });
+    }
     forgetViewer(room, viewerId);
     for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-left', { viewerId });
     const target = io.sockets.sockets.get(viewerId);
     if (target) {
-      target.emit('kicked', {});
+      target.emit('kicked', { until });
       target.leave(currentRoom);
     }
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  // The owner lets back everyone removed before (a slip of the mouse, or the punishment is over)
+  socket.on('clear-bans', () => {
+    const room = myRoom();
+    if (!room || role !== 'host' || room.host !== socket.id || !allowName() || !roomBans.has(currentRoom)) return;
+    roomBans.delete(currentRoom);
+    storeBanRow('room-unban', currentRoom, {});
     emitRoomUpdate(currentRoom, room);
   });
 
@@ -1187,8 +1254,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// Named rooms load before the first connection, or a fresh process would hand a name to whoever asked first
-Promise.race([loadNamedRooms(), new Promise(r => setTimeout(r, 8000))]).finally(() => {
+// Named rooms load before the first connection, or a fresh process would hand a name to whoever asked
+// first; bans too, or a removed viewer would walk back in right after a restart
+Promise.race([Promise.all([loadNamedRooms(), loadBans()]), new Promise(r => setTimeout(r, 8000))]).finally(() => {
   server.listen(PORT, () => {
     console.log(`Signaling server running on port ${PORT}`);
     loadBlockedRooms();

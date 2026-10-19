@@ -52,7 +52,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.7.0',
+        app_version: '1.7.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -213,12 +213,25 @@ socket.on('connect', async () => {
 // Removed by the streamer, or the room was locked before we came in. The status text says so, and
 // room-ui.js turns it into the sad frog.
 let blockedState = null; // 'kicked' | 'locked' | null
+let kickedUntil = 0;
 const BLOCKED_TEXT = {
   kicked: 'Você foi removido da sala por quem está transmitindo',
   locked: 'A sala está trancada'
 };
-socket.on('kicked', () => {
+// Removed for the time the streamer picked: when it's possible to come back
+function blockedText() {
+  const base = BLOCKED_TEXT[blockedState];
+  if (blockedState !== 'kicked' || !kickedUntil) return base;
+  const back = new Date(kickedUntil);
+  const at = back.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const days = Math.floor((kickedUntil - Date.now()) / 86400000);
+  const tomorrow = new Date(Date.now() + 86400000).toDateString() === back.toDateString();
+  const when = days >= 2 ? `daqui a ${days} dias` : back.toDateString() === new Date().toDateString() ? `às ${at}` : tomorrow ? `amanhã às ${at}` : `em ${back.toLocaleDateString('pt-BR')}`;
+  return `${base}. Dá para voltar ${when}.`;
+}
+socket.on('kicked', ({ until } = {}) => {
   blockedState = 'kicked';
+  kickedUntil = Number(until) || 0;
   for (const id of [...channels.keys()]) dropChannel(id);
   selectedId = null;
   hostsInfo = [];
@@ -335,7 +348,7 @@ function renderStage() {
     btnInfo.style.display = 'none';
     setInfoOpen(false);
     volumeControl.style.display = 'none';
-    statusText.textContent = blockedState ? BLOCKED_TEXT[blockedState]
+    statusText.textContent = blockedState ? blockedText()
       : ch ? ch.status : (hostsInfo.length ? 'Host conectado, abrindo a tela…' : 'Esperando o host entrar…');
   }
   routeAudio();
@@ -876,8 +889,11 @@ socket.on('ice-candidate', ({ from, candidate, sid }) => {
 // One row per streamer with its frog colour; picking one puts it on stage. The speaker button
 // mutes just that streamer. With the group open and a free slot, viewers can join in from here.
 const SHARE_URL = () => `frogshare://share?room=${encodeURIComponent(roomId)}`;
+// The same group from this browser, in a tab of its own (transmitir.html), with nothing to install
+const SHARE_WEB_URL = () => `/transmitir.html?grupo=${encodeURIComponent(roomId)}`;
 // The app runs on Windows and Mac only; on a phone the button would lead nowhere
 const canRunApp = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const canShareHere = canRunApp && !!navigator.mediaDevices?.getDisplayMedia;
 
 // Whoever calls themselves "bigfrog" gets the chubby frog
 const frogIcon = (name) => /^big\s*frog$/i.test(String(name || '').trim()) ? '/brand/frog-head-big.svg' : '/brand/frog-head.svg';
@@ -1009,6 +1025,12 @@ function renderStreamList() {
     share.textContent = 'Compartilhar minha tela aqui';
     share.addEventListener('click', openShareInApp);
     children.push(share);
+    if (canShareHere) {
+      children.push(Object.assign(document.createElement('a'), {
+        className: 'stream-share-web', href: SHARE_WEB_URL(), target: '_blank', rel: 'noopener',
+        textContent: 'ou pelo navegador, sem instalar'
+      }));
+    }
   }
   streamList.replaceChildren(...children);
 }
@@ -1030,7 +1052,10 @@ function openShareInApp() {
   window.location.href = SHARE_URL();
   setTimeout(() => {
     window.removeEventListener('blur', onBlur);
-    if (!left && !document.hidden) document.getElementById('share-help').hidden = false;
+    if (left || document.hidden) return;
+    const web = document.getElementById('share-help-web');
+    if (web) { web.href = SHARE_WEB_URL(); web.parentElement.hidden = !canShareHere; }
+    document.getElementById('share-help').hidden = false;
   }, 2500);
 }
 document.getElementById('share-help-close')?.addEventListener('click', () => { document.getElementById('share-help').hidden = true; });
@@ -1136,8 +1161,9 @@ function renderOverlay(s) {
     if (cls) el.className = cls;
     statsLines.appendChild(el);
   };
-  if (!s) { line('Coletando dados...'); return; }
+  // The explanation first, also before the numbers are in
   if (diag.text) line(diag.text, 'diag-line');
+  if (!s) { line('Coletando dados...'); return; }
   const lossPct = s.packets ? (100 * s.lost / s.packets) : 0;
   const delay = s.rttMs != null && s.jbMs != null ? Math.round(s.rttMs / 2 + s.jbMs) : null;
   line(`Resolução   ${s.res} @ ${s.fps} fps`, s.fps && s.fps < 24 ? 'bad' : null);
@@ -1203,6 +1229,16 @@ const DIAG_TEXT = {
   'host-cpu': () => 'O computador de quem transmite está sobrecarregado. Sua internet está boa.',
   'host-slow': () => 'A imagem está chegando com atraso do PC de quem transmite. Sua internet está boa.'
 };
+// The same, in a few words, for the small note over the picture (the info panel has the whole thing)
+const DIAG_SHORT = {
+  'network-loss': 'Sua internet está perdendo dados',
+  'network-delay': 'Sua conexão está lenta',
+  device: 'Seu aparelho está com dificuldade',
+  'host-capture': 'Travando no PC de quem transmite',
+  'host-upload': 'A internet de quem transmite está no limite',
+  'host-cpu': 'O PC de quem transmite está sobrecarregado',
+  'host-slow': 'Atraso no PC de quem transmite'
+};
 
 function diagnose(s) {
   if (!s) { diag.samples = []; return setDiag('ok', null, ''); }
@@ -1245,7 +1281,7 @@ function setDiag(level, reason, text) {
   const newReason = reason && reason !== diag.reason;
   Object.assign(diag, { level, reason, text });
   btnInfo.dataset.diag = level;
-  document.dispatchEvent(new CustomEvent('fs-diag', { detail: { level, reason, text, newReason } }));
+  document.dispatchEvent(new CustomEvent('fs-diag', { detail: { level, reason, text, short: DIAG_SHORT[reason] || text, newReason } }));
 }
 
 setInterval(async () => {
@@ -1274,7 +1310,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.0', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.1', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

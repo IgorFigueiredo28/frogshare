@@ -112,6 +112,9 @@ inputRoom.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') btnJoin.click();
 });
 
+// Streaming from the site needs screen sharing, which phones' browsers don't have
+if (!navigator.mediaDevices?.getDisplayMedia) document.getElementById('host-way-web').hidden = true;
+
 // Download links live in one place (/api/app-version); the Mac button stays hidden until a build is published
 fetch('/api/app-version').then(r => r.json()).then(({ url, macUrl }) => {
   if (url) document.getElementById('btn-download-win').href = url;

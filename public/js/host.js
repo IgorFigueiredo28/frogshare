@@ -19,7 +19,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.7.0',
+        app_version: '1.7.1',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -218,9 +218,9 @@ function sourceSectionLabel(text, hint) {
 }
 
 // Programs show up by their process name, which for games often isn't the name people know
-// (Deadlock runs as "project8"). Known ones get their real name; the rest keep the process name.
+// (Deadlock ran as "project8"). Known ones get their real name; the rest keep the process name.
 const APP_NAMES = {
-  project8: 'Deadlock', 'league of legends': 'League of Legends', leagueclientuxrender: 'Cliente do LoL',
+  deadlock: 'Deadlock', project8: 'Deadlock', 'league of legends': 'League of Legends', leagueclientuxrender: 'Cliente do LoL',
   leagueclientux: 'Cliente do LoL', cs2: 'Counter-Strike 2', 'valorant-win64-shipping': 'Valorant',
   r5apex: 'Apex Legends', 'r5apex_dx12': 'Apex Legends', 'fortniteclient-win64-shipping': 'Fortnite',
   rocketleague: 'Rocket League', overwatch: 'Overwatch 2', dota2: 'Dota 2', gta5: 'GTA V',
@@ -236,7 +236,7 @@ function appName(processName) {
 // Games whose name viewers may see next to the stream ("Igor · Deadlock"). Only these, by process
 // name: a window title can carry anything (a chat, a document's name), so it never leaves the PC.
 const GAME_NAMES = {
-  project8: 'Deadlock', 'league of legends': 'League of Legends', cs2: 'Counter-Strike 2',
+  deadlock: 'Deadlock', project8: 'Deadlock', 'league of legends': 'League of Legends', cs2: 'Counter-Strike 2',
   'valorant-win64-shipping': 'Valorant', r5apex: 'Apex Legends', r5apex_dx12: 'Apex Legends',
   'fortniteclient-win64-shipping': 'Fortnite', rocketleague: 'Rocket League', overwatch: 'Overwatch 2',
   dota2: 'Dota 2', gta5: 'GTA V', gta5_enhanced: 'GTA V', eldenring: 'Elden Ring', nightreign: 'Elden Ring Nightreign',
@@ -304,10 +304,19 @@ function createSourceItem(source, onClick) {
   const item = document.createElement('div');
   item.className = 'source-item' + (source.id === selectedSourceId ? ' selected' : '');
 
-  const thumb = document.createElement('img');
-  thumb.className = 'source-thumb';
-  thumb.src = source.thumbnail;
-  thumb.alt = source.name;
+  let thumb;
+  if (source.minimized) {
+    // No picture of a minimized window: it comes on once it's back on screen
+    thumb = document.createElement('div');
+    thumb.className = 'source-thumb is-minimized';
+    thumb.append(Object.assign(document.createElement('b'), { textContent: 'Minimizada' }),
+      Object.assign(document.createElement('span'), { textContent: 'aparece quando você voltar para ela' }));
+  } else {
+    thumb = document.createElement('img');
+    thumb.className = 'source-thumb';
+    thumb.src = source.thumbnail;
+    thumb.alt = source.name;
+  }
 
   const label = document.createElement('div');
   label.className = 'source-label';
@@ -620,9 +629,10 @@ async function ensureRoom() {
   });
 
   // Who's watching (with ids, for removing someone), their reactions and "Economizar dados"
-  socket.on('viewer-list', ({ viewers } = {}) => {
+  socket.on('viewer-list', ({ viewers, banned } = {}) => {
     const previous = viewerList;
     viewerList = Array.isArray(viewers) ? viewers : [];
+    bannedCount = Number(banned) || 0;
     renderViewerList();
     // The first list after joining is everyone already there, not people arriving
     if (viewerListPrimed) announceViewers(previous, viewerList);
@@ -779,9 +789,21 @@ async function captureVideo(sourceId) {
     audio: false
   });
   const source = stream.getVideoTracks()[0];
+  // Never more than what was picked: a window asked for and a whole screen handed back goes nowhere
+  if (String(sourceId).startsWith('window:') && source.getSettings().displaySurface === 'monitor') {
+    stream.getTracks().forEach(t => t.stop());
+    throw new Error('veio a tela inteira em vez da janela escolhida, então nada foi transmitido');
+  }
   // 'detail' puts the encoder in screencast mode, which drops frames to keep text sharp
   source.contentHint = 'motion';
   return gpuBackedTrack(source);
+}
+
+// A window that exists but is minimized can't be captured until it's back on screen
+async function isMinimizedWindow(sourceId) {
+  if (!String(sourceId || '').startsWith('window:') || !window.electronAPI.getWindowState) return false;
+  const state = await window.electronAPI.getWindowState(sourceId).catch(() => null);
+  return !!state?.minimized;
 }
 
 // Desktop capture yields CPU-side ARGB frames, which Chromium's hardware encoder rejects,
@@ -855,10 +877,14 @@ function createPacer(writer) {
 // lives here and can keep releasing frames on time. (A pacer on the stalled thread gained nothing.)
 const PIPELINE_WORKER = `
 let quality = { res: '1080', fps: 60 };
-// "Já volto": drawn instead of the screen while the streamer is away from the game (or paused it)
+// "Já volto": drawn instead of the screen while the streamer took a quick pause
 let away = false, card = null;
-// The streamer's camera in a corner: the newest frame, replaced as the next one arrives
-let camFrame = null, camLayout = null, camReader = null;
+// The streamer's camera over the picture: the newest frame, replaced as the next one arrives.
+// Layout: w is its width as a share of the picture's; x and y place it between the edges (0 = left or
+// top, 1 = right or bottom), so it always stays inside whatever the picture's shape
+let camFrame = null, camLayout = null, camReader = null, camRect = null;
+// Output: the screen frame last drawn (kept while the camera is on, to redraw it under a new camera frame)
+let canvas = null, ctx = null, lastScreen = null, lastScreenAt = 0, lastOutAt = 0, lastOutTs = -Infinity;
 function targetSize(w, h) {
   const maxH = quality.res === 'native' ? h : Math.min(h, parseInt(quality.res, 10));
   if (maxH >= h) return { w, h };
@@ -879,16 +905,31 @@ async function readCam(readable) {
       if (camReader !== reader) { value.close(); break; }
       if (camFrame) camFrame.close();
       camFrame = value;
+      camTick();
     }
   } catch {}
 }
+// A still screen sends no frames (Windows Graphics Capture only sends changes) and a game's window
+// capture can stall for a second: the camera would freeze with it. So a new camera frame redraws the
+// last screen frame when nothing else has been drawn for a while.
+function camTick() {
+  if (!lastScreen || !ctx || !camLayout || (away && card)) return;
+  const now = performance.now();
+  if (now - lastOutAt < 20 || now - lastScreenAt < 50) return;
+  render(lastScreen, lastOutTs + Math.round((now - lastOutAt) * 1000), { read: 0, bursts: 0, longGaps: 0, maxGap: 0 });
+}
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo));
 function drawCam(ctx, w, h) {
+  camRect = null;
   if (!camFrame || !camLayout) return;
-  const ch = Math.round(h * ({ s: 0.2, m: 0.28, l: 0.38 }[camLayout.size] || 0.28));
-  const cw = Math.round(ch * camFrame.displayWidth / camFrame.displayHeight);
   const m = Math.round(h * 0.025);
-  const x = camLayout.pos[1] === 'l' ? m : w - cw - m;
-  const y = camLayout.pos[0] === 't' ? m : h - ch - m;
+  const aspect = camFrame.displayHeight / camFrame.displayWidth;
+  let cw = Math.round(w * clamp(camLayout.w, 0.08, 0.9));
+  if (cw * aspect > h - 2 * m) cw = Math.round((h - 2 * m) / aspect);
+  const ch = Math.round(cw * aspect);
+  const x = Math.round(m + clamp(camLayout.x, 0, 1) * Math.max(0, w - 2 * m - cw));
+  const y = Math.round(m + clamp(camLayout.y, 0, 1) * Math.max(0, h - 2 * m - ch));
+  camRect = [x / w, y / h, cw / w, ch / h];
   const r = Math.round(ch * 0.08);
   ctx.save();
   ctx.beginPath();
@@ -908,6 +949,29 @@ function drawCard(ctx, w, h) {
   const s = Math.min(w / card.width, h / card.height);
   ctx.drawImage(card, (w - card.width * s) / 2, (h - card.height * s) / 2, card.width * s, card.height * s);
 }
+// Draws one output frame from a screen frame (new, or the last one again under a new camera frame)
+function render(src, ts, stats) {
+  const t0 = performance.now();
+  const { w, h } = targetSize(src.displayWidth, src.displayHeight);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+    ctx.imageSmoothingQuality = 'high';
+  }
+  if (away && card) {
+    drawCard(ctx, w, h);
+    camRect = null;
+  } else {
+    ctx.drawImage(src, 0, 0, w, h);
+    drawCam(ctx, w, h);
+  }
+  // Always later than the previous frame, whichever of the two drew it
+  const outTs = Math.max(ts, lastOutTs + 1000);
+  const out = new VideoFrame(canvas, { timestamp: outTs });
+  lastOutTs = outTs;
+  lastOutAt = performance.now();
+  self.postMessage({ frame: out, ...stats, drawMs: lastOutAt - t0, srcW: src.displayWidth, srcH: src.displayHeight, outW: w, outH: h, camRect }, [out]);
+}
 self.onmessage = async (e) => {
   const d = e.data;
   if (d.quality) quality = d.quality;
@@ -917,8 +981,8 @@ self.onmessage = async (e) => {
   if ('cam' in d) { if (d.cam) readCam(d.cam); else stopCam(); }
   if (!e.data.readable) return;
   const reader = e.data.readable.getReader();
-  const canvas = new OffscreenCanvas(e.data.width || 1920, e.data.height || 1080);
-  const ctx = canvas.getContext('2d', { alpha: false });
+  canvas = new OffscreenCanvas(e.data.width || 1920, e.data.height || 1080);
+  ctx = canvas.getContext('2d', { alpha: false });
   ctx.imageSmoothingQuality = 'high';
   let lastTs = -Infinity, lastArrival = 0;
   let read = 0, bursts = 0, longGaps = 0, maxGap = 0;
@@ -938,28 +1002,19 @@ self.onmessage = async (e) => {
       // 15% slack so a 60fps source isn't halved by capture jitter
       if (frame.timestamp - lastTs < (1e6 / quality.fps) * 0.85) { frame.close(); continue; }
       lastTs = frame.timestamp;
-      const { w, h } = targetSize(frame.displayWidth, frame.displayHeight);
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        ctx.imageSmoothingQuality = 'high';
-      }
-      if (away && card) {
-        drawCard(ctx, w, h);
-      } else {
-        ctx.drawImage(frame, 0, 0, w, h);
-        drawCam(ctx, w, h);
-      }
-      const srcW = frame.displayWidth, srcH = frame.displayHeight;
-      const out = new VideoFrame(canvas, { timestamp: frame.timestamp });
-      frame.close();
-      self.postMessage({ frame: out, read, bursts, longGaps, maxGap, drawMs: performance.now() - t0, srcW, srcH, outW: w, outH: h }, [out]);
+      render(frame, frame.timestamp, { read, bursts, longGaps, maxGap });
       read = 0; bursts = 0; longGaps = 0; maxGap = 0;
+      // Kept only while the camera is on, the one frame it may need to be redrawn under (see camTick)
+      if (lastScreen) lastScreen.close();
+      lastScreen = camFrame ? frame : null;
+      lastScreenAt = t0;
+      if (!lastScreen) frame.close();
     }
     self.postMessage({ done: true });
   } catch (err) {
     self.postMessage({ done: true, error: err.message });
   }
+  if (lastScreen) { lastScreen.close(); lastScreen = null; }
   stopCam();
 };
 `;
@@ -990,6 +1045,8 @@ function gpuBackedTrack(source) {
       pipe.busyMs += m.drawMs;
       pipe.srcW = m.srcW; pipe.srcH = m.srcH;
       pipe.outW = m.outW; pipe.outH = m.outH;
+      // Where the camera landed in the picture, for the handle over the preview
+      if (generator === localStream?.getVideoTracks()[0]) placeCamHandle(m.camRect);
       pacer.push(m.frame);
       return;
     }
@@ -1037,12 +1094,19 @@ btnStart.addEventListener('click', async () => {
 
     // 1. Capture video with cursor hidden
     let videoTrack;
+    let waiting = false;
     try {
       videoTrack = await captureVideo(selectedSourceId);
       captureStartedAt = Date.now();
     } catch (err) {
-      offerOldCapture('start', err);
-      throw err;
+      // Minimized (a game in exclusive fullscreen minimizes itself when FrogShare is clicked): live with
+      // the "já volta" card, and the window comes on by itself once it's back on screen
+      if (!await isMinimizedWindow(selectedSourceId)) {
+        offerOldCapture('start', err);
+        throw err;
+      }
+      waiting = true;
+      videoTrack = standbyCardTrack();
     }
     const tracks = [videoTrack];
 
@@ -1080,7 +1144,9 @@ btnStart.addEventListener('click', async () => {
     localStream = new MediaStream(tracks);
     // What viewers hear right now: an app's pid, 'system', or 'none' for the silent channel
     liveAudio = hasSound ? (mode === 'system' ? 'system' : selectedPid) : 'none';
-    rememberSource(sourceById(selectedSourceId));
+    // Waiting for a window: its program is one of the ways to find it again
+    const remembering = rememberSource(sourceById(selectedSourceId));
+    if (waiting) await remembering;
     syncPreview();
 
     // 3. Create or reuse room
@@ -1104,6 +1170,7 @@ btnStart.addEventListener('click', async () => {
 
     startStatsUpdate();
     startLiveExtras();
+    if (waiting) await waitForWindow(true);
 
   } catch (err) {
     showToast('Erro: ' + err.message);
@@ -1883,7 +1950,7 @@ async function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.0', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.1', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -2091,14 +2158,7 @@ async function replaceVideoTrack(newVideoTrack) {
 }
 
 async function switchVideo(source) {
-  let newVideoTrack;
-  try {
-    newVideoTrack = await captureVideo(source.id);
-  } catch (err) {
-    // While waiting for a window to come back, a brief refusal is normal and retried (see checkStandby)
-    if (!standby.active) offerOldCapture('switch', err);
-    throw err;
-  }
+  const newVideoTrack = await captureVideo(source.id);
   captureStartedAt = Date.now();
   stopStandby();
   await replaceVideoTrack(newVideoTrack);
@@ -2109,12 +2169,32 @@ async function switchVideo(source) {
   sourceChanged();
 }
 
-// ======== Captured window closed ========
+// What was picked in "Trocar janela ou som". A minimized window gets the card until it's back on screen.
+// Returns whether the picture changed now.
+async function switchOrWait(source) {
+  try {
+    await switchVideo(source);
+    return true;
+  } catch (err) {
+    // While waiting for a window to come back, a brief refusal is normal and retried (see checkStandby)
+    if (await isMinimizedWindow(source.id)) {
+      await rememberSource(source);
+      await waitForWindow(false);
+      sourceChanged();
+      return false;
+    }
+    if (!standby.active) offerOldCapture('switch', err);
+    throw err;
+  }
+}
+
+// ======== Captured window closed or minimized ========
 // A game's window closes at the end of every match. Pausing there (as before) dropped every viewer,
 // unnoticed with the app minimized. Now the stream stays up with a "be right back" card, the host
 // gets a notification, and the program's window is picked up again by itself when it reappears
-// (same title, or another window of the same program). A screen that goes away still pauses.
-const standby = { active: false, timer: null, name: '', owner: '', lastIds: '', busy: false };
+// (the same window, the same title, or another window of the same program). A screen that goes away
+// still pauses. A window picked while minimized waits the same way, until it's back on screen.
+const standby = { active: false, timer: null, id: null, name: '', owner: '', lastIds: '', busy: false, failures: 0, retryAt: 0 };
 
 function standbyCardTrack() {
   const canvas = document.createElement('canvas');
@@ -2149,20 +2229,33 @@ function onCaptureEnded(endedTrack) {
   enterStandby();
 }
 
-async function enterStandby() {
+// The card goes on air (unless it already is) and the window is looked for every 2 s
+async function beginStandby(cardOnAir) {
   standby.active = true;
+  standby.id = currentSource.id;
   standby.name = currentSource.name;
   standby.owner = currentSource.owner;
   standby.lastIds = '';
   standby.failures = 0;
   standby.retryAt = 0;
-  await replaceVideoTrack(standbyCardTrack());
+  if (!cardOnAir) await replaceVideoTrack(standbyCardTrack());
   selectedSourceId = null;
+  clearInterval(standby.timer);
+  standby.timer = setInterval(checkStandby, 2000);
+}
+
+async function enterStandby() {
+  await beginStandby(false);
   const name = standby.name || 'A janela';
   showToast(`"${name}" fechou. Seus amigos veem um aviso; a transmissão volta sozinha quando ela abrir de novo.`);
   window.electronAPI.notify('A janela da transmissão fechou',
     `"${name}" fechou. Seus amigos veem um aviso de "já volta". A transmissão volta sozinha quando a janela abrir de novo, ou escolha outra em Trocar janela ou som.`);
-  standby.timer = setInterval(checkStandby, 2000);
+}
+
+// The picked window is minimized (currentSource): the card until it's back on screen
+async function waitForWindow(cardOnAir) {
+  await beginStandby(cardOnAir);
+  showToast(`"${standby.name || 'A janela'}" está minimizada. Seus amigos veem "já volta" até você voltar para ela.`);
 }
 
 function stopStandby() {
@@ -2175,14 +2268,16 @@ async function checkStandby() {
   if (!isStreaming || !standby.active) return stopStandby();
   if (standby.busy || Date.now() < (standby.retryAt || 0)) return;
   standby.busy = true;
+  let match = null;
   try {
-    // Cheap check first; the full list (thumbnails) only when a window opened or closed
+    // Cheap check first; the full list (thumbnails) only when a window opened, closed, was minimized or came back
     const ids = await window.electronAPI.getSourceIds();
     if (ids === standby.lastIds) return;
     standby.lastIds = ids;
-    const windows = (await window.electronAPI.getSources()).filter(s => !s.isScreen);
+    // Minimized windows are listed without a picture and can't be captured yet
+    const windows = (await window.electronAPI.getSources()).filter(s => !s.isScreen && !s.minimized);
     windows.forEach(s => knownSources.set(s.id, s));
-    let match = windows.find(s => s.name === standby.name);
+    match = windows.find(s => s.id === standby.id) || windows.find(s => s.name === standby.name);
     if (!match && standby.owner) {
       for (const s of windows) {
         const owner = await window.electronAPI.getWindowOwner(s.id);
@@ -2196,6 +2291,8 @@ async function checkStandby() {
     showToast(`Voltou: mostrando ${match.name}`);
     window.electronAPI.notify('A transmissão voltou', `Mostrando "${match.name}" de novo.`);
   } catch (err) {
+    // Minimized again before it could be captured: it comes on when it's back (the list changes then)
+    if (match && await isMinimizedWindow(match.id)) return;
     // A window that just reappeared can refuse capture for a moment ("Could not start video source",
     // e.g. a game still switching to fullscreen). Forget the window list so the next pass tries again,
     // instead of waiting for some other window to open or close (seen live: stuck on the standby card).
@@ -2333,14 +2430,15 @@ async function applySwitch() {
   if (!videoChanged && !audioChanged) return;
 
   try {
-    // Switch video
-    if (videoChanged) await switchVideo(source);
+    // Switch video (a minimized window: the card until it's back, with its own message)
+    const shown = videoChanged ? await switchOrWait(source) : true;
 
     // Switch audio
     if (audioChanged) {
       await switchAudio(newAudio, audioName);
     }
 
+    if (!shown) return;
     if (videoChanged && audioChanged) showToast(`Agora mostrando: ${source.name}, com o som de ${audioName}`);
     else if (videoChanged) showToast(`Agora mostrando: ${source.name}`);
   } catch (err) {
@@ -2726,10 +2824,27 @@ const lockToggle = document.getElementById('lock-toggle');
 let viewerList = [];
 let viewerListPrimed = false;
 let roomLocked = false;
+// How long someone removed stays out (the owner's pick, remembered), and how many are out right now
+const KICK_TIME_KEY = 'fs-kick-minutes';
+const kickTime = document.getElementById('kick-time');
+const btnClearBans = document.getElementById('btn-clear-bans');
+let bannedCount = 0;
+try {
+  const saved = localStorage.getItem(KICK_TIME_KEY);
+  if (saved && [...kickTime.options].some(o => o.value === saved)) kickTime.value = saved;
+} catch {}
+kickTime.addEventListener('change', () => { try { localStorage.setItem(KICK_TIME_KEY, kickTime.value); } catch {} });
+btnClearBans.addEventListener('click', () => {
+  socket?.emit('clear-bans');
+  showToast('Pronto: quem você tirou já pode voltar.');
+});
 
 function renderViewerList() {
   const owner = !group.guestRoom;
   document.getElementById('lock-row').hidden = !owner;
+  document.getElementById('kick-row').hidden = !owner || !viewerList.length;
+  btnClearBans.hidden = !owner || !bannedCount;
+  btnClearBans.textContent = bannedCount > 1 ? `Deixar voltar as ${bannedCount} pessoas que eu tirei` : 'Deixar voltar quem eu tirei';
   const shown = viewerList.slice(0, 30);
   const items = shown.map(v => {
     const li = document.createElement('li');
@@ -2748,8 +2863,8 @@ function renderViewerList() {
           setTimeout(() => { kick.classList.remove('confirm'); kick.textContent = 'Tirar'; }, 3500);
           return;
         }
-        socket?.emit('kick-viewer', { viewerId: v.id });
-        showToast(`${v.name} saiu da sala e não volta por umas horas. Para ninguém novo entrar, tranque a sala.`);
+        socket?.emit('kick-viewer', { viewerId: v.id, minutes: Number(kickTime.value) });
+        showToast(`${v.name} saiu da sala e fica fora por ${kickTime.selectedOptions[0].textContent}. Para ninguém novo entrar, tranque a sala.`);
       });
       li.append(kick);
     }
@@ -2810,31 +2925,25 @@ function reportHealth(samples) {
   socket.emit('host-health', { fps: Math.round(fps), target: quality.fps, limit, away: privacyAway() || standby.active });
 }
 
-// ======== Privacy: "já volto" when leaving the game, and the quick pause ========
-// Sharing a whole screen shows whatever is on it. Once the game is known (the first fullscreen window
-// after going live), switching away from it (Alt+Tab, the Start menu, the desktop, another app on that
-// screen) puts a "já volto" card on the stream instead; coming back shows the screen again. The card is
-// drawn by the pipeline worker, so it takes effect on the very next frame.
-const PROTECT_KEY = 'fs-protect';
+// ======== Privacy: the quick pause ========
+// A "já volto" card instead of the picture, from the app or from a global shortcut (with a game in
+// front). The card is drawn by the pipeline worker, so it takes effect on the very next frame.
 const HOTKEY_KEY = 'fs-hotkey';
 const GAME_NAME_KEY = 'fs-game-name';
 const camSection = document.getElementById('cam-section');
 const privacySection = document.getElementById('privacy-section');
-const protectToggle = document.getElementById('protect-toggle');
 const hotkeySelect = document.getElementById('hotkey-select');
 const btnQuickPause = document.getElementById('btn-quick-pause');
 const privacyStatus = document.getElementById('privacy-status');
 const gameNameToggle = document.getElementById('game-name-toggle');
-const privacy = { protect: true, manual: false, auto: false, game: null, watching: false, watchSource: null, supported: false };
+const privacy = { manual: false };
 try {
-  privacy.protect = localStorage.getItem(PROTECT_KEY) !== '0';
   gameNameToggle.checked = localStorage.getItem(GAME_NAME_KEY) !== '0';
   const savedHotkey = localStorage.getItem(HOTKEY_KEY);
   if (savedHotkey !== null && [...hotkeySelect.options].some(o => o.value === savedHotkey)) hotkeySelect.value = savedHotkey;
 } catch {}
-protectToggle.checked = privacy.protect;
 
-const privacyAway = () => privacy.manual || privacy.auto;
+const privacyAway = () => privacy.manual;
 const currentWorker = () => localStream?.getVideoTracks()[0]?.pipelineWorker || null;
 
 const cardFrog = new Image();
@@ -2874,106 +2983,18 @@ function setAway() {
   // Viewers hear about it at once: a still card mustn't read as a frozen stream
   if (socket?.connected && isStreaming) socket.emit('host-health', { fps: null, target: quality.fps, limit: 'none', away: privacyAway() || standby.active });
 }
-function setAuto(on) {
-  if (privacy.auto === on) return;
-  privacy.auto = on;
-  setAway();
-}
 
 function renderPrivacy() {
   const live = isStreaming;
-  document.getElementById('protect-row').hidden = !privacy.supported;
   btnQuickPause.hidden = !live;
   btnQuickPause.setAttribute('aria-pressed', String(privacy.manual));
   const key = hotkeySelect.value ? ` (${hotkeySelect.selectedOptions[0].textContent})` : '';
   document.getElementById('quick-pause-label').textContent = privacy.manual ? 'Voltar a mostrar a tela' : `Pausa rápida${key}`;
-  const parts = [];
-  let away = false, action = null;
-  if (live && privacy.manual) {
-    away = true;
-    parts.push('Pausa rápida ligada: seus amigos veem "já volto".');
-  } else if (live && privacy.auto) {
-    away = true;
-    parts.push(`Você saiu ${privacy.game?.name ? 'do ' + privacy.game.name : 'do jogo'}: seus amigos veem "já volto". Volte para ele e a tela aparece de novo.`);
-    action = { label: 'Mostrar a tela agora', run: resetGame };
-  } else if (live && privacy.watching && privacy.protect) {
-    if (privacy.game) {
-      parts.push(`Protegendo: ao sair ${privacy.game.name ? 'do ' + privacy.game.name : 'do jogo'}, seus amigos veem "já volto".`);
-      action = { label: 'Trocar o jogo', run: resetGame };
-    } else {
-      parts.push('Abra o jogo: a primeira janela em tela cheia vira o jogo protegido.');
-    }
-  }
-  privacyStatus.hidden = !parts.length;
+  const away = live && privacy.manual;
+  privacyStatus.hidden = !away;
   privacyStatus.classList.toggle('is-away', away);
-  privacyStatus.replaceChildren(Object.assign(document.createElement('span'), { textContent: parts.join(' ') }));
-  if (action) {
-    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'link-button', textContent: action.label });
-    b.addEventListener('click', action.run);
-    privacyStatus.append(b);
-  }
+  privacyStatus.textContent = away ? 'Pausa rápida ligada: seus amigos veem "já volto".' : '';
 }
-
-// Forget the game: the next fullscreen window becomes it (and the screen shows again meanwhile)
-function resetGame() {
-  privacy.game = null;
-  if (currentSource.isScreen) setGame(null);
-  setAuto(false);
-  renderPrivacy();
-}
-
-// Programs that are never "the game", even fullscreen (a video in a browser, a launcher, a chat)
-const NOT_GAMES = new Set([
-  'chrome', 'msedge', 'brave', 'firefox', 'opera', 'vivaldi', 'discord', 'discordptb', 'discordcanary', 'explorer',
-  'spotify', 'steam', 'steamwebhelper', 'epicgameslauncher', 'riotclientux', 'riotclientservices', 'leagueclient',
-  'leagueclientux', 'leagueclientuxrender', 'battle.net', 'whatsapp', 'telegram', 'obs64', 'vlc', 'mpc-hc64', 'code',
-  'notepad', 'winword', 'excel', 'powerpnt', 'teams', 'ms-teams', 'zoom', 'slack', 'applicationframehost',
-  'systemsettings', 'taskmgr', 'frogshare', 'electron'
-]);
-const looksLikeGame = (fg) => !!gameNameFor(fg.exe) || (fg.covers && !NOT_GAMES.has(fg.exe));
-
-// What the window in front is, from main (the capture helper's foreground watcher)
-function onForeground(fg) {
-  if (!isStreaming || !privacy.watching || !fg) return;
-  // The Alt+Tab switcher shows thumbnails of every window: cover the screen as soon as it opens
-  if (fg.switching) { if (privacy.protect && privacy.game) setAuto(true); return; }
-  if (fg.switching === false && fg.hwnd == null) return;
-  // Focus moved to another monitor: the captured one still shows what it showed
-  if (!fg.onCaptured) return;
-  const candidate = !fg.own && !fg.shell && fg.exe && looksLikeGame(fg);
-  // The game is the first fullscreen program after going live, and a game we know beats an unknown one
-  if (candidate && (!privacy.game || (!privacy.game.name && gameNameFor(fg.exe) && fg.exe !== privacy.game.exe))) {
-    privacy.game = { pid: fg.pid, exe: fg.exe, name: gameNameFor(fg.exe) };
-    setGame(privacy.game.name);
-    setAuto(false);
-    renderPrivacy();
-    return;
-  }
-  if (!privacy.game) return;
-  const isGame = fg.pid === privacy.game.pid || fg.exe === privacy.game.exe;
-  setAuto(privacy.protect && !isGame);
-}
-window.electronAPI.onForeground?.(onForeground);
-
-function syncForegroundWatch() {
-  const want = privacy.supported && isStreaming && currentSource.isScreen && (privacy.protect || gameNameToggle.checked);
-  const source = want ? currentSource.id : null;
-  if (source === privacy.watchSource) return;
-  privacy.watchSource = source;
-  privacy.watching = !!source;
-  privacy.game = null;
-  setAuto(false);
-  window.electronAPI.watchForeground?.(source)?.catch?.(() => {});
-  renderPrivacy();
-}
-
-protectToggle.addEventListener('change', () => {
-  privacy.protect = protectToggle.checked;
-  try { localStorage.setItem(PROTECT_KEY, privacy.protect ? '1' : '0'); } catch {}
-  if (!privacy.protect) setAuto(false);
-  syncForegroundWatch();
-  renderPrivacy();
-});
 
 // The quick pause from anywhere, a game in front included (a global shortcut, registered while live)
 async function applyHotkey() {
@@ -2998,7 +3019,10 @@ btnQuickPause.addEventListener('click', toggleQuickPause);
 window.electronAPI.onPrivacyHotkey?.(toggleQuickPause);
 
 // ======== The game's name, for viewers ========
+// A window: the program it belongs to. A whole screen: the last known game seen in front on it, from
+// the capture helper's foreground watcher (which runs only then).
 let currentGame = null;
+const fgWatch = { source: null, supported: false };
 function setGame(name) {
   if (currentGame === name) return;
   currentGame = name;
@@ -3007,14 +3031,30 @@ function setGame(name) {
 function sendGame() {
   if (socket?.connected && isStreaming) socket.emit('set-game', { game: gameNameToggle.checked ? currentGame : null });
 }
+
+function onForeground(fg) {
+  if (!isStreaming || !fgWatch.source || !fg?.onCaptured) return;
+  const name = gameNameFor(fg.exe);
+  if (name) setGame(name);
+}
+window.electronAPI.onForeground?.(onForeground);
+
+function syncForegroundWatch() {
+  const want = fgWatch.supported && isStreaming && currentSource.isScreen && gameNameToggle.checked;
+  const source = want ? currentSource.id : null;
+  if (source === fgWatch.source) return;
+  fgWatch.source = source;
+  window.electronAPI.watchForeground?.(source)?.catch?.(() => {});
+}
+
 gameNameToggle.addEventListener('change', () => {
   try { localStorage.setItem(GAME_NAME_KEY, gameNameToggle.checked ? '1' : '0'); } catch {}
   sendGame();
   syncForegroundWatch();
 });
-// A window: the program it belongs to. A whole screen: the game the watcher found on it.
 async function updateGameFromSource() {
-  if (currentSource.isScreen) { setGame(privacy.game?.name || null); return; }
+  // A whole screen: named once the watcher sees a known game in front
+  if (currentSource.isScreen) { setGame(null); return; }
   const id = currentSource.id;
   const owner = id ? await window.electronAPI.getWindowOwner(id).catch(() => null) : null;
   if (currentSource.id === id) setGame(owner ? gameNameFor(owner.name) : null);
@@ -3024,13 +3064,34 @@ async function updateGameFromSource() {
 // Composited into the stream by the pipeline worker (one drawImage per frame), so it costs little and
 // follows any change of window. Hidden while "já volto" is up.
 const CAM_KEY = 'fs-cam';
-const cam = Object.assign({ enabled: false, deviceId: '', pos: 'br', size: 'm' }, store.get(CAM_KEY) || {}, { track: null });
+// Anywhere and any size, like in OBS: dragged on the preview while live, or from the corner and size
+// shortcuts. w is the camera's width as a share of the picture's; x and y place it between the edges
+// (0 = left or top, 1 = right or bottom). 1.7.0 saved a corner and a size instead.
+const CAM_SIZES = { s: 0.2, m: 0.28, l: 0.38 };
+const CAM_CORNERS = { tl: [0, 0], tr: [1, 0], bl: [0, 1], br: [1, 1] };
+const cam = (() => {
+  const saved = store.get(CAM_KEY) || {};
+  const corner = CAM_CORNERS[saved.pos] || CAM_CORNERS.br;
+  const num = (v, fallback) => Number.isFinite(v) ? v : fallback;
+  return {
+    enabled: !!saved.enabled, deviceId: saved.deviceId || '', track: null,
+    x: num(saved.x, corner[0]), y: num(saved.y, corner[1]), w: num(saved.w, CAM_SIZES[saved.size] || CAM_SIZES.m)
+  };
+})();
 const camToggle = document.getElementById('cam-toggle');
 const camOptions = document.getElementById('cam-options');
 const camDevice = document.getElementById('cam-device');
 const camNote = document.getElementById('cam-note');
-const camLayout = () => ({ pos: cam.pos, size: cam.size });
-function saveCam() { store.set(CAM_KEY, { enabled: cam.enabled, deviceId: cam.deviceId, pos: cam.pos, size: cam.size }); }
+const camLayout = () => ({ x: cam.x, y: cam.y, w: cam.w });
+function saveCam() { store.set(CAM_KEY, { enabled: cam.enabled, deviceId: cam.deviceId, x: cam.x, y: cam.y, w: cam.w }); }
+function setCamLayout(next, save = true) {
+  Object.assign(cam, next);
+  cam.x = Math.min(1, Math.max(0, cam.x));
+  cam.y = Math.min(1, Math.max(0, cam.y));
+  cam.w = Math.min(0.6, Math.max(0.1, cam.w));
+  currentWorker()?.postMessage({ camLayout: camLayout() });
+  if (save) { saveCam(); renderCam(); }
+}
 
 function attachCam(worker) {
   if (!worker || !cam.track || cam.track.readyState !== 'live') return;
@@ -3107,8 +3168,9 @@ async function loadCamDevices() {
 function renderCam() {
   camToggle.checked = cam.enabled;
   camOptions.hidden = !cam.enabled;
-  document.querySelectorAll('input[name="cam-pos"]').forEach(r => { r.checked = r.value === cam.pos; });
-  document.querySelectorAll('input[name="cam-size"]').forEach(r => { r.checked = r.value === cam.size; });
+  // A shortcut stays lit only while the camera is exactly there (a drag puts it somewhere in between)
+  document.querySelectorAll('input[name="cam-pos"]').forEach(r => { r.checked = CAM_CORNERS[r.value][0] === cam.x && CAM_CORNERS[r.value][1] === cam.y; });
+  document.querySelectorAll('input[name="cam-size"]').forEach(r => { r.checked = Math.abs(CAM_SIZES[r.value] - cam.w) < 0.005; });
 }
 camToggle.addEventListener('change', async () => {
   cam.enabled = camToggle.checked;
@@ -3133,13 +3195,88 @@ camDevice.addEventListener('change', () => {
 });
 document.querySelectorAll('input[name="cam-pos"], input[name="cam-size"]').forEach(input => {
   input.addEventListener('change', () => {
-    if (input.name === 'cam-pos') cam.pos = input.value;
-    else cam.size = input.value;
-    saveCam();
-    currentWorker()?.postMessage({ camLayout: camLayout() });
+    if (input.name === 'cam-pos') setCamLayout({ x: CAM_CORNERS[input.value][0], y: CAM_CORNERS[input.value][1] });
+    else setCamLayout({ w: CAM_SIZES[input.value] });
   });
 });
 renderCam();
+
+// ---- Moving it on the preview ----
+// A frame over the camera in the preview: drag it anywhere, pull its corner to change the size. It
+// follows where the pipeline really drew the camera (camRect, as shares of the picture).
+const camHandle = document.getElementById('cam-handle');
+const camDrag = { active: null, startX: 0, startY: 0, start: null, rect: null, box: null };
+// Where the picture sits inside the preview element (object-fit: contain leaves bars on two sides)
+function previewBox() {
+  const r = localPreview.getBoundingClientRect();
+  const vw = localPreview.videoWidth, vh = localPreview.videoHeight;
+  if (!vw || !vh || !r.width || !r.height) return null;
+  const s = Math.min(r.width / vw, r.height / vh);
+  const w = vw * s, h = vh * s;
+  return { left: (r.width - w) / 2, top: (r.height - h) / 2, w, h };
+}
+function placeCamHandle(rect, force = false) {
+  camDrag.rect = rect || null;
+  if (camDrag.active) return;
+  const box = rect && localPreview.srcObject && previewBox();
+  // Called for every frame: only touch the page when something moved
+  const key = box ? `${rect.join()}|${box.left}|${box.top}|${box.w}` : '';
+  if (key === camDrag.placed && !force) return;
+  camDrag.placed = key;
+  camHandle.hidden = !box;
+  if (!box) return;
+  camHandle.style.left = `${box.left + rect[0] * box.w}px`;
+  camHandle.style.top = `${box.top + rect[1] * box.h}px`;
+  camHandle.style.width = `${rect[2] * box.w}px`;
+  camHandle.style.height = `${rect[3] * box.h}px`;
+}
+camHandle.addEventListener('pointerdown', (e) => {
+  const box = previewBox();
+  if (!box || !camDrag.rect || e.button !== 0) return;
+  e.preventDefault();
+  camHandle.setPointerCapture(e.pointerId);
+  camDrag.active = e.target.closest('.cam-resize') ? 'resize' : 'move';
+  camDrag.startX = e.clientX;
+  camDrag.startY = e.clientY;
+  camDrag.start = camDrag.rect.slice();
+  camDrag.box = box;
+  camHandle.classList.add('dragging');
+});
+camHandle.addEventListener('pointermove', (e) => {
+  if (!camDrag.active) return;
+  const { box, start } = camDrag;
+  const dx = (e.clientX - camDrag.startX) / box.w, dy = (e.clientY - camDrag.startY) / box.h;
+  // The margin the pipeline keeps around the camera, as shares of the picture
+  const mx = 0.025 * box.h / box.w, my = 0.025;
+  let [x, y, w, h] = start;
+  if (camDrag.active === 'resize') {
+    // The corner follows the pointer whichever way it goes more, keeping the camera's shape
+    const dw = Math.abs(dx) >= Math.abs(dy * w / h) ? dx : dy * w / h;
+    const k = Math.max(0.1, Math.min(0.6, w + dw)) / w;
+    w *= k; h *= k;
+  } else {
+    x += dx; y += dy;
+  }
+  x = Math.min(Math.max(x, mx), Math.max(mx, 1 - mx - w));
+  y = Math.min(Math.max(y, my), Math.max(my, 1 - my - h));
+  camHandle.style.left = `${box.left + x * box.w}px`;
+  camHandle.style.top = `${box.top + y * box.h}px`;
+  camHandle.style.width = `${w * box.w}px`;
+  camHandle.style.height = `${h * box.h}px`;
+  // The same placement in the pipeline's terms: between the edges, minus the margins
+  const freeX = 1 - 2 * mx - w, freeY = 1 - 2 * my - h;
+  setCamLayout({ w, x: freeX > 0 ? (x - mx) / freeX : 0, y: freeY > 0 ? (y - my) / freeY : 0 }, false);
+});
+function endCamDrag() {
+  if (!camDrag.active) return;
+  camDrag.active = null;
+  camHandle.classList.remove('dragging');
+  saveCam();
+  renderCam();
+}
+camHandle.addEventListener('pointerup', endCamDrag);
+camHandle.addEventListener('pointercancel', endCamDrag);
+window.addEventListener('resize', () => placeCamHandle(camDrag.rect, true));
 if (cam.enabled) loadCamDevices();
 
 // ======== Live extras on and off ========
@@ -3148,7 +3285,6 @@ function startLiveExtras() {
   renderReactions();
   lowViewers.clear();
   privacy.manual = false;
-  privacy.auto = false;
   healthPipe = { inFrames: pipe.inFrames, at: performance.now() };
   syncForegroundWatch();
   applyHotkey();
@@ -3162,7 +3298,6 @@ function startLiveExtras() {
 function stopLiveExtras() {
   stopCam();
   privacy.manual = false;
-  privacy.auto = false;
   syncForegroundWatch();
   applyHotkey();
   window.electronAPI.setAway?.(false);
@@ -3180,9 +3315,9 @@ function sourceChanged() {
 
 window.electronAPI.getPlatform().then(p => {
   // The foreground watcher is part of the Windows capture helper
-  privacy.supported = p === 'win32' && typeof window.electronAPI.watchForeground === 'function';
-  renderPrivacy();
+  fgWatch.supported = p === 'win32' && typeof window.electronAPI.watchForeground === 'function';
 });
+renderPrivacy();
 fixedRoom().then(renderLinkCard).catch(() => renderLinkCard());
 
 // ======== Init ========

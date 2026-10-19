@@ -67,27 +67,43 @@
       </div>
     </section>
 
-    <section class="host-cta card" aria-labelledby="host-cta-title">
-      <img src="/brand/icon.svg" alt="" width="64" height="64">
-      <div class="host-cta-text">
-        <h2 id="host-cta-title">Quer transmitir a sua tela?</h2>
-        <p>Baixe o app. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
-        <details class="download-help">
-          <summary>O Windows mostrou um aviso ao instalar?</summary>
-          <p>O app ainda não tem assinatura digital, então o Windows pode dizer "O Windows protegeu o computador". Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
-        </details>
-        <p class="download-note" id="mac-note" hidden>Mac: precisa de chip M1 ou mais novo. Ao baixar, mostramos o passo a passo para instalar.</p>
-        <p class="web-host-note desk-only">Sem poder instalar? <a href="/transmitir.html">Transmita pelo navegador</a>. É mais simples, mas sem o som só do jogo.</p>
-      </div>
-      <div class="download-buttons">
-        <a id="btn-download-win" href="https://github.com/IgorFigueiredo28/frogshare/releases/latest/download/FrogShare-Setup.exe" rel="noopener" class="btn btn-secondary btn-download">
-          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
-          Baixar para Windows
-        </a>
-        <a id="btn-download-mac" href="#" target="_blank" rel="noopener" class="btn btn-secondary btn-download" hidden>
-          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
-          Baixar para Mac
-        </a>
+    <!-- Two ways to stream, side by side: the app (games) and the site itself (nothing to install) -->
+    <section class="host-cta card" id="transmitir" aria-labelledby="host-cta-title">
+      <h2 id="host-cta-title" class="host-cta-title">Quer transmitir a sua tela?</h2>
+      <div class="host-ways">
+        <div class="host-way">
+          <div class="host-way-head">
+            <img src="/brand/icon.svg" alt="" width="40" height="40">
+            <h3>Com o app</h3>
+          </div>
+          <p>O melhor para jogos: usa a placa de vídeo, quase não pesa no jogo e leva só o som dele.</p>
+          <div class="download-buttons">
+            <a id="btn-download-win" href="https://github.com/IgorFigueiredo28/frogshare/releases/latest/download/FrogShare-Setup.exe" rel="noopener" class="btn btn-secondary btn-download">
+              <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+              Baixar para Windows
+            </a>
+            <a id="btn-download-mac" href="#" target="_blank" rel="noopener" class="btn btn-secondary btn-download" hidden>
+              <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
+              Baixar para Mac
+            </a>
+          </div>
+          <details class="download-help">
+            <summary>O Windows mostrou um aviso ao instalar?</summary>
+            <p>O app ainda não tem assinatura digital, então o Windows pode dizer "O Windows protegeu o computador". Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
+          </details>
+          <p class="download-note" id="mac-note" hidden>Mac: precisa de chip M1 ou mais novo. Ao baixar, mostramos o passo a passo para instalar.</p>
+        </div>
+        <div class="host-way" id="host-way-web">
+          <div class="host-way-head">
+            <span class="host-way-ico" aria-hidden="true"><svg class="ico"><use href="/brand/icons.svg#i-monitor"/></svg></span>
+            <h3>Pelo navegador</h3>
+          </div>
+          <p>Sem instalar nada: abre na hora no Chrome ou no Edge. O som vai junto, da aba ou do PC todo.</p>
+          <a href="/transmitir.html" class="btn btn-secondary">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-broadcast"/></svg>
+            Transmitir agora
+          </a>
+        </div>
       </div>
     </section>
 

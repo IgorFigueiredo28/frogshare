@@ -125,13 +125,35 @@ app.whenReady().then(async () => {
     const png = downloads.find(d => /\.png$/.test(d.name));
     const sig = png && fs.readFileSync(png.file).subarray(0, 4).toString('hex');
     check('P salva um print em PNG', png && png.size > 500 && sig === '89504e47', png ? `${png.name} ${png.size} bytes` : 'nenhum download');
-    await js(v1, `document.getElementById('btn-more').click(); document.getElementById('opt-clips').click(); document.body.click(); true`);
+    // A 3 s clip out of ~8 s recorded: the cut and the clocks moved back to zero are what's checked
+    await js(v1, `window.fsClipSeconds = 3; document.getElementById('btn-more').click(); document.getElementById('opt-clips').click(); document.body.click(); true`);
     check('ligar clipes mostra o botão de clipe', await until(v1, `!document.getElementById('btn-clip').hidden`, 3000));
-    await wait(5000);
+    await wait(8000);
     await key(v1, 'c');
-    await wait(2500);
+    await wait(4500);
     const clip = downloads.find(d => /clipe.*\.(mp4|webm)$/.test(d.name));
     check('C salva um clipe dos últimos segundos', clip && clip.size > 5000, clip ? `${clip.name} ${clip.size} bytes` : 'nenhum download');
+    if (clip) {
+      // Played back on its own: starts at zero, as long as asked (not all that was recorded), no frozen stretch
+      const pv = mk('clip-' + Date.now());
+      const page = path.join(DL, 'tocar-clipe.html');
+      fs.writeFileSync(page, `<!doctype html><video src="${encodeURIComponent(clip.name)}" muted></video>`);
+      await pv.loadFile(page);
+      const play = await js(pv, `(async () => {
+        const v = document.querySelector('video'); v.muted = true;
+        if (v.readyState < 1) await new Promise(r => v.addEventListener('loadedmetadata', r, { once: true }));
+        const times = []; let first = null;
+        const tick = (now, meta) => { times.push(now); if (first === null) first = meta.mediaTime; if (times.length < 400) v.requestVideoFrameCallback(tick); };
+        v.requestVideoFrameCallback(tick);
+        await v.play();
+        await new Promise(r => setTimeout(r, 2000));
+        const gaps = times.slice(1).map((t, i) => t - times[i]);
+        return { duration: Math.round(v.duration * 10) / 10, frames: times.length, maxGapMs: Math.round(Math.max(0, ...gaps)), firstFrameAt: Math.round((first || 0) * 100) / 100 };
+      })()`).catch(err => ({ error: err.message }));
+      check('o clipe abre do começo, só com o trecho pedido, e toca sem travar',
+        play.duration >= 2 && play.duration <= 7 && play.firstFrameAt < 0.5 && play.frames >= 18 && play.maxGapMs < 400, JSON.stringify(play));
+      pv.destroy();
+    }
 
     // Zoom, cinema, shortcuts
     await js(v1, `const a = document.getElementById('video-area'); const r = a.getBoundingClientRect(); a.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true })); true`);

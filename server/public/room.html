@@ -64,10 +64,10 @@
       </div>
 
       <div class="room-controls">
-        <a class="get-app" href="https://github.com/IgorFigueiredo28/frogshare/releases/latest/download/FrogShare-Setup.exe" rel="noopener">
-          <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-download"/></svg>
-          <span>Quer compartilhar a tela? <b>Baixe o FrogShare aqui</b></span>
-        </a>
+        <p class="get-app">
+          <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-broadcast"/></svg>
+          <span>Quer compartilhar a tela? <a href="https://github.com/IgorFigueiredo28/frogshare/releases/latest/download/FrogShare-Setup.exe" rel="noopener">Baixe o app</a> ou <a href="/transmitir.html" target="_blank" rel="noopener">use o navegador</a></span>
+        </p>
         <button type="button" class="btn btn-ghost btn-icon theme-toggle" data-theme-toggle>
           <svg class="ico i-moon" aria-hidden="true"><use href="/brand/icons.svg#i-moon"/></svg>
           <svg class="ico i-sun" aria-hidden="true"><use href="/brand/icons.svg#i-sun"/></svg>
@@ -85,7 +85,7 @@
 
     <div class="notice share-help" id="share-help" role="status" hidden>
       <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
-      <span class="notice-text">O FrogShare não abriu. Para transmitir nesta sala, baixe e instale o app em <a href="/" target="_blank" rel="noopener">frogshare.onrender.com</a> e clique em "Compartilhar minha tela aqui" de novo.</span>
+      <span class="notice-text">O FrogShare não abriu. Para transmitir nesta sala, baixe e instale o app em <a href="/" target="_blank" rel="noopener">frogshare.onrender.com</a> e clique em "Compartilhar minha tela aqui" de novo.<span> Ou <a id="share-help-web" href="/transmitir.html" target="_blank" rel="noopener">transmita pelo navegador</a>, sem instalar.</span></span>
       <button id="share-help-close" type="button" class="btn btn-ghost btn-icon" aria-label="Fechar aviso">
         <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
       </button>
@@ -116,7 +116,8 @@
         <!-- Why the picture stutters, when it does: their end or ours -->
         <div class="diag-bubble" id="diag-bubble" role="status" hidden>
           <span class="diag-dot" aria-hidden="true"></span>
-          <span id="diag-text"></span>
+          <button type="button" class="diag-text" id="diag-text" aria-describedby="diag-more"></button>
+          <span class="sr-only" id="diag-more">Abre os detalhes da conexão</span>
           <button type="button" class="btn btn-ghost btn-icon btn-sm" id="diag-close" aria-label="Fechar">
             <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
           </button>

@@ -43,13 +43,18 @@
         <img src="/brand/frog.svg" alt="" width="88" height="81">
         <div>
           <h1 id="wh-title">Transmitir pelo navegador</h1>
-          <p class="hero-sub">Sem instalar nada: escolha a tela ou a janela e mande o link para os amigos.</p>
+          <p class="hero-sub" id="wh-sub">Sem instalar nada: escolha a tela ou a janela e mande o link para os amigos.</p>
         </div>
       </div>
 
       <div class="notice" id="wh-unsupported" hidden>
         <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
         <span class="notice-text">Este navegador não consegue transmitir a tela. Use o Chrome ou o Edge num computador, ou <a href="/">baixe o FrogShare</a>.</span>
+      </div>
+
+      <div class="notice" id="wh-group-note" role="status" hidden>
+        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-info"/></svg>
+        <span class="notice-text" id="wh-group-text"></span>
       </div>
 
       <div class="card wh-card">
@@ -82,12 +87,12 @@
       <div class="wh-preview"><video id="wh-preview" autoplay muted playsinline></video></div>
 
       <div class="card wh-link-card">
-        <label class="field-label" for="wh-link">Link para os amigos</label>
+        <label class="field-label" for="wh-link" id="wh-link-label">Link para os amigos</label>
         <div class="join-row">
           <input id="wh-link" class="input" type="text" readonly>
           <button id="wh-copy" type="button" class="btn btn-secondary"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar link</button>
         </div>
-        <p class="wh-fine">O link é sempre o mesmo neste navegador. Deixe esta aba aberta: fechando, a transmissão para.</p>
+        <p class="wh-fine" id="wh-link-fine">O link é sempre o mesmo neste navegador. Deixe esta aba aberta: fechando, a transmissão para.</p>
         <p class="wh-names" id="wh-names"></p>
         <p class="wh-reactions" id="wh-reactions" aria-live="polite"></p>
         <div class="notice" id="wh-crowd" hidden>

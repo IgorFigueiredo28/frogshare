@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.7.0'
+        app_version: '1.7.1'
       })
     }).catch(() => {});
   } catch {}
@@ -418,9 +418,9 @@ ipcMain.handle('set-hotkey', (event, accelerator) => {
 });
 app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
 
-// ======== Window in front (privacy while a whole screen is shared) ========
-// The capture helper reports each change of the foreground window; this adds what the page needs to
-// decide: is it on the screen being shared, does it cover that screen (a game), is it FrogShare itself.
+// ======== Window in front (the game's name while a whole screen is shared) ========
+// The capture helper reports each change of the foreground window; the page names the game from it
+// when that window sits on the screen being shared.
 let foregroundProc = null;
 let capturedDisplay = null; // bounds (DIP) of the screen being shared
 
@@ -433,20 +433,13 @@ function stopForegroundWatch() {
 }
 
 function describeForeground(ev) {
-  if ('switching' in ev) return { switching: !!ev.switching };
   // The helper measures windows in physical pixels; displays are in DIP
   const r = screen.screenToDipRect(null, { x: ev.x, y: ev.y, width: ev.w, height: ev.h });
   const d = capturedDisplay;
   const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
-  const onCaptured = !!d && cx >= d.x && cx < d.x + d.width && cy >= d.y && cy < d.y + d.height;
-  const overlapW = d ? Math.max(0, Math.min(r.x + r.width, d.x + d.width) - Math.max(r.x, d.x)) : 0;
-  const overlapH = d ? Math.max(0, Math.min(r.y + r.height, d.y + d.height) - Math.max(r.y, d.y)) : 0;
-  const own = app.getAppMetrics().some(m => m.pid === ev.pid);
   return {
-    hwnd: ev.hwnd, pid: ev.pid, exe: String(ev.exe || '').toLowerCase(), shell: !!ev.shell, own, onCaptured,
-    // Fullscreen (or borderless) over the whole shared screen, taskbar area included, the way games
-    // run. A maximized window stops at the taskbar, so a browser left maximized doesn't count.
-    covers: !!d && overlapW * overlapH >= 0.99 * d.width * d.height
+    exe: String(ev.exe || '').toLowerCase(),
+    onCaptured: !!d && cx >= d.x && cx < d.x + d.width && cy >= d.y && cy < d.y + d.height
   };
 }
 
@@ -547,16 +540,20 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionCheckHandler((wc, permission, origin) => allowed.has(permission) && (!origin || isOwnPage(origin)));
   serverInstance = await createServer(3030);
 
+  // Only ever what was picked. Chromium's list leaves minimized windows out (a game in exclusive
+  // fullscreen sits minimized behind FrogShare), and falling back to its first entry, the whole screen,
+  // streamed someone's entire desktop instead of their game (1.7.0). Something not listed is asked for
+  // by its id: if it can't be captured, getDisplayMedia fails ("Could not start video source") and the
+  // page waits for the window to be back on screen.
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
-    const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize: { width: 0, height: 0 }
-    });
-    const source = pendingCaptureSourceId
-      ? sources.find(s => s.id === pendingCaptureSourceId)
-      : sources[0];
+    const wanted = pendingCaptureSourceId;
     pendingCaptureSourceId = null;
-    callback({ video: source || sources[0] });
+    const sources = wanted
+      ? await desktopCapturer.getSources({ types: ['window', 'screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => [])
+      : [];
+    const source = sources.find(s => s.id === wanted) || (wanted ? { id: wanted, name: '' } : null);
+    // Refusing throws here ("no video stream was provided") and rejects getDisplayMedia, as intended
+    try { callback(source ? { video: source } : {}); } catch {}
   }, { useSystemPicker: false });
 
   await createWindow();
@@ -577,9 +574,9 @@ app.on('window-all-closed', () => {
 });
 
 // ======== IPC: Window/Screen Sources ========
-// Cheap check for "did a window open or close?". The page only asks for the full list (with
-// thumbnails) when this changes. Electron's own list costs ~400 ms of this process even without
-// thumbnails (17% of a core when polled every 3 s), so on Windows the helper enumerates instead (~70 ms).
+// Cheap check for "did a window open, close, get minimized or come back?". The page only asks for the
+// full list (with thumbnails) when this changes. Electron's own list costs ~400 ms of this process even
+// without thumbnails (17% of a core when polled every 3 s), so on Windows the helper enumerates instead (~70 ms).
 ipcMain.handle('get-source-ids', async () => {
   if (!isMac) {
     const { windows } = await runHelperJson(['windows']);
@@ -592,6 +589,16 @@ ipcMain.handle('get-source-ids', async () => {
   } catch {
     return '';
   }
+});
+
+// Whether a window still exists and is minimized ("window:<hwnd>:0"). A minimized window can't be
+// captured, so the page goes live with the "be right back" card and picks it up once it's back on screen.
+ipcMain.handle('get-window-state', async (event, sourceId) => {
+  const hwnd = /^window:(\d+):/.exec(String(sourceId))?.[1];
+  if (isMac || !hwnd) return { exists: false, minimized: false };
+  const { windows } = await runHelperJson(['windows']);
+  const entry = Array.isArray(windows) ? windows.map(String).find(w => w.replace(/m$/, '') === hwnd) : null;
+  return { exists: !!entry, minimized: !!entry && entry.endsWith('m') };
 });
 
 // The program behind a window ("window:<hwnd>:0"), so the page can pre-pick its sound. Windows only.
@@ -611,6 +618,9 @@ ipcMain.handle('find-app-root', async (event, exeName) => {
 });
 
 ipcMain.handle('get-sources', async () => {
+  // Chromium leaves minimized windows out, and a game in exclusive fullscreen minimizes itself the
+  // moment FrogShare is clicked. The helper's list brings them back (no picture) so the game can be picked.
+  const helperList = isMac ? Promise.resolve({}) : runHelperJson(['windows']);
   let sources;
   try {
     sources = await desktopCapturer.getSources({
@@ -626,13 +636,23 @@ ipcMain.handle('get-sources', async () => {
 
   // The "you're live" notice is our own window; it shouldn't be offered as something to share
   const overlayId = overlayWindow && !overlayWindow.isDestroyed() ? overlayWindow.getMediaSourceId() : null;
-  return sources.filter(s => s.id !== overlayId).map(s => ({
+  const list = sources.filter(s => s.id !== overlayId).map(s => ({
     id: s.id,
     name: s.name,
     thumbnail: s.thumbnail.toDataURL(),
     appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
     isScreen: s.id.startsWith('screen:')
   }));
+  const { minimized } = await helperList;
+  if (Array.isArray(minimized)) {
+    const own = new Set(app.getAppMetrics().map(m => m.pid));
+    for (const w of minimized) {
+      const id = `window:${w.id}:0`;
+      if (own.has(w.pid) || list.some(s => s.id === id)) continue;
+      list.push({ id, name: String(w.title || ''), thumbnail: '', appIcon: null, isScreen: false, minimized: true });
+    }
+  }
+  return list;
 });
 
 // ======== IPC: macOS permissions ========

@@ -416,24 +416,41 @@ class AudioCapture
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hwnd);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hwnd, System.Text.StringBuilder text, int max);
 
     // Windows someone could pick, the same way Chromium lists them: visible, titled, not cloaked (other virtual desktops,
-    // suspended UWP). Only used to notice that one opened or closed; asking Electron for its source list
-    // takes ~400 ms of the main process, this takes a few.
+    // suspended UWP). Used to notice that one opened, closed, was minimized or came back (an "m" after the id while
+    // minimized); asking Electron for its source list takes ~400 ms of the main process, this takes a few.
+    // Chromium leaves minimized windows out of its list, so those also come with their title and program.
     static void ListWindows()
     {
         const int DWMWA_CLOAKED = 14;
         var ids = new List<string>();
+        var minimized = new List<string>();
         EnumWindows((hwnd, l) =>
         {
             if (IsWindowVisible(hwnd) && GetWindowTextLength(hwnd) > 0)
             {
                 int cloaked;
-                if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out cloaked, 4) != 0 || cloaked == 0) ids.Add(hwnd.ToInt64().ToString());
+                if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out cloaked, 4) != 0 || cloaked == 0)
+                {
+                    string id = hwnd.ToInt64().ToString();
+                    if (IsIconic(hwnd))
+                    {
+                        var title = new System.Text.StringBuilder(GetWindowTextLength(hwnd) + 1);
+                        GetWindowTextW(hwnd, title, title.Capacity);
+                        uint pid;
+                        GetWindowThreadProcessId(hwnd, out pid);
+                        minimized.Add("{\"id\":" + id + ",\"pid\":" + pid + ",\"title\":\"" + Esc(title.ToString()) + "\"}");
+                        id += "m";
+                    }
+                    ids.Add("\"" + id + "\"");
+                }
             }
             return true;
         }, IntPtr.Zero);
-        WriteJson("{\"windows\":[" + string.Join(",", ids) + "]}");
+        WriteJson("{\"windows\":[" + string.Join(",", ids) + "],\"minimized\":[" + string.Join(",", minimized) + "]}");
     }
 
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
@@ -508,15 +525,13 @@ class AudioCapture
     }
 
     // ======== Foreground watcher ========
-    // While a whole screen is shared, the app covers the stream with "já volto" when the streamer leaves
-    // the game. This reports every change of the window in front (and the Alt+Tab switcher opening, which
-    // shows thumbnails of every window) as a JSON line, from system events: nothing is polled.
+    // While a whole screen is shared, the app names the game for viewers from the window in front. This
+    // reports every change of that window as a JSON line, from system events: nothing is polled.
     delegate void WinEventDelegate(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmod, WinEventDelegate callback, uint idProcess, uint idThread, uint flags);
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, System.Text.StringBuilder name, int max);
     [DllImport("user32.dll")] static extern int GetMessageW(out MSG msg, IntPtr hwnd, uint min, uint max);
     [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG msg);
     [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref MSG msg);
@@ -524,12 +539,9 @@ class AudioCapture
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x, y; }
-    const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_SWITCHSTART = 0x0014, EVENT_SYSTEM_SWITCHEND = 0x0015;
+    const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     // Kept in a field: the system calls it from native code, so the GC must not collect it
     static WinEventDelegate foregroundCallback;
-
-    static readonly HashSet<string> ShellClasses = new HashSet<string> { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
-    static readonly HashSet<string> ShellPrograms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "StartMenuExperienceHost", "SearchHost", "SearchApp", "ShellExperienceHost" };
 
     static void ReportForeground(IntPtr hwnd)
     {
@@ -540,26 +552,16 @@ class AudioCapture
         try { exe = Process.GetProcessById((int)pid).ProcessName; } catch {}
         RECT r;
         GetWindowRect(hwnd, out r);
-        var cls = new System.Text.StringBuilder(128);
-        GetClassNameW(hwnd, cls, cls.Capacity);
-        // The desktop, the taskbar, the Start menu or search
-        bool shell = ShellClasses.Contains(cls.ToString()) || ShellPrograms.Contains(exe);
         WriteJson("{\"hwnd\":" + hwnd.ToInt64() + ",\"pid\":" + pid + ",\"exe\":\"" + Esc(exe) + "\",\"x\":" + r.Left + ",\"y\":" + r.Top
-            + ",\"w\":" + (r.Right - r.Left) + ",\"h\":" + (r.Bottom - r.Top) + ",\"shell\":" + (shell ? "true" : "false") + "}");
+            + ",\"w\":" + (r.Right - r.Left) + ",\"h\":" + (r.Bottom - r.Top) + "}");
     }
 
     static void WatchForeground()
     {
         uint loopThread = GetCurrentThreadId();
-        foregroundCallback = (hook, type, hwnd, idObject, idChild, thread, time) =>
-        {
-            if (type == EVENT_SYSTEM_SWITCHSTART) { WriteJson("{\"switching\":true}"); return; }
-            if (type == EVENT_SYSTEM_SWITCHEND) { WriteJson("{\"switching\":false}"); ReportForeground(GetForegroundWindow()); return; }
-            ReportForeground(hwnd);
-        };
+        foregroundCallback = (hook, type, hwnd, idObject, idChild, thread, time) => ReportForeground(hwnd);
         // Out of context: the callback runs on this thread's message loop, nothing is injected anywhere
         IntPtr hookForeground = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, foregroundCallback, 0, 0, 0);
-        IntPtr hookSwitch = SetWinEventHook(EVENT_SYSTEM_SWITCHSTART, EVENT_SYSTEM_SWITCHEND, IntPtr.Zero, foregroundCallback, 0, 0, 0);
         ReportForeground(GetForegroundWindow());
         // "stop" on stdin (or the app closing it) ends the loop
         var stdin = new Thread(() =>
@@ -572,11 +574,23 @@ class AudioCapture
         MSG msg;
         while (GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref msg); DispatchMessageW(ref msg); }
         UnhookWinEvent(hookForeground);
-        UnhookWinEvent(hookSwitch);
     }
 
     static void WriteJson(string json) { Console.Error.WriteLine(json); Console.Error.Flush(); }
-    static string Esc(string s) { return s.Replace("\\", "\\\\").Replace("\"", "\\\""); }
+    // Control characters and anything outside ASCII as \u escapes: the JSON stays valid and intact whatever
+    // code page the console uses (window titles carry accents and emoji)
+    static string Esc(string s)
+    {
+        var sb = new System.Text.StringBuilder(s.Length + 8);
+        foreach (char c in s)
+        {
+            if (c == '\\') sb.Append("\\\\");
+            else if (c == '"') sb.Append("\\\"");
+            else if (c < 0x20 || c > 0x7E) sb.Append("\\u").Append(((int)c).ToString("x4"));
+            else sb.Append(c);
+        }
+        return sb.ToString();
+    }
 
     static void Main(string[] args)
     {

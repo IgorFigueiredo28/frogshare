@@ -2,7 +2,7 @@
 // window placed outside every monitor (nothing of the real screen is captured), with Chromium's fake
 // camera. Viewers are hidden, muted windows. Usage: npx electron tests/e2e-app.js [base url]
 const { app, BrowserWindow, screen } = require('electron');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
 const path = require('path');
 const BASE = process.argv.find(a => /^https?:\/\//.test(a)) || 'http://127.0.0.1:3041';
 const REPO = path.resolve(__dirname, '..');
@@ -56,6 +56,15 @@ function viewer(partition) {
 // Average colour of a small area of what the viewer receives, from its video element
 const SAMPLE = (fx, fy) => `(() => { const v = remoteVideo; if (!v.videoWidth) return null; const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; const g = c.getContext('2d'); g.drawImage(v, 0, 0); const d = g.getImageData(Math.floor(c.width * ${fx}), Math.floor(c.height * ${fy}), 8, 8).data; let r = 0, gg = 0, b = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; } const n = d.length / 4; return [Math.round(r / n), Math.round(gg / n), Math.round(b / n)]; })()`;
 const near = (c, ref, tol = 40) => c && Math.abs(c[0] - ref[0]) <= tol && Math.abs(c[1] - ref[1]) <= tol && Math.abs(c[2] - ref[2]) <= tol;
+// Minimizes (7, SW_SHOWMINNOACTIVE) or restores (4, SW_SHOWNOACTIVATE) a window without activating
+// anything, so whatever is in front on the PC stays there. The window belongs to this process: a plain
+// ShowWindow waits for this thread to answer, so it's the async one, and this side doesn't block either.
+function showWindowQuietly(sourceId, cmd) {
+  const hwnd = /^window:(\d+):/.exec(sourceId)[1];
+  return new Promise(resolve => execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+    `Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int c);'; [void][W.U]::ShowWindowAsync([IntPtr]${hwnd}, ${cmd})`],
+    { timeout: 60000 }, () => resolve()));
+}
 
 app.whenReady().then(async () => {
   let devApp = null, source = null;
@@ -92,24 +101,77 @@ app.whenReady().then(async () => {
       return true;
     })()`);
     await wait(800);
+    const testId = await evalApp(`selectedSourceId`);
+
+    // The real capture path, before any stand-in: a window that can't be captured is never swapped for
+    // the whole screen (1.7.0 streamed someone's desktop that way), and nothing picked gives nothing
+    const refused = await evalApp(`(async () => {
+      const out = {};
+      for (const [k, id] of [['gone', 'window:1:0'], ['none', null]]) {
+        try {
+          await window.electronAPI.setCaptureSource(id);
+          const s = await MediaDevices.prototype.getDisplayMedia.call(navigator.mediaDevices, { video: true });
+          out[k] = s.getVideoTracks()[0].getSettings().displaySurface || 'track';
+          s.getTracks().forEach(t => t.stop());
+        } catch (e) { out[k] = 'recusou: ' + e.name; }
+      }
+      return out;
+    })()`);
+    check('janela que não dá para capturar nunca vira a tela inteira', /^recusou/.test(refused.gone) && /^recusou/.test(refused.none), JSON.stringify(refused));
+
     // Windows Graphics Capture refuses a window outside the monitors, so the capture itself is a solid
-    // orange canvas here; everything after it (the pipeline, camera, card, connections) is the real code
-    await evalApp(`navigator.mediaDevices.getDisplayMedia = async () => {
+    // orange canvas here; everything after it (the pipeline, camera, card, connections) is the real code.
+    // Like Windows Graphics Capture, it refuses a minimized window.
+    await evalApp(`window.fsTestSource = ${JSON.stringify(testId)}; navigator.mediaDevices.getDisplayMedia = async () => {
+      if ((await window.electronAPI.getWindowState(window.fsTestSource))?.minimized) throw new DOMException('Could not start video source', 'NotReadableError');
       const c = document.createElement('canvas'); c.width = 960; c.height = 540; const g = c.getContext('2d');
-      setInterval(() => { g.fillStyle = '#FF8800'; g.fillRect(0, 0, 960, 540); g.fillStyle = '#FF8801'; g.fillRect((Date.now() / 10) % 900, 10, 4, 4); }, 33);
+      // fsTestStill: a still screen, which sends no frames at all (like Windows Graphics Capture)
+      setInterval(() => { if (window.fsTestStill) return; g.fillStyle = '#FF8800'; g.fillRect(0, 0, 960, 540); g.fillStyle = '#FF8801'; g.fillRect((Date.now() / 10) % 900, 10, 4, 4); }, 33);
       return c.captureStream(30);
     }; true`);
+
+    // Minimized, like a game in exclusive fullscreen behind FrogShare: still on the list and still picked,
+    // and going live shows the "já volta" card until the window is back on screen
+    await showWindowQuietly(testId, 7);
+    check('minimizada, a janela continua na lista e escolhida', await untilApp(`(async () => {
+      await loadSources({ silent: true });
+      const el = [...document.querySelectorAll('#source-grid .source-item')].find(e => e.textContent.includes('FS-TEST-SOURCE'));
+      return !!el?.querySelector('.is-minimized') && selectedSourceId === window.fsTestSource;
+    })()`, 8000));
     await evalApp(`updateStartButton(); btnStart.click(); true`);
     check('começa a transmitir no próprio link', await untilApp(`isStreaming && roomId === '${name}'`, 15000));
+    check('com a janela minimizada, vai ao ar com o "já volta"', await untilApp(`standby.active && standby.id === window.fsTestSource`, 5000));
 
     const v1 = viewer('a1-' + Date.now());
     await v1.loadURL(`${BASE}/s/${name}`);
     check('quem assiste vê a transmissão do app', await until(v1, `document.body.dataset.state === 'live' && remoteVideo.videoWidth > 0`, 20000));
+    await wait(1500);
+    const waitingCard = await js(v1, SAMPLE(0.1, 0.1));
+    check('quem assiste vê o "já volta" enquanto a janela está minimizada', near(waitingCard, [11, 26, 16], 25), JSON.stringify(waitingCard));
+    await showWindowQuietly(testId, 4);
+    check('a janela volta para a transmissão sozinha', await untilApp(`!standby.active && selectedSourceId === window.fsTestSource`, 12000));
     await wait(2500);
     const centre = await js(v1, SAMPLE(0.45, 0.45));
     const corner = await js(v1, SAMPLE(0.85, 0.8));
     check('a imagem é a janela de teste (laranja)', near(centre, [255, 136, 0], 60), JSON.stringify(centre));
     check('a câmera aparece no canto de baixo à direita', corner && !near(corner, [255, 136, 0], 60), JSON.stringify(corner));
+
+    // The camera anywhere (here: top left), and still moving while the screen sends nothing
+    await evalApp(`setCamLayout({ x: 0, y: 0, w: 0.28 }); true`);
+    await wait(1500);
+    const topLeft = await js(v1, SAMPLE(0.12, 0.15));
+    const oldCorner = await js(v1, SAMPLE(0.85, 0.8));
+    check('a câmera vai para qualquer lugar (em cima à esquerda)', topLeft && !near(topLeft, [255, 136, 0], 60) && near(oldCorner, [255, 136, 0], 60), JSON.stringify({ topLeft, oldCorner }));
+    check('o app sabe onde a câmera foi desenhada (para a moldura de arrastar)', await evalApp(`!!camDrag.rect && camDrag.rect[0] < 0.05 && camDrag.rect[1] < 0.05 && Math.abs(camDrag.rect[2] - 0.28) < 0.01`), JSON.stringify(await evalApp(`camDrag.rect`)));
+    await evalApp(`window.fsTestStill = true; true`);
+    await wait(800);
+    const shown = () => js(v1, `remoteVideo.getVideoPlaybackQuality().totalVideoFrames`);
+    const before = await shown();
+    await wait(1500);
+    const still = (await shown()) - before;
+    check('tela parada: a câmera continua mexendo para quem assiste', still >= 20, `${still} quadros em 1,5 s`);
+    await evalApp(`window.fsTestStill = false; setCamLayout({ x: 1, y: 1, w: 0.28 }); true`);
+    await wait(800);
 
     // Names, removing, locking, reactions, data saver, health
     await js(v1, `setViewerName('Ana'); true`);
@@ -133,38 +195,31 @@ app.whenReady().then(async () => {
     await wait(1500);
     check('desligar a pausa volta a imagem', near(await js(v1, SAMPLE(0.45, 0.45)), [255, 136, 0], 60));
 
-    // Leaving the game (decision logic, with the window events the helper would send)
-    const fgLogic = await evalApp(`(() => {
-      privacy.watching = true; privacy.protect = true; resetGame();
-      // A browser in fullscreen (a video) is never taken for the game
-      onForeground({ hwnd: 8, pid: 3131, exe: 'brave', covers: true, onCaptured: true, own: false, shell: false });
-      const browserTaken = !!privacy.game;
-      onForeground({ hwnd: 1, pid: 4242, exe: 'project8', covers: true, onCaptured: true, own: false, shell: false });
-      const game = !browserTaken && privacy.game?.name;
-      onForeground({ hwnd: 2, pid: 5151, exe: 'discord', covers: false, onCaptured: true, own: false, shell: false });
-      const leftGame = privacy.auto;
-      onForeground({ hwnd: 3, pid: 6161, exe: 'chrome', covers: true, onCaptured: false, own: false, shell: false });
-      const otherMonitor = privacy.auto;
-      onForeground({ hwnd: 1, pid: 4242, exe: 'project8', covers: true, onCaptured: true, own: false, shell: false });
-      const back = privacy.auto;
-      onForeground({ switching: true });
-      const altTab = privacy.auto;
-      onForeground({ hwnd: 9, pid: 7, exe: 'explorer', covers: true, onCaptured: true, own: false, shell: true });
-      const desktop = privacy.auto;
-      onForeground({ hwnd: 1, pid: 4242, exe: 'project8', covers: true, onCaptured: true, own: false, shell: false });
-      return { game, leftGame, otherMonitor, back: !back, altTab, desktop, end: !privacy.auto };
+    // A whole screen: the game's name comes from the window in front (the helper's events, here by hand)
+    const fgName = await evalApp(`(() => {
+      const was = fgWatch.source;
+      fgWatch.source = 'screen:test';
+      onForeground({ exe: 'brave', onCaptured: true });
+      const browser = currentGame;
+      onForeground({ exe: 'deadlock', onCaptured: true });
+      const game = currentGame;
+      // Another program in front, or a game on another monitor, doesn't change it
+      onForeground({ exe: 'discord', onCaptured: true });
+      onForeground({ exe: 'cs2', onCaptured: false });
+      const kept = currentGame;
+      fgWatch.source = was;
+      return { browser, game, kept };
     })()`);
-    check('acha o jogo e cobre a tela ao sair dele (Alt+Tab, outro app, área de trabalho)', fgLogic.game === 'Deadlock' && fgLogic.leftGame && fgLogic.otherMonitor && fgLogic.back && fgLogic.altTab && fgLogic.desktop && fgLogic.end, JSON.stringify(fgLogic));
+    check('tela inteira: o nome do jogo vem da janela da frente', fgName.browser === null && fgName.game === 'Deadlock' && fgName.kept === 'Deadlock', JSON.stringify(fgName));
     check('o nome do jogo chega a quem assiste', await until(v1, `infoFor(selectedId)?.game === 'Deadlock'`, 4000));
-    await evalApp(`privacy.watching = false; privacy.auto = false; setAway(); true`);
 
-    // The real helper: one event for the window in front right now
+    // The real helper: one event for the window in front right now (its name stays out of the output)
     const fgReal = await evalApp(`new Promise(resolve => {
       const t = setTimeout(() => resolve(null), 4000);
       window.electronAPI.onForeground(fg => { clearTimeout(t); resolve(fg); });
       window.electronAPI.watchForeground('screen:' + 0 + ':0');
     })`);
-    check('o vigia da janela da frente responde', !!fgReal && typeof fgReal.exe === 'string' && 'covers' in fgReal && 'onCaptured' in fgReal, fgReal ? `exe ${fgReal.exe}, cobre ${fgReal.covers}` : 'nada');
+    check('o vigia da janela da frente responde', !!fgReal && typeof fgReal.exe === 'string' && typeof fgReal.onCaptured === 'boolean', fgReal ? 'respondeu' : 'nada');
     await evalApp(`window.electronAPI.watchForeground(null); true`);
     const hk = await evalApp(`window.electronAPI.setHotkey('CommandOrControl+Shift+F9')`);
     check('o atalho global de pausa registra', hk && hk.ok === true, JSON.stringify(hk));

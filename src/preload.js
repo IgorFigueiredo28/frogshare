@@ -50,7 +50,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('audio-capture-error', (_, error) => callback(error));
   },
   getSourceIds: () => ipcRenderer.invoke('get-source-ids'),
-  // Privacy while live: the window in front, the quick pause shortcut, the "já volto" state
+  getWindowState: (sourceId) => ipcRenderer.invoke('get-window-state', sourceId),
+  // While live: the window in front (the game's name on a whole screen), the quick pause shortcut, the "já volto" state
   watchForeground: (sourceId) => ipcRenderer.invoke('watch-foreground', sourceId),
   onForeground: (callback) => {
     ipcRenderer.on('foreground', (_, fg) => callback(fg));

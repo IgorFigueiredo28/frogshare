@@ -260,7 +260,7 @@
           </div>
           <label class="switch-row">
             <input type="checkbox" id="cam-toggle" class="switch">
-            <span>Mostrar minha câmera num cantinho da transmissão</span>
+            <span>Mostrar minha câmera na transmissão</span>
           </label>
           <div class="cam-options" id="cam-options" hidden>
             <label class="field-row" for="cam-device">
@@ -284,6 +284,7 @@
                 <label class="segment"><input type="radio" name="cam-size" value="l"><span>Grande</span></label>
               </div>
             </div>
+            <p class="cam-hint">Ao vivo, arraste a câmera na prévia para qualquer lugar e puxe o canto dela para mudar o tamanho.</p>
             <p class="cam-note" id="cam-note"></p>
           </div>
         </section>
@@ -293,10 +294,6 @@
             <svg class="ico step-ico" aria-hidden="true"><use href="/brand/icons.svg#i-shield"/></svg>
             <h2 id="step-privacy">Privacidade</h2>
           </div>
-          <label class="switch-row" id="protect-row">
-            <input type="checkbox" id="protect-toggle" class="switch" checked>
-            <span>Transmitindo a tela inteira: quando eu sair do jogo, mostrar "já volto" em vez do resto do PC</span>
-          </label>
           <p class="privacy-status" id="privacy-status" hidden></p>
           <div class="quality-row">
             <span class="quality-label" id="hotkey-label">Pausa rápida, sem sair do jogo</span>
@@ -351,6 +348,10 @@
         <div class="stream-main" id="stream-main">
           <div class="preview-area">
             <video id="local-preview" autoplay muted playsinline></video>
+            <!-- Over the camera in the preview: drag to move it, pull the corner to resize (host.js) -->
+            <div class="cam-handle" id="cam-handle" title="Arraste para mudar a câmera de lugar; puxe o canto para mudar o tamanho" hidden>
+              <span class="cam-resize" aria-hidden="true"></span>
+            </div>
             <div class="preview-paused" aria-hidden="true">
               <img src="/brand/frog-sleep.svg" alt="" width="96" height="88">
               <span>A prévia pausa quando você está no jogo, para não pesar. Seus amigos continuam vendo normalmente.</span>
@@ -370,6 +371,16 @@
           </div>
           <!-- Who's watching, by the names they picked; the owner can remove someone -->
           <ul class="viewer-list" id="viewer-list" aria-label="Quem está assistindo"></ul>
+          <div class="kick-row" id="kick-row" hidden>
+            <label for="kick-time">Quem eu tirar fica fora por</label>
+            <select id="kick-time" class="input kick-select">
+              <option value="10">10 minutos</option>
+              <option value="60" selected>1 hora</option>
+              <option value="1440">1 dia</option>
+              <option value="10080">1 semana</option>
+            </select>
+          </div>
+          <button type="button" class="link-button kick-undo" id="btn-clear-bans" hidden>Deixar voltar quem eu tirei</button>
           <label class="switch-row lock-row" id="lock-row">
             <input type="checkbox" id="lock-toggle" class="switch">
             <span>Trancar a sala: quem já está continua, ninguém novo entra</span>

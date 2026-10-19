@@ -109,6 +109,31 @@ const collect = (s, ev) => { const arr = []; s.on(ev, d => arr.push(d)); return 
   v1.emit('kick-viewer', { viewerId: v1.id });
   check('quem assiste não consegue tirar ninguém', (await vKickByViewer) === null);
 
+  // Kick for a chosen time, then let everyone back
+  const caio = await connect();
+  const caioIn = next(caio, 'room-update');
+  caio.emit('join-room', { roomId, asHost: false, name: 'Caio', viewerKey: 'key-caio-123456' });
+  await caioIn;
+  await wait(200);
+  const caioKicked = next(caio, 'kicked');
+  const banList = next(host, 'viewer-list');
+  host.emit('kick-viewer', { viewerId: caio.id, minutes: 10 });
+  const caioKick = await caioKicked;
+  const tenMin = caioKick?.until - Date.now();
+  check('tirar por 10 minutos: quem saiu sabe até quando', tenMin > 9 * 60000 && tenMin <= 10 * 60000, caioKick ? `${Math.round(tenMin / 1000)} s` : 'nada');
+  check('o dono sabe quantos estão fora', (await banList)?.banned === 2, JSON.stringify(viewerList[viewerList.length - 1]?.banned));
+  const other = await connect();
+  const otherKick = next(other, 'kicked');
+  other.emit('join-room', { roomId, asHost: false, name: 'Caio', viewerKey: 'key-caio-123456' });
+  check('voltando por outra aba, continua fora até a mesma hora', ((await otherKick)?.until || 0) === caioKick?.until);
+  const cleared = next(host, 'viewer-list');
+  host.emit('clear-bans');
+  check('"deixar voltar": ninguém mais fora', (await cleared)?.banned === 0);
+  const caioBack = next(other, 'room-update');
+  other.emit('join-room', { roomId, asHost: false, name: 'Caio', viewerKey: 'key-caio-123456' });
+  check('depois de "deixar voltar", quem foi tirado entra de novo', !!(await caioBack));
+  caio.disconnect(); other.disconnect();
+
   // Named room
   const claim = await (await fetch(BASE + '/api/room/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'teste-sapo' + Math.floor(Math.random() * 1e6) }) })).json();
   check('nome de sala reservado', !!claim.roomId && !!claim.hostKey, JSON.stringify(claim));

@@ -42,6 +42,25 @@
   };
   const displayName = () => nameInput.value.trim().slice(0, 24) || 'Amigo';
 
+  // ======== Group ========
+  // Opened from "Compartilhar minha tela aqui" on a friend's room page (?grupo=<room>): this tab streams
+  // into that room, next to whoever is already there, instead of into a room of its own
+  const groupRoom = (() => {
+    const id = new URLSearchParams(location.search).get('grupo');
+    return id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
+  })();
+  let groupOwner = '';
+  if (groupRoom) {
+    document.title = 'Transmitir no grupo · FrogShare';
+    $('wh-title').textContent = 'Transmitir no grupo';
+    $('wh-sub').textContent = 'Sua tela entra na sala do seu amigo, ao lado da dele. Escolha o que mostrar e pronto.';
+    $('wh-link-label').textContent = 'Link da sala do grupo';
+  }
+  function renderGroup() {
+    if (!groupRoom) return;
+    $('wh-link-fine').textContent = `${groupOwner ? `No grupo de ${groupOwner}. ` : ''}Quem abrir o link vê todo mundo do grupo. Deixe esta aba aberta: fechando, você sai do grupo.`;
+  }
+
   // ======== State ========
   let socket = null, roomId = null, hostKey = null, stream = null, live = false, rejectedOnce = false;
   const pcs = new Map();      // viewerId -> RTCPeerConnection
@@ -145,24 +164,46 @@
   }
 
   function join() {
+    if (groupRoom) {
+      // In a group there's a place only while streaming: stopping gives it back (see stop)
+      if (live) socket.emit('join-room', { roomId, asHost: true, coHost: true, appVersion: 'web', name: displayName() });
+      return;
+    }
     socket.emit('join-room', { roomId, asHost: true, hostKey, appVersion: 'web', name: displayName() });
     if (!live) socket.emit('host-pause');
   }
 
+  // The owner closed the group or took this tab out of it, or it was closed or full from the start
+  function leaveGroup(reason) {
+    if (live) stop();
+    $('wh-group-text').textContent = reason;
+    $('wh-group-note').hidden = false;
+  }
+
   async function ensureRoom() {
     if (socket) return;
-    let saved = null;
-    try { saved = JSON.parse(storage.get(ROOM_KEY) || 'null'); } catch {}
-    if (saved && /^[A-Za-z0-9_-]{1,64}$/.test(saved.roomId || '') && saved.hostKey) ({ roomId, hostKey } = saved);
-    else await newRoom();
+    if (groupRoom) {
+      roomId = groupRoom;
+    } else {
+      let saved = null;
+      try { saved = JSON.parse(storage.get(ROOM_KEY) || 'null'); } catch {}
+      if (saved && /^[A-Za-z0-9_-]{1,64}$/.test(saved.roomId || '') && saved.hostKey) ({ roomId, hostKey } = saved);
+      else await newRoom();
+    }
     socket = io();
     socket.on('connect', join);
     socket.on('host-rejected', async ({ reason } = {}) => {
+      if (groupRoom) { leaveGroup(reason || 'O dono da sala não abriu a transmissão em grupo.'); return; }
       // The saved room went to someone else (a server restart and an unlucky claim): start a new one
       if (rejectedOnce) { showToast(reason || 'O servidor não aceitou a sala.'); return; }
       rejectedOnce = true;
       try { await newRoom(); renderLink(); join(); } catch (err) { showToast(err.message); }
     });
+    socket.on('cohost-accepted', ({ ownerName } = {}) => {
+      groupOwner = String(ownerName || '').slice(0, 24);
+      renderGroup();
+    });
+    socket.on('group-ended', ({ reason } = {}) => leaveGroup(reason || 'A transmissão em grupo acabou.'));
     socket.on('viewer-joined', ({ viewerId } = {}) => { if (live && stream && viewerId) offer(viewerId); });
     socket.on('viewer-needs-p2p', ({ viewerId } = {}) => { if (live && stream && viewerId) offer(viewerId); });
     socket.on('viewer-left', ({ viewerId } = {}) => {
@@ -233,6 +274,7 @@
     storage.set(AUDIO_KEY, $('wh-audio').checked ? '1' : '0');
     btnStart.disabled = true;
     btnStart.textContent = 'Escolhendo a tela…';
+    $('wh-group-note').hidden = true;
     try {
       stream = await capture();
     } catch (err) {
@@ -251,11 +293,14 @@
       stop();
       return;
     }
-    if (resume) {
+    if (resume && groupRoom) {
+      join();
+    } else if (resume) {
       socket.emit('set-name', { name: displayName() });
       socket.emit('host-resume');
     }
     renderLink();
+    renderGroup();
     setState('live');
     startHealth();
     btnStart.disabled = false;
@@ -292,7 +337,8 @@
     for (const pc of pcs.values()) pc.close();
     pcs.clear();
     pending.clear();
-    socket?.emit('host-pause');
+    // In a group, stopping gives the place back; the friend's room carries on without this tab
+    socket?.emit(groupRoom ? 'leave-group' : 'host-pause');
     stopHealth();
     setState('setup');
     btnStart.textContent = 'Voltar a transmitir';
