@@ -314,3 +314,49 @@ body.group-guest .setup-hero { display: none; }
 .group-join .input { flex: 1; min-width: 180px; max-width: 280px; }
 body.group-guest .group-card { display: none; }
 .group-list .group-frog.is-big { width: 31px; margin: -2px -2px -2px -3px; }
+
+/* ================= UI pass (2026-10) ================= */
+/* Setup order: what to show, sound, quality first; group streaming (optional) after them */
+#panel-setup { grid-template-areas: "hero" "source" "audio" "quality" "group" "start"; }
+@media (min-width: 900px) {
+  #panel-setup { grid-template-areas: "hero hero" "source source" "audio quality" "group group" "start start"; }
+}
+
+/* Sentence-case section labels, with the hint in lighter text */
+.source-section-label {
+  text-transform: none; letter-spacing: 0; font-size: var(--text-sm); color: var(--text);
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+}
+.source-section-hint { font-weight: 400; color: var(--text-2); }
+
+/* Facts read as plain labels */
+.room-facts dt { text-transform: none; letter-spacing: 0; font-size: var(--text-xs); }
+.room-panel-sub { font-size: var(--text-md); margin-top: var(--space-1); }
+.room-panel-sub + .switch-row { border-top: 0; padding-top: 0; }
+
+/* Version under the theme toggle, in the interface face */
+.app-version { font-family: var(--font-ui); letter-spacing: 0.2px; }
+
+/* Live: preview and quality stacked in the main column */
+.stream-main { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+#panel-streaming #quality-section .step-num { display: none; }
+#panel-streaming #quality-section .quality-row { flex-direction: row; align-items: center; }
+#panel-streaming #quality-section .quality-label { width: 170px; flex-shrink: 0; }
+#panel-streaming #quality-section .segmented { flex: 1; }
+@media (max-width: 720px) {
+  #panel-streaming #quality-section .quality-row { flex-direction: column; align-items: stretch; }
+}
+
+/* Group: tags as small pills */
+.group-list li { flex-wrap: wrap; }
+.group-list .group-name { flex: 0 1 auto; }
+.group-list .group-tag {
+  padding: 1px 8px; border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: 600;
+  background: var(--surface-2); color: var(--text-2);
+}
+.group-list li .btn-icon { margin-left: auto; }
+
+/* Join a friend's group: label on top, field and button side by side */
+.group-join { display: grid; grid-template-columns: minmax(0, 280px) auto; justify-content: start; align-items: center; gap: var(--space-2); }
+.group-join label { grid-column: 1 / -1; }
+.group-join .input { min-width: 0; max-width: none; }

@@ -44,20 +44,20 @@
   <main class="home">
     <section class="hero">
       <img class="hero-frog" src="/brand/frog.svg" alt="" width="168" height="154">
-      <h1>Assista a tela dos amigos, ao vivo</h1>
+      <h1>Assista à tela dos amigos, ao vivo</h1>
       <p class="hero-sub">Cole o código da sala e pule direto na transmissão. Sem cadastro e sem instalar nada.</p>
 
       <div class="join card" role="group" aria-labelledby="join-label">
         <label id="join-label" class="join-label" for="input-room">Código da sala</label>
         <div class="join-row">
-          <input type="text" id="input-room" class="input input-code" placeholder="8e1592c7" maxlength="8"
+          <input type="text" id="input-room" class="input input-code" placeholder="Código ou link da sala" maxlength="300"
                  autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="join-hint">
           <button id="btn-join" type="button" class="btn btn-primary btn-lg btn-hop">
             Entrar
             <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-arrow-right"/></svg>
           </button>
         </div>
-        <p id="join-hint" class="join-hint">São 8 letras e números. Vem no link que o seu amigo mandou.</p>
+        <p id="join-hint" class="join-hint">São 8 letras e números. Pode colar o link inteiro que o seu amigo mandou.</p>
       </div>
     </section>
 
@@ -66,7 +66,10 @@
       <div class="host-cta-text">
         <h2 id="host-cta-title">Quer transmitir a sua tela?</h2>
         <p>Baixe o app. Ele usa a placa de vídeo, então não pesa no seu jogo.</p>
-        <p class="download-note">O app ainda não tem assinatura digital, então o Windows pode avisar "O Windows protegeu o computador". É normal: clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
+        <details class="download-help">
+          <summary>O Windows mostrou um aviso ao instalar?</summary>
+          <p>O app ainda não tem assinatura digital, então o Windows pode dizer "O Windows protegeu o computador". Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
+        </details>
         <p class="download-note" id="mac-note" hidden>Mac: precisa de chip M1 ou mais novo. Ao baixar, mostramos o passo a passo para instalar.</p>
       </div>
       <div class="download-buttons">

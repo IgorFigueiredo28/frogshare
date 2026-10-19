@@ -307,3 +307,73 @@
 .get-app:hover { color: var(--text); border-color: var(--accent); }
 .get-app:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 @media (max-width: 900px), (pointer: coarse) { .get-app { display: none; } }
+
+/* ================= UI pass (2026-10) ================= */
+/* The room code chip is a button that copies the link */
+.chip-copy { border: 0; cursor: pointer; font-family: var(--font-mono); transition: background var(--dur-fast) var(--ease-out); }
+.chip-copy:hover { background: var(--surface-3); }
+.chip-copy:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+/* Owner tag next to a nickname, instead of "Igor · dono" */
+.stream-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.stream-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream-badge {
+  flex-shrink: 0; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--accent-soft); color: var(--on-accent-soft); font-size: 11px; font-weight: 600; line-height: 1.5;
+}
+.stream-item.selected .stream-state { color: var(--text); font-weight: 600; }
+
+/* Stream switcher inside the player bar: only in fullscreen, where the side list can't be seen */
+.player-streams { display: none; align-items: center; gap: var(--space-1); margin-left: var(--space-2); }
+.video-area:fullscreen .player-streams:not([hidden]) { display: flex; }
+.player-stream {
+  width: 40px; height: 40px; display: grid; place-items: center; padding: 0;
+  background: rgba(255, 255, 255, 0.08); border: 2px solid transparent; border-radius: 50%; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.player-stream .stream-frog { width: 26px; height: auto; }
+.player-stream:hover { background: rgba(255, 255, 255, 0.18); }
+.player-stream[aria-pressed="true"] { border-color: #F3F8EC; background: rgba(255, 255, 255, 0.2); }
+.player-stream:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.player-stream.slot-1 .stream-frog { filter: hue-rotate(95deg); }
+.player-stream.slot-2 .stream-frog { filter: hue-rotate(-80deg) saturate(1.3); }
+.player-stream.slot-3 .stream-frog { filter: hue-rotate(160deg); }
+.player-stream-name { margin-left: var(--space-1); font-weight: 600; font-size: var(--text-sm); color: #F3F8EC; white-space: nowrap; }
+
+/* Phones held upright: the video keeps its shape at the top, with its controls on it, and the list of
+   streams goes underneath (instead of a small picture floating in a tall black box) */
+@media (max-width: 720px) and (orientation: portrait) {
+  .page-room[data-state="live"] .stage { flex-direction: column; justify-content: flex-start; }
+  .page-room[data-state="live"] .video-area { flex: 0 0 auto; width: 100%; aspect-ratio: 16 / 9; }
+  .page-room[data-state="live"] .stream-list {
+    order: 2; flex-direction: column; overflow-x: hidden; overflow-y: auto;
+    margin: var(--space-3) 0 0; min-height: 0;
+  }
+  .page-room[data-state="live"] .stream-list-title { display: block; }
+  .page-room[data-state="live"] .stream-item { flex: 0 0 auto; max-width: none; }
+  .page-room[data-state="live"] .stream-share { margin-top: var(--space-1); }
+  .page-room[data-state="live"] .unmute-cta { bottom: 50%; transform: translate(-50%, 50%); }
+}
+
+/* Two-line header on small phones: toasts start below it */
+@media (max-width: 460px) { .page-room { --toast-top: 104px; } }
+
+/* Home: the code field shows the typed code in mono, but the hint in the normal face */
+.input-code::placeholder { font-family: var(--font-ui); letter-spacing: 0; font-size: var(--text-md); text-transform: none; }
+
+/* Home: the Windows warning help only opens when someone needs it */
+.download-help { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-2); }
+.download-help summary { cursor: pointer; font-weight: 600; color: var(--text); width: fit-content; border-radius: var(--radius-xs); }
+.download-help summary:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.download-help p { margin-top: var(--space-2); }
+.page-room[data-state="checking"] .video-area { background: var(--surface-2); border: 1px dashed var(--border-strong); }
+
+/* Under the video on an upright phone with a single stream: one big way into fullscreen */
+.phone-actions { display: none; }
+@media (max-width: 720px) and (orientation: portrait) {
+  .page-room[data-state="live"]:not(.has-stream-list) .phone-actions {
+    display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+    order: 3; margin-top: var(--space-4); text-align: center;
+  }
+  .phone-actions p { font-size: var(--text-sm); color: var(--text-2); }
+}

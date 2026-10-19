@@ -18,7 +18,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.8',
+        app_version: '1.6.9',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -112,8 +112,11 @@ function preferH264(sdp) {
 }
 
 function showToast(msg) {
+  // One at a time: a new message replaces the one on screen instead of piling on top of it
+  document.querySelectorAll('.toast').forEach(t => t.remove());
   const el = document.createElement('div');
   el.className = 'toast';
+  el.setAttribute('role', 'status');
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3000);
@@ -161,6 +164,7 @@ document.getElementById('room-retry').addEventListener('submit', (e) => {
 // Join room as viewer (re-joins automatically on reconnection)
 socket.on('connect', async () => {
   if (!roomConfirmed) {
+    statusText.textContent = 'Procurando a sala…';
     let found = false;
     for (let i = 0; i < 4 && !found; i++) {
       found = await roomExists();
@@ -223,7 +227,11 @@ function pickPlayable() {
   return playable[0]?.hostId || null;
 }
 
+// Set once the viewer picks a stream themselves; until then the room owner's stream takes the stage
+let userPicked = false;
+
 function select(hostId) {
+  userPicked = true;
   selectedId = hostId;
   renderStage();
   updateWatching();
@@ -322,6 +330,8 @@ function showStream(ch, stream, peer) {
   }
   const current = selectedId && channels.get(selectedId);
   if (!current || !current.stream || current.paused) selectedId = ch.hostId;
+  // A guest's video can arrive before the owner's: whoever opened the room is shown first
+  else if (!userPicked && infoFor(ch.hostId)?.owner && selectedId !== ch.hostId) selectedId = ch.hostId;
   renderStage();
   updateWatching();
   renderStreamList();
@@ -657,9 +667,45 @@ const frogIcon = (name) => /^big\s*frog$/i.test(String(name || '').trim()) ? '/b
 
 function streamState(info) {
   const ch = channels.get(info.id);
-  if (info.paused || ch?.paused) return 'pausado';
-  if (ch?.stream) return 'ao vivo';
-  return 'conectando…';
+  if (info.paused || ch?.paused) return 'Pausado';
+  if (ch?.stream) return info.id === selectedId ? 'Na tela' : 'Ao vivo';
+  return 'Conectando…';
+}
+
+// Nickname, plus a small "dono" tag for whoever owns the room
+function streamNameLine(info) {
+  const line = Object.assign(document.createElement('span'), { className: 'stream-name' });
+  line.append(Object.assign(document.createElement('span'), { className: 'stream-name-text', textContent: info.name }));
+  if (info.owner) line.append(Object.assign(document.createElement('span'), { className: 'stream-badge', textContent: 'dono' }));
+  return line;
+}
+
+// The same choice inside the player bar, for fullscreen (where the side list is out of view)
+function renderPlayerStreams(show) {
+  const box = document.getElementById('player-streams');
+  if (!box) return;
+  box.hidden = !show || hostsInfo.length < 2;
+  if (box.hidden) { box.replaceChildren(); return; }
+  const sorted = hostsInfo.slice().sort((a, b) => a.slot - b.slot);
+  const buttons = sorted.map((info, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `player-stream slot-${info.slot}`;
+    b.setAttribute('aria-pressed', String(info.id === selectedId));
+    b.setAttribute('aria-label', `Assistir ${info.name}`);
+    b.title = `${info.name} (tecla ${i + 1})`;
+    const frog = Object.assign(document.createElement('img'), { src: frogIcon(info.name), alt: '', className: 'stream-frog' });
+    b.append(frog);
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ch = channels.get(info.id);
+      if (ch?.stream && !ch.paused) select(info.id);
+    });
+    return b;
+  });
+  const current = sorted.find(h => h.id === selectedId);
+  const name = Object.assign(document.createElement('span'), { className: 'player-stream-name', textContent: current ? current.name : '' });
+  box.replaceChildren(...buttons, name);
 }
 
 function renderStreamList() {
@@ -667,6 +713,7 @@ function renderStreamList() {
   const show = hostsInfo.length > 1 || groupOpen;
   streamList.hidden = !show;
   document.body.classList.toggle('has-stream-list', show);
+  renderPlayerStreams(show);
   if (!show) {
     // Without the list there's no way to undo a per-stream mute: the player's volume is the only control
     if ([...channels.values()].some(c => c.muted)) {
@@ -688,11 +735,11 @@ function renderStreamList() {
     const text = document.createElement('span');
     text.className = 'stream-text';
     text.append(
-      Object.assign(document.createElement('span'), { className: 'stream-name', textContent: info.name + (info.owner ? ' · dono' : '') }),
+      streamNameLine(info),
       Object.assign(document.createElement('span'), { className: 'stream-state', textContent: streamState(info) })
     );
     pick.append(frog, text);
-    pick.addEventListener('click', () => { if (ch?.stream && !ch.paused) select(info.id); else { selectedId = info.id; renderStage(); renderStreamList(); } });
+    pick.addEventListener('click', () => { if (ch?.stream && !ch.paused) select(info.id); else { userPicked = true; selectedId = info.id; renderStage(); renderStreamList(); } });
     const mute = document.createElement('button');
     mute.type = 'button';
     mute.className = 'btn btn-ghost btn-icon stream-mute';
@@ -909,7 +956,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.8', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.9', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }
@@ -1025,13 +1072,11 @@ function applyInitialAudio() {
     if (wantMuted) return;
     remoteVideo.muted = false;
     if (remoteVideo.paused) {
+      // The browser wants a tap first; the "Ativar som" button on the video asks for it
       remoteVideo.muted = true;
       remoteVideo.play().catch(() => {});
-      showToast('O navegador abriu sem som: toque na tela para ouvir');
     }
-  }).catch(() => {
-    showToast('O navegador abriu sem som: toque na tela para ouvir');
-  });
+  }).catch(() => {});
 }
 
 // Phones (and most browsers) start the video muted. Any tap or key on the page counts as the

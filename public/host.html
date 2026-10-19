@@ -112,7 +112,7 @@
           <p class="subtitle" id="group-invite-text"></p>
           <label class="field-row" for="guest-nickname">
             <span>Seu apelido na sala</span>
-            <input id="guest-nickname" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Como seus amigos te veem">
+            <input id="guest-nickname" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Ex.: Igor">
           </label>
         </div>
         <button id="btn-group-cancel" type="button" class="btn btn-ghost">Cancelar</button>
@@ -139,10 +139,10 @@
           <h2 id="group-card-title">Transmissão em grupo</h2>
           <label class="switch-row">
             <input type="checkbox" id="group-toggle-setup" class="switch">
-            <span>Deixar até 4 pessoas mostrarem a tela na minha sala</span>
+            <span>Deixar até 4 pessoas mostrarem a tela na minha sala ao mesmo tempo</span>
           </label>
           <form class="group-join" id="group-join" autocomplete="off">
-            <label for="group-join-code">Ou entre no grupo de um amigo:</label>
+            <label for="group-join-code">Ou entre no grupo de um amigo</label>
             <input id="group-join-code" class="input" type="text" maxlength="200" spellcheck="false" placeholder="Código ou link da sala">
             <button type="submit" class="btn btn-secondary">Entrar</button>
           </form>
@@ -257,11 +257,14 @@
       </div>
 
       <div class="stream-body">
-        <div class="preview-area">
-          <video id="local-preview" autoplay muted playsinline></video>
-          <div class="preview-paused" aria-hidden="true">
-            <img src="/brand/frog-sleep.svg" alt="" width="96" height="88">
-            <span>A prévia pausa quando você está no jogo, para não pesar. Seus amigos continuam vendo normalmente.</span>
+        <!-- Preview, and the quality card under it while live (host.js moves it here) -->
+        <div class="stream-main" id="stream-main">
+          <div class="preview-area">
+            <video id="local-preview" autoplay muted playsinline></video>
+            <div class="preview-paused" aria-hidden="true">
+              <img src="/brand/frog-sleep.svg" alt="" width="96" height="88">
+              <span>A prévia pausa quando você está no jogo, para não pesar. Seus amigos continuam vendo normalmente.</span>
+            </div>
           </div>
         </div>
 
@@ -271,7 +274,8 @@
             <span class="room-watchers-num" id="watchers-num">0</span>
             <span class="room-watchers-label">
               <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
-              <span id="viewer-count">0 assistindo</span>
+              <span aria-hidden="true">assistindo agora</span>
+              <span id="viewer-count" class="sr-only">0 assistindo</span>
             </span>
           </div>
           <dl class="room-facts" id="room-facts">
@@ -281,6 +285,7 @@
             <div><dt>Envio</dt><dd id="fact-rate">–</dd></div>
           </dl>
           <p class="stream-stats" id="stream-stats"></p>
+          <h3 class="room-panel-sub">Opções</h3>
           <label class="switch-row">
             <input type="checkbox" id="overlay-toggle" class="switch" checked>
             <span>Mostrar o aviso "ao vivo" quando eu minimizar o app</span>
@@ -297,7 +302,7 @@
             <div class="group-details" id="group-details" hidden>
               <label class="field-row" for="nickname">
                 <span>Seu apelido na sala</span>
-                <input id="nickname" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Como seus amigos te veem">
+                <input id="nickname" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Ex.: Igor">
               </label>
               <ul class="group-list" id="group-list" aria-label="Quem está transmitindo"></ul>
               <p class="group-hint" id="group-hint"></p>

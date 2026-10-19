@@ -32,10 +32,10 @@
       </a>
 
       <div class="room-meta">
-        <span class="chip chip-code" title="Código da sala">
+        <button type="button" class="chip chip-code chip-copy" id="btn-copy-room" title="Copiar o link da sala para chamar mais gente">
           <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>
-          <span class="sr-only">Sala</span><span id="room-code"></span>
-        </span>
+          <span class="sr-only">Copiar o link da sala</span><span id="room-code"></span>
+        </button>
         <span class="chip" id="room-status" aria-live="polite">Esperando</span>
         <span class="chip chip-watchers">
           <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
@@ -78,8 +78,8 @@
         <div class="placeholder" id="placeholder">
           <div class="empty-state">
             <img id="placeholder-frog" src="/brand/frog-sleep.svg" alt="" width="132" height="121">
-            <p id="status-text" class="empty-title">Esperando o host compartilhar a tela…</p>
-            <p id="placeholder-hint" class="empty-text">A transmissão aparece aqui sozinha assim que começar.</p>
+            <p id="status-text" class="empty-title">Procurando a sala…</p>
+            <p id="placeholder-hint" class="empty-text">Conferindo o código.</p>
             <span class="bubbles" id="placeholder-bubbles" aria-hidden="true"><i></i><i></i><i></i></span>
             <form class="room-retry" id="room-retry" hidden>
               <label class="sr-only" for="retry-code">Código da sala</label>
@@ -107,6 +107,7 @@
             <input type="range" id="volume-slider" min="0" max="100" step="1" value="100" aria-label="Volume">
             <span class="volume-value" id="volume-value">100%</span>
             </div>
+            <div class="player-streams" id="player-streams" role="group" aria-label="Escolher a transmissão" hidden></div>
             <span class="player-spacer"></span>
             <button id="btn-info" type="button" class="btn btn-ghost btn-icon" style="display:none"
                     aria-label="Informações da transmissão" aria-pressed="false" title="Mostrar ou esconder as informações da transmissão (I)">
@@ -120,6 +121,13 @@
           </button>
           <div id="stats-lines"></div>
         </div>
+      </div>
+      <!-- Phones held upright, one stream: the big way into fullscreen (the icon in the player is small) -->
+      <div class="phone-actions" id="phone-actions">
+        <button type="button" class="btn btn-secondary btn-lg btn-block" id="btn-phone-fullscreen">
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-maximize"/></svg>Assistir em tela cheia
+        </button>
+        <p>O celular vira para a horizontal sozinho.</p>
       </div>
     </main>
   </div>

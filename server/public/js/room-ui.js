@@ -10,7 +10,17 @@
   const bubbles = document.getElementById('placeholder-bubbles');
   const fullscreenBtn = document.getElementById('btn-fullscreen');
 
+  document.getElementById('btn-phone-fullscreen')?.addEventListener('click', () => toggleFullscreen());
+
+  document.getElementById('btn-copy-room')?.addEventListener('click', () => {
+    const link = location.origin + '/room.html?room=' + encodeURIComponent(new URLSearchParams(location.search).get('room') || '');
+    navigator.clipboard.writeText(link)
+      .then(() => showToast('Link da sala copiado. É só mandar para quem quiser assistir.'))
+      .catch(() => showToast('Não deu para copiar. O link é: ' + link));
+  });
+
   const STATES = {
+    checking: { chip: 'Procurando', cls: '', frog: 'frog', hint: 'Conferindo o código.', bubbles: true },
     live: { chip: 'Ao vivo', cls: 'chip-live', eyes: true },
     starting: { chip: 'Conectando', cls: 'chip-ok', frog: 'frog', hint: 'O host está ao vivo. Abrindo a transmissão…', bubbles: true },
     waiting: { chip: 'Esperando', cls: '', frog: 'frog-sleep', hint: 'A transmissão aparece aqui sozinha assim que começar.' },
@@ -22,6 +32,7 @@
 
   // The tab says what's going on, for a viewer who left it in the background
   const TITLES = {
+    checking: 'Procurando a sala · FrogShare',
     live: '🔴 Ao vivo · FrogShare',
     starting: 'Conectando… · FrogShare',
     waiting: 'Esperando o host · FrogShare',
@@ -35,6 +46,7 @@
     if (video.style.display === 'block') return 'live';
     const text = statusEl.textContent.toLowerCase();
     if (text.includes('não existe')) return 'notfound';
+    if (text.includes('procurando')) return 'checking';
     if (text.includes('pausou')) return 'paused';
     if (text.includes('desconectou') || text.includes('saiu')) return 'left';
     if (text.includes('reconect') || text.includes('demorando') || text.includes('perdida')) return 'reconnecting';

@@ -19,7 +19,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.6.8',
+        app_version: '1.6.9',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -195,11 +195,39 @@ const viewerCountBar = document.getElementById('viewer-count-bar');
 const btnCopyCodeBar = document.getElementById('btn-copy-code-bar');
 
 function showToast(msg) {
+  // One at a time: a new message replaces the one on screen instead of piling on top of it
+  document.querySelectorAll('.toast').forEach(t => t.remove());
   const el = document.createElement('div');
   el.className = 'toast';
+  el.setAttribute('role', 'status');
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3000);
+}
+
+// Section heading in the screen lists, with an optional plain-language hint after it
+function sourceSectionLabel(text, hint) {
+  const label = document.createElement('div');
+  label.className = 'source-section-label';
+  label.textContent = text;
+  if (hint) label.append(Object.assign(document.createElement('span'), { className: 'source-section-hint', textContent: hint }));
+  return label;
+}
+
+// Programs show up by their process name, which for games often isn't the name people know
+// (Deadlock runs as "project8"). Known ones get their real name; the rest keep the process name.
+const APP_NAMES = {
+  project8: 'Deadlock', 'league of legends': 'League of Legends', leagueclientuxrender: 'Cliente do LoL',
+  leagueclientux: 'Cliente do LoL', cs2: 'Counter-Strike 2', 'valorant-win64-shipping': 'Valorant',
+  r5apex: 'Apex Legends', 'r5apex_dx12': 'Apex Legends', 'fortniteclient-win64-shipping': 'Fortnite',
+  rocketleague: 'Rocket League', overwatch: 'Overwatch 2', dota2: 'Dota 2', gta5: 'GTA V',
+  'gta5_enhanced': 'GTA V', eldenring: 'Elden Ring', javaw: 'Minecraft', minecraft: 'Minecraft',
+  robloxplayerbeta: 'Roblox', msedge: 'Microsoft Edge', chrome: 'Google Chrome', brave: 'Brave',
+  firefox: 'Firefox', opera: 'Opera', spotify: 'Spotify', discord: 'Discord', vlc: 'VLC'
+};
+function appName(processName) {
+  const raw = String(processName || '');
+  return APP_NAMES[raw.toLowerCase()] || raw;
 }
 
 function getAudioMode() {
@@ -228,20 +256,14 @@ async function loadSources({ silent = false } = {}) {
   sourceGrid.innerHTML = '';
 
   if (screens.length > 0) {
-    const screenLabel = document.createElement('div');
-    screenLabel.className = 'source-section-label';
-    screenLabel.textContent = 'Telas inteiras (melhor para jogos em tela cheia)';
-    sourceGrid.appendChild(screenLabel);
+    sourceGrid.appendChild(sourceSectionLabel('Telas inteiras', 'melhor para jogos em tela cheia'));
 
     screens.forEach(source => {
       const item = createSourceItem(source);
       sourceGrid.appendChild(item);
     });
 
-    const windowLabel = document.createElement('div');
-    windowLabel.className = 'source-section-label';
-    windowLabel.textContent = 'Janelas';
-    sourceGrid.appendChild(windowLabel);
+    sourceGrid.appendChild(sourceSectionLabel('Janelas'));
   }
 
   windows.forEach(source => {
@@ -291,10 +313,11 @@ function createSourceItem(source, onClick) {
 function sessionRow(session) {
   const span = (className, text) => Object.assign(document.createElement('span'), { className, textContent: text });
   const active = session.state === 'active';
+  const name = span('session-name', appName(session.name));
+  name.title = `${session.name} (processo ${session.pid})`;
   return [
-    span('session-name', String(session.name)),
-    span('session-pid', 'PID ' + session.pid),
-    span('session-state ' + (active ? 'active' : 'inactive'), active ? 'Ativo' : 'Inativo')
+    name,
+    span('session-state ' + (active ? 'active' : 'inactive'), active ? 'Tocando' : 'Em silêncio')
   ];
 }
 
@@ -324,7 +347,7 @@ function applyAudioFollow(sessions, { announce = true } = {}) {
   selectedPid = session.pid;
   audioFollow.autoPicked = true;
   updateStartButton();
-  if (announce) showToast(`Som de "${session.name}" escolhido junto com a janela.`);
+  if (announce) showToast(`O som do ${appName(session.name)} foi escolhido junto com a janela.`);
   return true;
 }
 
@@ -946,7 +969,7 @@ btnStart.addEventListener('click', async () => {
     roomCodeEl.textContent = roomId;
     panelSetup.style.display = 'none';
     panelStreaming.style.display = '';
-    panelStreaming.appendChild(qualitySection);
+    document.getElementById('stream-main').appendChild(qualitySection);
 
     startStatsUpdate();
 
@@ -1121,8 +1144,8 @@ function renderGroupUi() {
   groupInvite.hidden = !guest;
   if (guest) {
     groupInviteText.textContent = group.ownerName
-      ? `Você está entrando na sala de ${group.ownerName} (${group.guestRoom}). Escolha a tela e o som e clique em "Entrar na transmissão em grupo".`
-      : `Sala ${group.guestRoom}. Escolha a tela e o som e clique em "Entrar na transmissão em grupo". Sua tela aparece para quem está na sala, junto com a do dono.`;
+      ? `Você vai transmitir na sala de ${group.ownerName} (${group.guestRoom}), junto com a tela dele. Escolha a tela e o som aqui embaixo.`
+      : `Você vai transmitir na sala ${group.guestRoom}, junto com o dono. Escolha a tela e o som aqui embaixo.`;
   }
   groupToggleRow.hidden = guest;
   btnStop.lastChild.textContent = guest ? 'Sair do grupo' : 'Parar';
@@ -1137,16 +1160,16 @@ function renderGroupUi() {
   chipGroup.hidden = !(guest || (group.enabled && others > 0));
   chipGroupFrog.className = `group-frog slot-${guest ? group.slot : 0}`;
   chipGroupFrog.src = frogIcon(nickname());
-  chipGroupText.textContent = guest ? `Em grupo${group.ownerName ? ' com ' + group.ownerName : ''}` : `Em grupo · ${group.hosts.length} transmitindo`;
+  chipGroupText.textContent = guest ? `Em grupo${group.ownerName ? ' com ' + group.ownerName : ''}` : `${group.hosts.length} transmitindo em grupo`;
 
   const items = group.hosts.slice().sort((a, b) => a.slot - b.slot).map(h => {
     const li = document.createElement('li');
     li.className = `slot-${h.slot}`;
     const frog = Object.assign(document.createElement('img'), { className: 'group-frog' + (frogIcon(h.name).includes('big') ? ' is-big' : ''), src: frogIcon(h.name), alt: '' });
     const name = Object.assign(document.createElement('span'), { className: 'group-name', textContent: h.name });
-    const tags = [h.id === me ? 'você' : '', h.owner ? 'dono' : '', h.paused ? 'pausado' : ''].filter(Boolean).join(' · ');
-    if (tags) name.append(' ', Object.assign(document.createElement('span'), { className: 'group-tag', textContent: `(${tags})` }));
-    li.append(frog, name);
+    const tags = [h.id === me ? 'você' : '', h.owner ? 'dono' : '', h.paused ? 'pausado' : ''].filter(Boolean)
+      .map(t => Object.assign(document.createElement('span'), { className: 'group-tag', textContent: t }));
+    li.append(frog, name, ...tags);
     if (!guest && !h.owner) {
       const kick = document.createElement('button');
       kick.type = 'button';
@@ -1700,7 +1723,7 @@ async function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.8', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.9', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1755,15 +1778,9 @@ function renderSwitchSources(sources) {
   };
 
   if (screens.length > 0) {
-    const screenLabel = document.createElement('div');
-    screenLabel.className = 'source-section-label';
-    screenLabel.textContent = 'Telas inteiras (melhor para jogos em tela cheia)';
-    switchSourceGrid.appendChild(screenLabel);
+    switchSourceGrid.appendChild(sourceSectionLabel('Telas inteiras', 'melhor para jogos em tela cheia'));
     screens.forEach(addItem);
-    const windowLabel = document.createElement('div');
-    windowLabel.className = 'source-section-label';
-    windowLabel.textContent = 'Janelas';
-    switchSourceGrid.appendChild(windowLabel);
+    switchSourceGrid.appendChild(sourceSectionLabel('Janelas'));
   }
   windows.forEach(addItem);
   updateSwitchApply();
