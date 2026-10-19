@@ -352,6 +352,7 @@ function renderStage() {
       : ch ? ch.status : (hostsInfo.length ? 'Host conectado, abrindo a tela…' : 'Esperando o host entrar…');
   }
   routeAudio();
+  renderNowPlaying();
 }
 
 // ======== Sound ========
@@ -942,15 +943,61 @@ function renderPlayerStreams(show) {
   box.replaceChildren(...buttons, name);
 }
 
+// ======== Who's on screen ========
+// The streamer on stage, what they play and their frog: over the picture with the controls, and in a
+// card under it on an upright phone
+function renderNowPlaying() {
+  const info = selectedId ? infoFor(selectedId) : null;
+  const title = document.getElementById('stage-title');
+  if (!title) return;
+  title.hidden = !info;
+  document.getElementById('now-card').hidden = !info;
+  if (!info) return;
+  const slot = `slot-${info.slot || 0}`;
+  for (const [frogId, nameId, gameId, box] of [['stage-frog', 'stage-name', 'stage-game', title], ['now-frog', 'now-name', 'now-game', document.getElementById('now-card')]]) {
+    box.className = box.className.replace(/\bslot-\d\b/g, '').trim() + ' ' + slot;
+    const frog = document.getElementById(frogId);
+    const src = frogIcon(info.name);
+    if (!frog.src.endsWith(src)) frog.src = src;
+    frog.classList.toggle('is-big', src.includes('big'));
+    document.getElementById(nameId).textContent = info.name;
+    document.getElementById(gameId).textContent = info.game ? `Jogando ${info.game}` : (info.owner ? 'Dono da sala' : 'Ao vivo');
+  }
+}
+
+// ======== Streaming from here ========
+// One button in the header: into this room's group while it's open and has room, or into a room of
+// your own. A dot on it says the group is open.
+function renderShare() {
+  const wrap = document.getElementById('share-wrap');
+  if (!wrap) return;
+  // No app on phones, and their browsers can't share a screen
+  wrap.hidden = !canRunApp;
+  const joinable = groupOpen && hostsInfo.length > 0 && hostsInfo.length < 4;
+  document.getElementById('share-group').hidden = !joinable;
+  document.getElementById('share-dot').hidden = !joinable;
+  document.getElementById('share-dot-text').hidden = !joinable;
+  const owner = hostsInfo.find(h => h.owner);
+  document.getElementById('share-owner').textContent = owner ? owner.name : 'quem já transmite';
+  document.getElementById('btn-share-web').href = SHARE_WEB_URL();
+  for (const a of document.querySelectorAll('.share-web')) a.hidden = !canShareHere;
+}
+document.getElementById('btn-share-app')?.addEventListener('click', openShareInApp);
+renderShare();
+
 function renderStreamList() {
+  renderShare();
+  renderNowPlaying();
   if (!streamList) return;
-  const show = hostsInfo.length > 1 || groupOpen;
+  // A list only when there's a choice to make; with one streamer the player's volume is the mixer
+  const show = hostsInfo.length > 1;
   streamList.hidden = !show;
   document.body.classList.toggle('has-stream-list', show);
   renderPlayerStreams(show);
   // A rebuild in the middle of dragging a volume slider would drop the drag
   if (show && streamList.dataset.dragging) return;
   if (!show) {
+    streamList.replaceChildren();
     // Without the list there's no way to undo a per-stream mute: the player's volume is the only control
     if ([...channels.values()].some(c => c.muted)) {
       for (const c of channels.values()) c.muted = false;
@@ -1014,25 +1061,9 @@ function renderStreamList() {
     row.append(pick, mute, vol);
     return row;
   });
-  const children = [
-    Object.assign(document.createElement('p'), { className: 'stream-list-title', textContent: hostsInfo.length > 1 ? 'Transmissões' : 'Transmissão em grupo' }),
-    ...items
-  ];
-  if (groupOpen && hostsInfo.length < 4 && canRunApp) {
-    const share = document.createElement('button');
-    share.type = 'button';
-    share.className = 'btn btn-secondary stream-share';
-    share.textContent = 'Compartilhar minha tela aqui';
-    share.addEventListener('click', openShareInApp);
-    children.push(share);
-    if (canShareHere) {
-      children.push(Object.assign(document.createElement('a'), {
-        className: 'stream-share-web', href: SHARE_WEB_URL(), target: '_blank', rel: 'noopener',
-        textContent: 'ou pelo navegador, sem instalar'
-      }));
-    }
-  }
-  streamList.replaceChildren(...children);
+  const title = Object.assign(document.createElement('p'), { className: 'stream-list-title', textContent: 'Transmissões' });
+  title.append(Object.assign(document.createElement('span'), { className: 'stream-count', textContent: String(hostsInfo.length) }));
+  streamList.replaceChildren(title, ...items);
 }
 
 for (const type of ['pointerup', 'pointercancel']) {

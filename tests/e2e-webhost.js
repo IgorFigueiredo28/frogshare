@@ -89,7 +89,8 @@ app.whenReady().then(async () => {
     await js(owner, OWNER_JS(groupId, groupKey));
     const gv = mk('whgv-' + Date.now());
     await gv.loadURL(`${BASE}/s/${groupId}`);
-    check('grupo aberto: a sala oferece entrar pelo navegador', await until(gv, `document.querySelector('.stream-share-web')?.getAttribute('href') === '/transmitir.html?grupo=${groupId}'`, 15000));
+    check('grupo aberto: o botão de compartilhar oferece entrar pelo navegador', await until(gv, `!document.getElementById('share-dot').hidden && !document.getElementById('share-group').hidden && document.getElementById('btn-share-web').getAttribute('href') === '/transmitir.html?grupo=${groupId}' && document.getElementById('share-owner').textContent === 'Dono'`, 15000));
+    check('com uma pessoa só transmitindo, não há lista do lado', await js(gv, `document.getElementById('stream-list').hidden`));
     const guest = mk('whg-' + Date.now());
     await guest.loadURL(`${BASE}/transmitir.html?grupo=${groupId}`);
     check('a página de transmitir abre no modo grupo', await until(guest, `document.getElementById('wh-title').textContent === 'Transmitir no grupo'`, 5000));
@@ -100,7 +101,8 @@ app.whenReady().then(async () => {
     check('quem assiste vê as duas transmissões', await until(gv, `document.querySelectorAll('.stream-item').length === 2 && [...channels.values()].filter(c => c.stream).length === 2`, 20000),
       await js(gv, `document.querySelectorAll('.stream-item').length + ' na lista'`));
     await js(guest, `document.getElementById('wh-stop').click(); true`);
-    check('parar sai do grupo: fica só o dono', await until(gv, `hostsInfo.length === 1 && document.querySelectorAll('.stream-item').length === 1`, 8000));
+    check('parar sai do grupo: fica só o dono (e a lista some)', await until(gv, `hostsInfo.length === 1 && document.getElementById('stream-list').hidden && !document.querySelector('.stream-item')`, 8000));
+    check('quem está na tela aparece por cima do vídeo', await js(gv, `document.getElementById('stage-name').textContent === 'Dono' && !document.getElementById('stage-title').hidden`));
     // Closed group: the page says why instead of streaming into nothing
     await js(owner, `window.ownerSocket.emit('group-mode', { enabled: false }); true`);
     await wait(500);

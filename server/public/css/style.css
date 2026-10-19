@@ -281,14 +281,12 @@
 .stream-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stream-state { font-size: var(--text-xs); color: var(--text-2); }
 .stream-mute[aria-pressed="true"] { color: var(--text-2); }
-.stream-share { margin-top: var(--space-1); }
-/* The same group from the browser, right under the app's button */
-.stream-share-web {
-  align-self: center; padding: 2px 6px; border-radius: var(--radius-xs);
-  font-size: var(--text-xs); font-weight: 600; color: var(--accent); text-decoration: none;
+/* How many are streaming, next to the list's title */
+.stream-list-title { display: flex; align-items: center; gap: var(--space-2); }
+.stream-count {
+  min-width: 20px; padding: 0 6px; border-radius: var(--radius-pill); text-align: center;
+  background: var(--surface-2); color: var(--text-2); font-size: 11px; line-height: 18px;
 }
-.stream-share-web:hover { text-decoration: underline; }
-.stream-share-web:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 /* Each streamer gets a frog of their own colour: green (owner), blue, orange, purple */
 .slot-1 { --slot: #3D8BE0; }
 .slot-2 { --slot: #E8903A; }
@@ -302,25 +300,67 @@
   .stream-list { width: auto; margin: 0 0 var(--space-2); flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .stream-list-title { display: none; }
   .stream-item { flex: 0 0 auto; max-width: 70vw; }
-  .stream-share { margin-top: 0; flex: 0 0 auto; white-space: nowrap; }
-  .stream-share-web { flex: 0 0 auto; white-space: nowrap; }
   .share-help { margin: var(--space-2) var(--space-2) 0; }
 }
 /* The bigfrog's chubby frog takes a little more room than the others */
 .stream-frog.is-big { width: 40px; height: 35px; margin: -3px -3px -2px; }
 
-/* Room header: the way to the app for viewers who want to stream too (desktop only, there's no phone app) */
-.get-app {
-  display: inline-flex; align-items: center; gap: 6px; margin-right: var(--space-2);
-  padding: 6px var(--space-3); border-radius: var(--radius-pill);
+/* Room header: one way to stream too, into this room's group or a room of your own (no phones: no
+   app there, and their browsers can't share a screen) */
+.share-wrap { position: relative; margin-right: var(--space-1); }
+.share-wrap[hidden] { display: none; }
+.share-btn {
+  position: relative; min-height: 36px; padding: 0 var(--space-3); gap: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
   font-size: var(--text-sm); color: var(--text-2);
-  border: 1px solid var(--border); transition: border-color var(--dur-fast);
 }
-.get-app:hover, .get-app:focus-within { border-color: var(--accent); }
-.get-app a { color: var(--accent); font-weight: 600; text-decoration: none; border-radius: var(--radius-xs); }
-.get-app a:hover { text-decoration: underline; }
-.get-app a:focus-visible { box-shadow: var(--focus-ring); outline: none; }
-@media (max-width: 900px), (pointer: coarse) { .get-app { display: none; } }
+.share-btn:hover:not(:disabled), .share-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--text); background: transparent; }
+/* The group is open and has room: a little green light */
+.share-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.share-dot[hidden] { display: none; }
+.share-pop { top: calc(100% + 8px); right: 0; width: min(330px, 92vw); padding: var(--space-4); }
+.share-option + .share-option { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.share-option .popover-title { margin-bottom: var(--space-1); }
+.share-text { font-size: var(--text-xs); line-height: 1.45; color: var(--text-2); }
+.share-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+/* .btn sets display, which would otherwise beat the hidden attribute */
+.share-pop .btn[hidden] { display: none !important; }
+@media (max-width: 900px) {
+  .share-btn-label { display: none; }
+  .share-btn { width: 36px; padding: 0; justify-content: center; }
+  .share-dot { position: absolute; top: 5px; right: 5px; box-shadow: 0 0 0 2px var(--surface); }
+}
+
+/* Who's on screen: over the top of the picture with the controls, out of the way the rest of the time */
+.stage-title {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-10);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.22) 60%, transparent);
+  color: #F3F8EC; pointer-events: none;
+  opacity: 0; transform: translateY(-6px);
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+.stage-title[hidden], .now-card[hidden] { display: none; }
+.page-room[data-state="live"] .video-area.controls-visible .stage-title { opacity: 1; transform: none; }
+.stage-who, .now-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.stage-title .stream-frog { width: 40px; height: 36px; }
+.stage-name { font: 600 var(--text-lg) var(--font-display); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45); }
+.stage-game { font-size: var(--text-xs); color: rgba(243, 248, 236, 0.82); }
+/* The zoom chip moves down while the title is up */
+.zoom-chip { transition: top var(--dur) var(--ease-out); }
+.video-area.controls-visible .zoom-chip { top: 64px; }
+
+/* The same on an upright phone, as a card under the picture (the picture is too small to cover) */
+.now-card {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%;
+  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); text-align: left;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.now-card .stream-frog { width: 40px; height: 36px; }
+.now-name { font: 600 var(--text-md) var(--font-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-game { font-size: var(--text-sm); color: var(--text-2); }
+@media (max-width: 720px) and (orientation: portrait) { .stage-title { display: none; } }
 
 /* ================= UI pass (2026-10) ================= */
 /* The room code chip is a button that copies the link */

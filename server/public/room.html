@@ -64,10 +64,33 @@
       </div>
 
       <div class="room-controls">
-        <p class="get-app">
-          <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-broadcast"/></svg>
-          <span>Quer compartilhar a tela? <a href="https://github.com/IgorFigueiredo28/frogshare/releases/latest/download/FrogShare-Setup.exe" rel="noopener">Baixe o app</a> ou <a href="/transmitir.html" target="_blank" rel="noopener">use o navegador</a></span>
-        </p>
+        <!-- The one way to stream: into this room's group (when it's open) or into a room of your own -->
+        <div class="share-wrap" id="share-wrap">
+          <button type="button" class="btn btn-ghost share-btn" id="btn-share" aria-expanded="false" aria-controls="share-pop">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-broadcast"/></svg>
+            <span class="share-btn-label">Compartilhar a tela</span>
+            <span class="share-dot" id="share-dot" hidden></span>
+            <span class="sr-only" id="share-dot-text" hidden>(dá para entrar no grupo desta sala)</span>
+          </button>
+          <div class="popover share-pop" id="share-pop" hidden>
+            <section class="share-option share-option-group" id="share-group" hidden>
+              <p class="popover-title">Nesta sala, junto com <span id="share-owner">quem já transmite</span></p>
+              <p class="share-text">A transmissão em grupo está aberta: sua tela aparece aqui para quem já está assistindo.</p>
+              <div class="share-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="btn-share-app">Pelo app</button>
+                <a class="btn btn-secondary btn-sm share-web" id="btn-share-web" href="/transmitir.html" target="_blank" rel="noopener">Pelo navegador</a>
+              </div>
+            </section>
+            <section class="share-option">
+              <p class="popover-title">Numa sala sua</p>
+              <p class="share-text">Com um link seu para mandar aos amigos.</p>
+              <div class="share-actions">
+                <a class="btn btn-secondary btn-sm" href="https://github.com/IgorFigueiredo28/frogshare/releases/latest/download/FrogShare-Setup.exe" rel="noopener">Baixar o app</a>
+                <a class="btn btn-secondary btn-sm share-web" href="/transmitir.html" target="_blank" rel="noopener">Pelo navegador</a>
+              </div>
+            </section>
+          </div>
+        </div>
         <button type="button" class="btn btn-ghost btn-icon theme-toggle" data-theme-toggle>
           <svg class="ico i-moon" aria-hidden="true"><use href="/brand/icons.svg#i-moon"/></svg>
           <svg class="ico i-sun" aria-hidden="true"><use href="/brand/icons.svg#i-sun"/></svg>
@@ -109,6 +132,14 @@
           </div>
         </div>
         <video id="remote-video" autoplay playsinline muted style="display:none"></video>
+        <!-- Who's on screen and what they're playing; shows with the controls, like a video's title -->
+        <div class="stage-title" id="stage-title" aria-live="polite">
+          <span class="stage-frog-wrap"><img class="stream-frog" id="stage-frog" src="/brand/frog-head.svg" alt="" width="40" height="36"></span>
+          <span class="stage-who">
+            <span class="stage-name" id="stage-name"></span>
+            <span class="stage-game" id="stage-game"></span>
+          </span>
+        </div>
         <!-- Reactions float up over the picture; nothing here takes clicks -->
         <div class="reaction-layer" id="reaction-layer" aria-hidden="true"></div>
         <p class="pip-note" id="pip-note" hidden>Tocando na janelinha. <button type="button" class="link-button" id="btn-pip-back">Voltar para cá</button></p>
@@ -203,6 +234,13 @@
       </div>
       <!-- Phones held upright, one stream: the big way into fullscreen (the icon in the player is small) -->
       <div class="phone-actions" id="phone-actions">
+        <div class="now-card" id="now-card">
+          <span class="stage-frog-wrap"><img class="stream-frog" id="now-frog" src="/brand/frog-head.svg" alt="" width="40" height="36"></span>
+          <span class="now-who">
+            <span class="now-name" id="now-name"></span>
+            <span class="now-game" id="now-game"></span>
+          </span>
+        </div>
         <button type="button" class="btn btn-secondary btn-lg btn-block" id="btn-phone-fullscreen">
           <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-maximize"/></svg>Assistir em tela cheia
         </button>

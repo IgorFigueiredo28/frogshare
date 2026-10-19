@@ -11,7 +11,8 @@
   const pops = {
     react: { btn: $('btn-react'), pop: $('react-tray') },
     more: { btn: $('btn-more'), pop: $('more-menu') },
-    viewers: { btn: $('btn-viewers'), pop: $('viewers-pop') }
+    viewers: { btn: $('btn-viewers'), pop: $('viewers-pop') },
+    share: { btn: $('btn-share'), pop: $('share-pop') }
   };
   function setOpen(entry, open) {
     entry.pop.hidden = !open;
