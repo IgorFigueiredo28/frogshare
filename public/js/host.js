@@ -1383,7 +1383,7 @@ function renderGroupUi() {
       const kick = document.createElement('button');
       kick.type = 'button';
       kick.className = 'btn btn-ghost btn-icon';
-      kick.title = `Tirar ${h.name} da transmissão`;
+      kick.title = `Expulsar ${h.name} da transmissão`;
       kick.setAttribute('aria-label', kick.title);
       kick.innerHTML = '<svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>';
       kick.addEventListener('click', () => socket?.emit('kick-host', { hostId: h.id }));
@@ -2836,7 +2836,7 @@ try {
 kickTime.addEventListener('change', () => { try { localStorage.setItem(KICK_TIME_KEY, kickTime.value); } catch {} });
 btnClearBans.addEventListener('click', () => {
   socket?.emit('clear-bans');
-  showToast('Pronto: quem você tirou já pode voltar.');
+  showToast('Pronto: quem você expulsou já pode voltar.');
 });
 
 function renderViewerList() {
@@ -2844,7 +2844,7 @@ function renderViewerList() {
   document.getElementById('lock-row').hidden = !owner;
   document.getElementById('kick-row').hidden = !owner || !viewerList.length;
   btnClearBans.hidden = !owner || !bannedCount;
-  btnClearBans.textContent = bannedCount > 1 ? `Deixar voltar as ${bannedCount} pessoas que eu tirei` : 'Deixar voltar quem eu tirei';
+  btnClearBans.textContent = bannedCount > 1 ? `Deixar voltar as ${bannedCount} pessoas que eu expulsei` : 'Deixar voltar quem eu expulsei';
   const shown = viewerList.slice(0, 30);
   const items = shown.map(v => {
     const li = document.createElement('li');
@@ -2854,17 +2854,17 @@ function renderViewerList() {
       const kick = document.createElement('button');
       kick.type = 'button';
       kick.className = 'btn btn-ghost viewer-kick';
-      kick.textContent = 'Tirar';
-      kick.title = `Tirar ${v.name} da sala`;
+      kick.textContent = 'Expulsar';
+      kick.title = `Expulsar ${v.name} da sala`;
       kick.addEventListener('click', () => {
         if (!kick.classList.contains('confirm')) {
           kick.classList.add('confirm');
-          kick.textContent = 'Tirar mesmo?';
-          setTimeout(() => { kick.classList.remove('confirm'); kick.textContent = 'Tirar'; }, 3500);
+          kick.textContent = 'Expulsar mesmo?';
+          setTimeout(() => { kick.classList.remove('confirm'); kick.textContent = 'Expulsar'; }, 3500);
           return;
         }
         socket?.emit('kick-viewer', { viewerId: v.id, minutes: Number(kickTime.value) });
-        showToast(`${v.name} saiu da sala e fica fora por ${kickTime.selectedOptions[0].textContent}. Para ninguém novo entrar, tranque a sala.`);
+        showToast(`${v.name} foi expulso da sala e fica fora por ${kickTime.selectedOptions[0].textContent}. Para ninguém novo entrar, tranque a sala.`);
       });
       li.append(kick);
     }

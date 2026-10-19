@@ -215,7 +215,7 @@ socket.on('connect', async () => {
 let blockedState = null; // 'kicked' | 'locked' | null
 let kickedUntil = 0;
 const BLOCKED_TEXT = {
-  kicked: 'Você foi removido da sala por quem está transmitindo',
+  kicked: 'Você foi expulso da sala por quem está transmitindo',
   locked: 'A sala está trancada'
 };
 // Removed for the time the streamer picked: when it's possible to come back
