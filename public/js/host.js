@@ -42,6 +42,9 @@ let audioContext = null;
 let audioWorkletNode = null;
 let socket = null;
 const peerConnections = new Map();
+// Offers still waiting for the ICE servers: viewerId -> token of the newest attempt. 'viewer-left' and
+// pausing drop the token, so a viewer that left meanwhile never gets a peer that nothing would close.
+const pendingOffers = new Map();
 let offerSeq = 0;
 let roomId = null;
 // Proves to the server that this app created the room, so nobody else can take it over as host
@@ -614,6 +617,7 @@ async function ensureRoom() {
   });
 
   socket.on('viewer-left', ({ viewerId }) => {
+    pendingOffers.delete(viewerId);
     const pc = peerConnections.get(viewerId);
     if (pc) pc.close();
     peerConnections.delete(viewerId);
@@ -1009,7 +1013,12 @@ async function createOfferForViewer(viewerId) {
   if (existing) existing.close();
   peerConnections.delete(viewerId);
 
+  const token = {};
+  pendingOffers.set(viewerId, token);
+  // The first fetch after the app opens is a round trip, long enough for a viewer to leave
   const iceConfig = await getIceConfig();
+  if (pendingOffers.get(viewerId) !== token) return;
+  pendingOffers.delete(viewerId);
   if (peerConnections.has(viewerId) || !localStream) return;
   const pc = new RTCPeerConnection(iceConfig);
   pc.pendingIce = [];
@@ -1096,6 +1105,7 @@ async function pauseStreaming() {
     pc.close();
   }
   peerConnections.clear();
+  pendingOffers.clear();
   // 'host-pause' below already tells the server and viewers the stream is gone
   stopSfu(false);
 
