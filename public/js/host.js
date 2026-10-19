@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.5',
+        app_version: '1.6.6',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -646,8 +646,10 @@ function presetBitrate() {
     pipe.srcW || Math.round(screen.width * devicePixelRatio),
     pipe.srcH || Math.round(screen.height * devicePixelRatio)
   );
-  const bpp = quality.fps > 30 ? 0.075 : 0.1;
-  return Math.round(Math.min(20e6, Math.max(2.5e6, w * h * quality.fps * bpp)));
+  // Bits per pixel per frame. At 0.075 (9.3 Mbps for 1080p60) the encoder sat at the cap in nearly
+  // every session, so fast motion in games turned to blocks; 0.1 gives 1080p60 12.4 Mbps.
+  const bpp = quality.fps > 30 ? 0.1 : 0.13;
+  return Math.round(Math.min(25e6, Math.max(3e6, w * h * quality.fps * bpp)));
 }
 
 const qualityHint = document.getElementById('quality-hint');
@@ -1672,6 +1674,7 @@ function reportQuality(samples, pipeline) {
     viewers,
     pipeline,
     mode: sfu.active ? 'sfu' : 'p2p',
+    capture: fastCapture.active ? 'wgc' : 'dxgi',
     roomViewers: roomViewerCount,
     preset: `${quality.res}p${quality.fps}`,
     share: share.mode,
@@ -1680,7 +1683,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.5', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.6', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -2333,6 +2336,28 @@ window.electronAPI.onWindowFocus((focused) => { if (focused) refreshLiveLists();
 window.electronAPI.onWindowMinimized((minimized) => {
   liveLists.minimized = minimized;
   if (!minimized) refreshLiveLists();
+});
+
+// ======== Fast capture switch ========
+// Windows Graphics Capture instead of Chromium's default capturer (see main.js). Takes effect on launch.
+const fastCapture = { supported: false, active: false, wanted: false };
+const fastCaptureRow = document.getElementById('fast-capture-row');
+const fastCaptureInput = document.getElementById('fast-capture');
+window.electronAPI.getFastCapture?.().then(state => {
+  Object.assign(fastCapture, state);
+  fastCaptureRow.hidden = !state.supported;
+  fastCaptureInput.checked = state.wanted;
+}).catch(() => {});
+fastCaptureInput.addEventListener('change', async () => {
+  const on = fastCaptureInput.checked;
+  fastCapture.wanted = on;
+  if (isStreaming) {
+    await window.electronAPI.setFastCapture(on, false);
+    showToast('Vale na próxima vez que você abrir o FrogShare.');
+  } else {
+    showToast('Reiniciando o FrogShare para trocar a captura…');
+    setTimeout(() => window.electronAPI.setFastCapture(on, true), 900);
+  }
 });
 
 // ======== Init ========

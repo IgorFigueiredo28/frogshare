@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   takeGroupInvite: () => ipcRenderer.invoke('take-group-invite'),
   findAppRoot: (exeName) => ipcRenderer.invoke('find-app-root', exeName),
+  getFastCapture: () => ipcRenderer.invoke('get-fast-capture'),
+  setFastCapture: (on, relaunch) => ipcRenderer.invoke('set-fast-capture', { on, relaunch }),
   onGroupInvite: (callback) => {
     ipcRenderer.on('group-invite', (_, invite) => callback(invite));
   },

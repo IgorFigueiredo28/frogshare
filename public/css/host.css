@@ -295,6 +295,7 @@ body.group-guest .setup-hero { display: none; }
 .group-list .group-tag { font-weight: 500; color: var(--text-2); }
 .group-hint { font-size: var(--text-sm); color: var(--text-2); }
 .switch-row[hidden] { display: none; }
+.fast-capture-row { padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .step-audio .exclude-row { margin-top: calc(-1 * var(--space-1)); }
 
 /* Setup: the group card (own room open to friends, or join a friend's) */

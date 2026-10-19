@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.6.5'
+        app_version: '1.6.6'
       })
     }).catch(() => {});
   } catch {}
@@ -44,7 +44,6 @@ process.on('unhandledRejection', (reason) => {
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
-app.commandLine.appendSwitch('disable-features', 'WGCCapturerWin,WGCScreenCapturer');
 
 // Group invites from the site: frogshare://share?room=<id> opens this app in that room's group.
 // Only one copy of the app runs; a link clicked while it's open reaches it as a second instance.
@@ -94,6 +93,36 @@ app.on('open-url', (event, url) => {
   deliverInvite(inviteFrom([url]));
 });
 if (!isDev) app.setAsDefaultProtocolClient(PROTOCOL);
+// ======== Fast capture (Windows Graphics Capture) ========
+// Chromium's default screen capturer (DXGI) copies every frame from the GPU to memory and limits itself
+// to half of a core, which settles at ~32 fps, and the copies cost the game ~12% of its FPS. Windows
+// Graphics Capture keeps frames on the GPU. Measured with a GPU-heavy stand-in game: game FPS loss
+// ~12% -> ~0, cursor still hidden, no capture border. Chromium only reads these flags at startup,
+// so the choice is stored here and applied on the next launch.
+const CAPTURE_PREFS = path.join(app.getPath('userData'), 'capture.json');
+function loadCapturePrefs() {
+  try { return { fast: true, ...JSON.parse(fs.readFileSync(CAPTURE_PREFS, 'utf8')) }; } catch { return { fast: true }; }
+}
+const capturePrefs = loadCapturePrefs();
+const fastCaptureActive = process.platform === 'win32' && capturePrefs.fast !== false;
+if (fastCaptureActive) {
+  app.commandLine.appendSwitch('enable-features', 'AllowWgcScreenCapturer,AllowWgcWindowCapturer,WebRtcAllowWgcUsingTexture');
+}
+ipcMain.handle('get-fast-capture', () => ({
+  supported: process.platform === 'win32',
+  active: fastCaptureActive,
+  wanted: capturePrefs.fast !== false
+}));
+ipcMain.handle('set-fast-capture', (event, { on, relaunch } = {}) => {
+  capturePrefs.fast = !!on;
+  try { fs.writeFileSync(CAPTURE_PREFS, JSON.stringify(capturePrefs)); } catch {}
+  if (relaunch) {
+    app.relaunch();
+    app.quit();
+  }
+  return true;
+});
+
 ipcMain.handle('take-group-invite', () => {
   inviteReady = true;
   const invite = pendingInvite;
