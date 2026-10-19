@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transmitir pelo navegador · FrogShare</title>
+  <meta name="description" content="Compartilhe a sua tela com os amigos direto do navegador, sem instalar nada.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FrogShare">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:title" content="Transmitir pelo navegador · FrogShare">
+  <meta property="og:description" content="Compartilhe a sua tela com os amigos direto do navegador, sem instalar nada.">
+  <meta property="og:image" content="https://frogshare.onrender.com/brand/og-image.png">
+  <meta name="theme-color" content="#F3F8EC" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0B1A10" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/brand/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/brand/icon.ico" sizes="any">
+  <script src="/brand/theme.js"></script>
+  <link rel="stylesheet" href="/brand/frog-theme.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="page-home page-web-host" data-state="setup">
+  <div class="lilypads" aria-hidden="true">
+    <span style="width:420px;height:420px;left:-140px;top:-120px"></span>
+    <span style="width:300px;height:300px;right:-90px;bottom:-110px;transform:rotate(200deg)"></span>
+  </div>
+
+  <header class="topbar">
+    <a href="/" class="brand" aria-label="FrogShare, página inicial">
+      <img src="/brand/icon.svg" alt="" width="32" height="32">
+      <span class="brand-name">Frog<b>Share</b></span>
+    </a>
+    <button type="button" class="btn btn-ghost btn-icon theme-toggle" data-theme-toggle>
+      <svg class="ico i-moon" aria-hidden="true"><use href="/brand/icons.svg#i-moon"/></svg>
+      <svg class="ico i-sun" aria-hidden="true"><use href="/brand/icons.svg#i-sun"/></svg>
+    </button>
+  </header>
+
+  <main class="home web-host">
+    <!-- ======== Before going live ======== -->
+    <section class="wh-setup" id="wh-setup" aria-labelledby="wh-title">
+      <div class="wh-head">
+        <img src="/brand/frog.svg" alt="" width="88" height="81">
+        <div>
+          <h1 id="wh-title">Transmitir pelo navegador</h1>
+          <p class="hero-sub">Sem instalar nada: escolha a tela ou a janela e mande o link para os amigos.</p>
+        </div>
+      </div>
+
+      <div class="notice" id="wh-unsupported" hidden>
+        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
+        <span class="notice-text">Este navegador não consegue transmitir a tela. Use o Chrome ou o Edge num computador, ou <a href="/">baixe o FrogShare</a>.</span>
+      </div>
+
+      <div class="card wh-card">
+        <label class="field-label" for="wh-name">Seu nome na sala</label>
+        <input id="wh-name" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Ex.: Igor">
+
+        <p class="field-label wh-label" id="wh-quality-label">Qualidade</p>
+        <div class="segmented" role="radiogroup" aria-labelledby="wh-quality-label">
+          <label class="segment"><input type="radio" name="wh-quality" value="720-30"><span>720p · 30 fps</span></label>
+          <label class="segment"><input type="radio" name="wh-quality" value="1080-30" checked><span>1080p · 30 fps</span></label>
+          <label class="segment"><input type="radio" name="wh-quality" value="1080-60"><span>1080p · 60 fps</span></label>
+        </div>
+
+        <label class="switch-row wh-audio">
+          <input type="checkbox" id="wh-audio" class="switch" checked>
+          <span>Levar o som. Na tela inteira é o som do PC todo; numa aba, só o som dela.</span>
+        </label>
+
+        <button id="wh-start" type="button" class="btn btn-primary btn-lg btn-block btn-hop">Escolher a tela e começar</button>
+        <p class="wh-fine">O navegador pergunta o que mostrar. Para jogos, o <a href="/">app</a> pesa menos e leva só o som do jogo.</p>
+      </div>
+    </section>
+
+    <!-- ======== Live ======== -->
+    <section class="wh-live" id="wh-live" aria-labelledby="wh-live-title" hidden>
+      <div class="wh-live-head">
+        <span class="chip chip-live"><span class="live-eyes" aria-hidden="true"><i></i><i></i></span><span id="wh-live-title">Ao vivo</span></span>
+        <span class="chip chip-watchers"><svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg><span id="wh-count">0 assistindo</span></span>
+      </div>
+      <div class="wh-preview"><video id="wh-preview" autoplay muted playsinline></video></div>
+
+      <div class="card wh-link-card">
+        <label class="field-label" for="wh-link">Link para os amigos</label>
+        <div class="join-row">
+          <input id="wh-link" class="input" type="text" readonly>
+          <button id="wh-copy" type="button" class="btn btn-secondary"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar link</button>
+        </div>
+        <p class="wh-fine">O link é sempre o mesmo neste navegador. Deixe esta aba aberta: fechando, a transmissão para.</p>
+        <p class="wh-names" id="wh-names"></p>
+        <p class="wh-reactions" id="wh-reactions" aria-live="polite"></p>
+        <div class="notice" id="wh-crowd" hidden>
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
+          <span class="notice-text">Pelo navegador, cada pessoa recebe uma cópia da sua internet. Com tanta gente, pode travar; o app manda uma só para todos.</span>
+        </div>
+      </div>
+
+      <div class="wh-actions">
+        <button id="wh-switch" type="button" class="btn btn-secondary"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-switch"/></svg>Trocar o que mostrar</button>
+        <button id="wh-stop" type="button" class="btn btn-danger"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-stop"/></svg>Parar</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/web-host.js"></script>
+</body>
+</html>

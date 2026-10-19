@@ -377,3 +377,264 @@
   }
   .phone-actions p { font-size: var(--text-sm); color: var(--text-2); }
 }
+
+/* ================= Player extras (1.7) ================= */
+.btn-sm { min-height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); }
+.btn-icon.btn-sm { width: 32px; padding: 0; }
+.ico-xs { width: 13px; height: 13px; vertical-align: -2px; }
+.link-button { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+/* Phones and narrow windows keep the essentials; prints, the zoom button and cinema need a mouse and room */
+@media (pointer: coarse), (max-width: 720px) { .desk-only { display: none !important; } }
+
+/* ---------- Popovers ---------- */
+.popover {
+  position: absolute; z-index: 30;
+  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-2);
+  animation: fs-pop-in var(--dur) var(--ease-out);
+}
+.popover[hidden], .react-tray[hidden], .callout[hidden], .diag-bubble[hidden], .zoom-chip[hidden],
+.pip-note[hidden], .player-extras[hidden], .more-wrap[hidden], #shortcuts[hidden] { display: none; }
+@keyframes fs-pop-in { from { opacity: 0; transform: translateY(4px); } }
+.popover-title { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2); }
+.popover-hint { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-2); }
+
+/* ---------- Who's watching (header) ---------- */
+.viewers-wrap { position: relative; }
+.chip-button { border: 0; cursor: pointer; font-family: var(--font-ui); transition: background var(--dur-fast) var(--ease-out); }
+.chip-button:hover { background: var(--surface-3); }
+.chip-button:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.viewers-pop { top: calc(100% + 8px); left: 0; width: min(300px, 86vw); }
+.viewer-names { list-style: none; max-height: 196px; overflow-y: auto; margin: 0 0 var(--space-3); display: flex; flex-direction: column; gap: 2px; }
+.viewer-names li { display: flex; align-items: center; gap: var(--space-2); padding: 5px 0; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-names li + li { border-top: 1px solid var(--border); }
+.viewer-you { padding: 1px 7px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--on-accent-soft); font-size: 11px; font-weight: 600; }
+.viewer-names .viewer-more { color: var(--text-2); }
+.field-label { display: block; font-size: var(--text-xs); font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.name-form { display: flex; gap: var(--space-2); }
+.name-form .input { min-height: 40px; font-size: var(--text-sm); }
+.name-form .btn { min-height: 40px; }
+/* A one-time nudge under the chip; it never covers the video */
+.callout {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 25; width: min(330px, 86vw);
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-3); border-radius: var(--radius-md);
+  background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow-2);
+  font-size: var(--text-sm); line-height: 1.4;
+}
+.callout span { flex: 1 1 100%; }
+.callout .btn-icon { margin-left: auto; }
+.callout::before {
+  content: ""; position: absolute; top: -7px; left: 22px; width: 12px; height: 12px; transform: rotate(45deg);
+  background: var(--surface); border-left: 1px solid var(--accent); border-top: 1px solid var(--accent);
+}
+
+/* ---------- Bar extras: light on the dark picture, like the rest of the bar ---------- */
+.player-extras { display: flex; align-items: center; gap: 2px; }
+.react-wrap, .more-wrap { position: relative; }
+.player-bar .popover, .react-tray {
+  background: rgba(8, 16, 10, 0.92); color: #F3F8EC; border: 1px solid rgba(183, 235, 106, 0.18);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.react-tray {
+  position: absolute; bottom: calc(100% + 10px); right: -8px; z-index: 30;
+  display: flex; gap: 2px; padding: 4px; border-radius: var(--radius-pill); box-shadow: var(--shadow-2);
+  animation: fs-pop-in var(--dur) var(--ease-out);
+}
+.react-btn {
+  width: 44px; height: 44px; display: grid; place-items: center; padding: 0;
+  background: none; border: 0; border-radius: 50%; cursor: pointer;
+  font-size: 24px; line-height: 1; transition: transform var(--dur-fast) var(--ease-hop), background var(--dur-fast);
+}
+.react-btn:hover { background: rgba(255, 255, 255, 0.12); transform: scale(1.15); }
+.react-btn:active { transform: scale(0.92); }
+.react-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.react-btn.nope { animation: fs-nope 300ms ease; }
+@keyframes fs-nope { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+.more-menu { bottom: calc(100% + 10px); right: -8px; width: min(320px, 86vw); padding: var(--space-2); }
+.menu-row {
+  display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-2);
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.menu-row:hover { background: rgba(255, 255, 255, 0.06); }
+.menu-row .switch { margin-top: 2px; }
+.menu-row span { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); line-height: 1.35; }
+.menu-row b { font-weight: 600; }
+.menu-row small { font-size: var(--text-xs); color: rgba(243, 248, 236, 0.72); }
+.menu-link {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2);
+  background: none; border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin-top: var(--space-1);
+  color: inherit; font: 600 var(--text-sm) var(--font-ui); cursor: pointer; border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+.menu-link:hover { background: rgba(255, 255, 255, 0.06); }
+.player-bar [aria-pressed="true"]:not(.player-stream) { background: rgba(183, 235, 106, 0.22); color: #B7EB6A; }
+/* .btn sets display, which would otherwise beat the hidden attribute (the clip and PiP buttons) */
+.player-bar .btn[hidden] { display: none !important; }
+
+/* Phones: the bar keeps the mute, a short volume slider and the buttons in view; the menu becomes a
+   sheet over the bottom of the screen, since the video is too short to hold it */
+@media (max-width: 720px) {
+  .player-bar { gap: 0; padding-left: var(--space-2); padding-right: var(--space-2); }
+  .player-bar .volume-control { flex: 0 1 auto; min-width: 0; gap: 4px; }
+  .player-bar #volume-slider { flex: 0 1 72px; width: 72px; min-width: 40px; }
+  .player-bar .volume-value { display: none; }
+  .player-bar .btn-icon { width: 40px; min-height: 40px; }
+  .player-bar .more-menu { position: fixed; left: var(--space-3); right: var(--space-3); bottom: var(--space-3); width: auto; max-height: 70vh; overflow-y: auto; }
+}
+
+/* The info button carries a dot while the picture is stuttering */
+.btn-info { position: relative; }
+.btn-info[data-diag="warn"]::after, .btn-info[data-diag="bad"]::after {
+  content: ""; position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%;
+  background: #FFD166; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.btn-info[data-diag="bad"]::after { background: #FF7A7F; }
+.stats-overlay .diag-line { white-space: normal; max-width: 36ch; margin-bottom: var(--space-2); color: #FFE08A; font-family: var(--font-ui); line-height: 1.45; }
+
+/* ---------- Over the picture ---------- */
+/* Pinches and drags on the picture zoom and pan it instead of moving the page */
+#remote-video { touch-action: none; }
+.video-area.zoomed #remote-video { cursor: grab; }
+.video-area.zoomed #remote-video:active { cursor: grabbing; }
+.zoom-chip, .diag-bubble, .pip-note {
+  position: absolute; z-index: 7;
+  background: rgba(8, 16, 10, 0.86); color: #F3F8EC; border: 1px solid rgba(183, 235, 106, 0.18);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.zoom-chip {
+  top: var(--space-3); left: var(--space-3); padding: 6px var(--space-3); border-radius: var(--radius-pill);
+  font: 600 var(--text-xs) var(--font-ui); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.zoom-chip:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.pip-note {
+  left: 50%; top: 50%; transform: translate(-50%, -50%); padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-pill); font-size: var(--text-sm); white-space: nowrap;
+}
+.diag-bubble {
+  left: 50%; bottom: 84px; transform: translateX(-50%); width: max-content; max-width: min(560px, calc(100% - 32px));
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); border-radius: var(--radius-md);
+  font-size: var(--text-sm); line-height: 1.45; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  animation: fs-pop-in var(--dur-slow) var(--ease-out);
+}
+.diag-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: #FFD166; }
+.diag-bubble[data-level="bad"] .diag-dot { background: #FF7A7F; }
+.diag-bubble .btn-icon { color: inherit; }
+.diag-bubble .btn-icon:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* Reactions rise from the lower right corner and fade, a few seconds each */
+.reaction-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+.reaction {
+  position: absolute; right: var(--x, 10%); bottom: 72px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  /* "both": invisible during the small random delay, instead of flashing at the start */
+  animation: fs-react-float 3.2s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+.reaction-emoji { font-size: 34px; line-height: 1; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45)); }
+.reaction-name {
+  max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 8px; border-radius: var(--radius-pill); background: rgba(8, 16, 10, 0.72); color: #F3F8EC;
+  font: 600 11px var(--font-ui);
+}
+.reaction.mine .reaction-name { background: #B7EB6A; color: #14301C; }
+@keyframes fs-react-float {
+  0% { opacity: 0; transform: translate(0, 12px) scale(0.6); }
+  12% { opacity: 1; transform: translate(0, 0) scale(1.08); }
+  20% { transform: translate(0, -18px) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--drift, 0), -240px) scale(0.92); }
+}
+@keyframes fs-react-fade { 0%, 100% { opacity: 0; } 12%, 80% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .reaction { animation: fs-react-fade 2.6s ease forwards !important; animation-duration: 2.6s !important; }
+}
+
+/* A camera flash when a print is saved */
+.camera-flash { position: absolute; inset: 0; z-index: 8; background: #fff; pointer-events: none; animation: fs-flash 420ms ease-out forwards; }
+@keyframes fs-flash { from { opacity: 0.55; } to { opacity: 0; } }
+
+/* ---------- Cinema mode: only the video, still in the window ---------- */
+.page-room.cinema[data-state="live"] .room-top,
+.page-room.cinema[data-state="live"] .stream-list,
+.page-room.cinema[data-state="live"] .notice,
+.page-room.cinema[data-state="live"] .phone-actions { display: none !important; }
+.page-room.cinema[data-state="live"] .stage { padding: 0; }
+.page-room.cinema[data-state="live"] .video-area { border-radius: 0; }
+/* The list is out of view, so the stream switcher moves into the bar, as in fullscreen */
+.page-room.cinema[data-state="live"] .player-streams:not([hidden]) { display: flex; }
+
+/* ---------- Mixer: each streamer's level in the list, and a ring while they have sound ---------- */
+.stream-item { flex-wrap: wrap; }
+.stream-vol {
+  --fill: 100%;
+  -webkit-appearance: none; appearance: none; flex: 1 1 100%; order: 3;
+  height: 4px; margin: 2px var(--space-2) var(--space-2) 46px; border-radius: var(--radius-pill);
+  background: linear-gradient(to right, var(--slot) var(--fill), var(--surface-3) var(--fill)); cursor: pointer;
+}
+.stream-vol::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); border: 2.5px solid var(--slot); }
+.stream-vol::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; background: var(--surface); border: 2.5px solid var(--slot); }
+.stream-vol:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+/* The ring goes on a wrapper: the frog image carries a hue filter (its colour), which would tint the ring too */
+.stream-frog-wrap { display: inline-flex; flex-shrink: 0; border-radius: 50%; transition: box-shadow 120ms ease-out; }
+.stream-item.speaking .stream-frog-wrap { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--slot); }
+.player-stream { --slot: #58B44A; }
+.player-stream.speaking { border-color: var(--slot); box-shadow: 0 0 0 2px var(--slot); }
+@media (max-width: 720px) { .stream-vol { margin-left: var(--space-2); } }
+
+/* ---------- Keyboard shortcuts ---------- */
+.modal.shortcuts { max-width: 460px; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4) var(--space-5) 0; }
+.modal-header h2 { font-size: var(--text-lg); }
+.shortcut-list { padding: var(--space-3) var(--space-5) var(--space-5); display: grid; gap: var(--space-2); overflow-y: auto; }
+.shortcut-list div { display: grid; grid-template-columns: 9.5em 1fr; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
+.shortcut-list dt { color: var(--text-2); white-space: nowrap; }
+.shortcut-list dd { margin: 0; }
+kbd {
+  display: inline-block; min-width: 24px; padding: 2px 7px; text-align: center;
+  border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--radius-xs);
+  background: var(--surface); font: 600 var(--text-xs) var(--font-mono); color: var(--text);
+}
+.video-area:fullscreen > #shortcuts { position: absolute; }
+
+/* ================= Home (1.7): rooms you watched, streaming from the browser ================= */
+.recent { width: 100%; padding: var(--space-4) var(--space-5); text-align: left; }
+.recent[hidden] { display: none; }
+.recent-title { font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 600; color: var(--text-2); margin-bottom: var(--space-2); }
+.recent-list { list-style: none; display: flex; flex-direction: column; }
+.recent-item { display: flex; align-items: center; gap: var(--space-1); }
+.recent-item + .recent-item { border-top: 1px solid var(--border); }
+.recent-link {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-1); color: var(--text); text-decoration: none; border-radius: var(--radius-sm);
+}
+.recent-link:hover b { color: var(--accent); }
+.recent-link:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.recent-link img { flex-shrink: 0; }
+.recent-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.recent-text b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-text small { font-size: var(--text-xs); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-item.is-live .recent-text small { color: var(--on-live-soft); font-weight: 600; }
+.recent-forget { color: var(--text-3); flex-shrink: 0; }
+.recent-forget:hover { color: var(--text); }
+.web-host-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-2); }
+
+/* ================= Streaming from the browser (transmitir.html) ================= */
+.web-host { gap: var(--space-5); align-items: stretch; }
+.wh-setup, .wh-live { display: flex; flex-direction: column; gap: var(--space-4); }
+.wh-setup[hidden], .wh-live[hidden], .page-web-host .notice[hidden] { display: none; }
+.wh-head { display: flex; align-items: center; gap: var(--space-4); }
+.wh-head h1 { font-size: clamp(1.6rem, 4vw, var(--text-2xl)); }
+.wh-head .hero-sub { margin: var(--space-1) 0 0; text-align: left; font-size: var(--text-md); }
+.wh-card, .wh-link-card { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
+.wh-label { margin-top: var(--space-3); }
+.wh-audio { margin: var(--space-2) 0 var(--space-3); }
+.wh-fine { font-size: var(--text-xs); color: var(--text-2); }
+.wh-live-head { display: flex; align-items: center; gap: var(--space-2); }
+.wh-preview { aspect-ratio: 16 / 9; background: var(--video-bg); border-radius: var(--radius-lg); overflow: hidden; }
+.wh-preview video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.wh-link-card .input { font-family: var(--font-mono); font-size: var(--text-sm); }
+.wh-names { font-size: var(--text-sm); color: var(--text-2); margin-top: var(--space-2); }
+.wh-reactions { min-height: 1.4em; font-size: var(--text-md); }
+.wh-actions { display: flex; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 480px) { .wh-head img { width: 64px; } }

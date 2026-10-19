@@ -37,10 +37,30 @@
           <span class="sr-only">Copiar o link da sala</span><span id="room-code"></span>
         </button>
         <span class="chip" id="room-status" aria-live="polite">Esperando</span>
-        <span class="chip chip-watchers">
-          <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
-          <span id="viewer-count">0 assistindo</span>
-        </span>
+        <!-- Who's watching: the names people picked, and yours to change -->
+        <div class="viewers-wrap">
+          <button type="button" class="chip chip-watchers chip-button" id="btn-viewers" aria-expanded="false" aria-controls="viewers-pop" title="Ver quem está assistindo e mudar o seu nome">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
+            <span id="viewer-count">0 assistindo</span>
+          </button>
+          <div class="popover viewers-pop" id="viewers-pop" hidden>
+            <p class="popover-title">Assistindo agora</p>
+            <ul class="viewer-names" id="viewer-names"></ul>
+            <label class="field-label" for="viewer-name">Seu nome na sala</label>
+            <form class="name-form" id="name-form" autocomplete="off">
+              <input id="viewer-name" class="input" type="text" maxlength="24" spellcheck="false" placeholder="Ex.: Ana">
+              <button type="submit" class="btn btn-secondary">Salvar</button>
+            </form>
+            <p class="popover-hint">Quem transmite vê esses nomes.</p>
+          </div>
+          <div class="callout" id="name-callout" role="status" hidden>
+            <span>Quem transmite vê quem está assistindo. Quer colocar seu nome?</span>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-name-callout">Colocar nome</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" id="btn-name-callout-close" aria-label="Agora não">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="room-controls">
@@ -89,6 +109,18 @@
           </div>
         </div>
         <video id="remote-video" autoplay playsinline muted style="display:none"></video>
+        <!-- Reactions float up over the picture; nothing here takes clicks -->
+        <div class="reaction-layer" id="reaction-layer" aria-hidden="true"></div>
+        <p class="pip-note" id="pip-note" hidden>Tocando na janelinha. <button type="button" class="link-button" id="btn-pip-back">Voltar para cá</button></p>
+        <button type="button" class="zoom-chip" id="zoom-chip" hidden title="Voltar ao tamanho normal (Z)"></button>
+        <!-- Why the picture stutters, when it does: their end or ours -->
+        <div class="diag-bubble" id="diag-bubble" role="status" hidden>
+          <span class="diag-dot" aria-hidden="true"></span>
+          <span id="diag-text"></span>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" id="diag-close" aria-label="Fechar">
+            <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+          </button>
+        </div>
         <button id="unmute-cta" type="button" class="unmute-cta" hidden>
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/><path d="M16 10l4 4m0 -4l-4 4"/></svg>
           Ativar som
@@ -109,10 +141,56 @@
             </div>
             <div class="player-streams" id="player-streams" role="group" aria-label="Escolher a transmissão" hidden></div>
             <span class="player-spacer"></span>
-            <button id="btn-info" type="button" class="btn btn-ghost btn-icon" style="display:none"
+            <!-- The extras only make sense with a picture on stage; player.js shows them with it -->
+            <div class="player-extras" id="player-extras" hidden>
+              <div class="react-wrap">
+                <button id="btn-react" type="button" class="btn btn-ghost btn-icon" aria-label="Mandar uma reação" aria-expanded="false" aria-controls="react-tray" title="Mandar uma reação">
+                  <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-smile"/></svg>
+                </button>
+                <div class="react-tray" id="react-tray" role="group" aria-label="Reações" hidden></div>
+              </div>
+              <button id="btn-clip" type="button" class="btn btn-ghost btn-icon btn-clip" hidden aria-label="Salvar clipe dos últimos segundos" title="Salvar clipe dos últimos segundos (C)">
+                <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-replay"/></svg>
+              </button>
+              <button id="btn-print" type="button" class="btn btn-ghost btn-icon desk-only" aria-label="Salvar um print da tela" title="Salvar um print da tela (P)">
+                <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-camera"/></svg>
+              </button>
+              <button id="btn-zoom" type="button" class="btn btn-ghost btn-icon desk-only" aria-label="Aproximar a imagem" title="Aproximar (Ctrl + roda do mouse ou pinça; Z volta ao normal)">
+                <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-zoom"/></svg>
+              </button>
+              <button id="btn-pip" type="button" class="btn btn-ghost btn-icon" hidden aria-pressed="false" aria-label="Assistir numa janelinha por cima das outras" title="Janelinha flutuante (J)">
+                <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-pip"/></svg>
+              </button>
+              <button id="btn-cinema" type="button" class="btn btn-ghost btn-icon desk-only" aria-pressed="false" aria-label="Modo cinema" title="Modo cinema: só o vídeo, sem sair da janela (T)">
+                <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-theater"/></svg>
+              </button>
+            </div>
+            <button id="btn-info" type="button" class="btn btn-ghost btn-icon btn-info" style="display:none"
                     aria-label="Informações da transmissão" aria-pressed="false" title="Mostrar ou esconder as informações da transmissão (I)">
               <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-info"/></svg>
             </button>
+            <div class="more-wrap" id="more-wrap" hidden>
+              <button id="btn-more" type="button" class="btn btn-ghost btn-icon" aria-label="Mais opções" aria-expanded="false" aria-controls="more-menu" title="Mais opções">
+                <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-dots"/></svg>
+              </button>
+              <div class="popover more-menu" id="more-menu" hidden>
+                <label class="menu-row">
+                  <input type="checkbox" class="switch" id="opt-data-saver">
+                  <span><b>Economizar dados</b><small id="data-saver-hint">Imagem menor, uns 0,5 GB por hora em vez de até 5 GB. Bom no 4G.</small></span>
+                </label>
+                <label class="menu-row">
+                  <input type="checkbox" class="switch" id="opt-levelling">
+                  <span><b>Volume equilibrado</b><small>Segura explosões e deixa as vozes mais claras.</small></span>
+                </label>
+                <label class="menu-row desk-only" id="opt-clips-row">
+                  <input type="checkbox" class="switch" id="opt-clips">
+                  <span><b>Clipes</b><small>Guarda os últimos segundos para você salvar uma jogada (botão <svg class="ico ico-xs" aria-hidden="true"><use href="/brand/icons.svg#i-replay"/></svg> ou tecla C). Usa um pouco mais do computador.</small></span>
+                </label>
+                <button type="button" class="menu-link desk-only" id="btn-shortcuts">
+                  <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-keyboard"/></svg>Atalhos do teclado
+                </button>
+              </div>
+            </div>
             <button id="btn-fullscreen" type="button" class="btn btn-ghost btn-icon" style="display:none">Tela cheia</button>
         </div>
         <div class="stats-overlay" id="stats-overlay" style="display:none">
@@ -132,8 +210,35 @@
     </main>
   </div>
 
+  <!-- Keyboard shortcuts, opened from the menu or with ? -->
+  <div class="modal-overlay" id="shortcuts" hidden>
+    <div class="modal shortcuts" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+      <div class="modal-header">
+        <h2 id="shortcuts-title">Atalhos do teclado</h2>
+        <button type="button" class="btn btn-ghost btn-icon" id="btn-shortcuts-close" aria-label="Fechar">
+          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
+        </button>
+      </div>
+      <dl class="shortcut-list">
+        <div><dt><kbd>M</kbd></dt><dd>Mutar ou desmutar</dd></div>
+        <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Volume (a roda do mouse também)</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd>Tela cheia</dd></div>
+        <div><dt><kbd>T</kbd></dt><dd>Modo cinema</dd></div>
+        <div><dt><kbd>J</kbd></dt><dd>Janelinha flutuante</dd></div>
+        <div><dt><kbd>P</kbd></dt><dd>Salvar um print</dd></div>
+        <div><dt><kbd>C</kbd></dt><dd>Salvar clipe (com Clipes ligado no menu)</dd></div>
+        <div><dt><kbd>Ctrl</kbd> + roda</dt><dd>Aproximar; arraste para mover</dd></div>
+        <div><dt><kbd>Z</kbd></dt><dd>Voltar ao tamanho normal</dd></div>
+        <div><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Trocar de transmissão em grupo</dd></div>
+        <div><dt><kbd>I</kbd></dt><dd>Informações da transmissão</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>Esta lista</dd></div>
+      </dl>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/room.js"></script>
   <script src="/js/room-ui.js"></script>
+  <script src="/js/player.js"></script>
 </body>
 </html>

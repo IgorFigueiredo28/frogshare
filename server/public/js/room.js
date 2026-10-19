@@ -1,8 +1,42 @@
 const params = new URLSearchParams(window.location.search);
-const roomId = params.get('room');
+// /s/<id> is the short link the app hands out; /room.html?room=<id> keeps working
+const roomId = params.get('room') || (/^\/s\/([A-Za-z0-9_-]{1,64})\/?$/.exec(location.pathname) || [])[1] || null;
 
 if (!roomId) {
   window.location.href = '/';
+}
+
+// ======== Who you are in the room ========
+// A name for the "who's watching" list, and a key that survives reloads: a locked room lets its own
+// viewers back in by it, and someone the streamer removed stays out with it
+const VIEWER_NAME_KEY = 'fs-viewer-name';
+const VIEWER_NAME_SET_KEY = 'fs-viewer-name-set';
+const VIEWER_ID_KEY = 'fs-viewer-key';
+const randomKey = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), b => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'[b & 63]).join('');
+const storage = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+let viewerName = (storage.get(VIEWER_NAME_KEY) || '').trim().slice(0, 24);
+if (!viewerName) {
+  viewerName = 'Sapo ' + (100 + Math.floor(Math.random() * 900));
+  storage.set(VIEWER_NAME_KEY, viewerName);
+}
+let viewerKey = storage.get(VIEWER_ID_KEY) || '';
+if (!/^[A-Za-z0-9_-]{8,64}$/.test(viewerKey)) {
+  viewerKey = randomKey();
+  storage.set(VIEWER_ID_KEY, viewerKey);
+}
+const joinPayload = () => ({ roomId, asHost: false, name: viewerName, viewerKey });
+
+function setViewerName(name) {
+  const clean = String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 24);
+  if (!clean) return false;
+  viewerName = clean;
+  storage.set(VIEWER_NAME_KEY, clean);
+  storage.set(VIEWER_NAME_SET_KEY, '1');
+  socket.emit('set-name', { name: clean });
+  return true;
 }
 
 // ======== Error Reporting ========
@@ -18,7 +52,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.9',
+        app_version: '1.7.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -151,7 +185,7 @@ function showRoomNotFound() {
     form.hidden = true;
     roomConfirmed = true;
     statusText.textContent = 'Esperando o host compartilhar a tela…';
-    socket.emit('join-room', { roomId, asHost: false });
+    socket.emit('join-room', joinPayload());
   }, 5000);
 }
 
@@ -173,7 +207,34 @@ socket.on('connect', async () => {
     if (!found) { showRoomNotFound(); return; }
     roomConfirmed = true;
   }
-  socket.emit('join-room', { roomId, asHost: false });
+  socket.emit('join-room', joinPayload());
+});
+
+// Removed by the streamer, or the room was locked before we came in. The status text says so, and
+// room-ui.js turns it into the sad frog.
+let blockedState = null; // 'kicked' | 'locked' | null
+const BLOCKED_TEXT = {
+  kicked: 'Você foi removido da sala por quem está transmitindo',
+  locked: 'A sala está trancada'
+};
+socket.on('kicked', () => {
+  blockedState = 'kicked';
+  for (const id of [...channels.keys()]) dropChannel(id);
+  selectedId = null;
+  hostsInfo = [];
+  renderStage();
+  renderStreamList();
+  // Don't come back on the next reconnect
+  socket.io.opts.reconnection = false;
+  socket.disconnect();
+});
+let lockedRetry = null;
+socket.on('room-locked', () => {
+  blockedState = 'locked';
+  renderStage();
+  // The streamer may unlock it: knock again now and then
+  clearTimeout(lockedRetry);
+  lockedRetry = setTimeout(() => { if (socket.connected && blockedState === 'locked') socket.emit('join-room', joinPayload()); }, 15000);
 });
 
 const hostNotice = document.getElementById('host-notice');
@@ -274,14 +335,40 @@ function renderStage() {
     btnInfo.style.display = 'none';
     setInfoOpen(false);
     volumeControl.style.display = 'none';
-    statusText.textContent = ch ? ch.status : (hostsInfo.length ? 'Host conectado, abrindo a tela…' : 'Esperando o host entrar…');
+    statusText.textContent = blockedState ? BLOCKED_TEXT[blockedState]
+      : ch ? ch.status : (hostsInfo.length ? 'Host conectado, abrindo a tela…' : 'Esperando o host entrar…');
   }
   routeAudio();
 }
 
-// The stage's sound plays through the video element (volume, mute and autoplay rules live there).
-// Other channels play through their own hidden audio element that copies the stage's volume.
+// ======== Sound ========
+// The player's slider is the master volume; in group rooms each stream also has its own level (the
+// mixer in the list), remembered by streamer name. The stage's sound plays through the video element
+// (mute and autoplay rules live there); other channels play through their own hidden audio element.
+let masterVolume = 1;
+const MIX_KEY = 'fs-mix';
+let mixVolumes = {};
+try { mixVolumes = JSON.parse(storage.get(MIX_KEY) || '{}') || {}; } catch {}
+function chVolume(ch) {
+  const v = mixVolumes[infoFor(ch.hostId)?.name || ''];
+  return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
+}
+function setChannelVolume(ch, v) {
+  const name = infoFor(ch.hostId)?.name;
+  if (!name) return;
+  mixVolumes[name] = Math.min(1, Math.max(0, v));
+  storage.set(MIX_KEY, JSON.stringify(mixVolumes));
+  // Raising a muted stream's level means "I want to hear it"
+  if (ch.muted && v > 0) setChannelMuted(ch, false);
+  else routeAudio();
+}
+
 function routeAudio() {
+  const levelling = audioFx.levelling;
+  const stage = stageChannel();
+  const stageVol = levelling ? 0 : masterVolume * (stage ? chVolume(stage) : 1);
+  // Setting the same value fires no event, so this doesn't loop through the volumechange listener
+  if (Math.abs(remoteVideo.volume - stageVol) > 0.001) remoteVideo.volume = stageVol;
   for (const ch of channels.values()) {
     for (const t of ch.stream?.getAudioTracks() || []) t.enabled = !ch.muted;
     const offStage = ch.stream && !ch.paused && ch.stream !== remoteVideo.srcObject && ch.stream.getAudioTracks().length;
@@ -295,17 +382,91 @@ function routeAudio() {
       if (ch.audioEl.srcObject?.getAudioTracks()[0] !== ch.stream.getAudioTracks()[0]) {
         ch.audioEl.srcObject = new MediaStream(ch.stream.getAudioTracks());
       }
-      ch.audioEl.volume = remoteVideo.volume;
+      ch.audioEl.volume = levelling ? 0 : masterVolume * chVolume(ch);
       // Off stage, a stream is silent only when muted itself. The player's mute is the stage stream's
       // own; before the first click the browser may still block sound, as it does for the video.
-      ch.audioEl.muted = ch.muted || (remoteVideo.muted && !navigator.userActivation?.hasBeenActive);
+      ch.audioEl.muted = !levelling && (ch.muted || (remoteVideo.muted && !navigator.userActivation?.hasBeenActive));
       ch.audioEl.play().catch(() => {});
     } else if (ch.audioEl) {
       ch.audioEl.srcObject = null;
     }
   }
+  syncAudioGraph();
 }
 remoteVideo.addEventListener('volumechange', routeAudio);
+
+// ======== Sound extras (Web Audio) ========
+// Each stream's level, so its frog lights up while it has sound (group rooms), and "volume equilibrado":
+// a compressor that tames explosions and lifts quiet voices. With it on, the media elements keep
+// playing at zero volume (browsers only hand remote WebRTC audio to Web Audio while an element plays
+// it) and the sound comes out of the compressor instead.
+const LEVELLING_KEY = 'fs-levelling';
+const audioFx = { ctx: null, levelling: storage.get(LEVELLING_KEY) === '1', nodes: new Map() };
+
+function audioCtx() {
+  if (!audioFx.ctx) {
+    try { audioFx.ctx = new AudioContext({ latencyHint: 'interactive' }); } catch { return null; }
+  }
+  // Starts suspended until the page has had a click or a key
+  if (audioFx.ctx.state === 'suspended' && navigator.userActivation?.hasBeenActive) audioFx.ctx.resume().catch(() => {});
+  return audioFx.ctx;
+}
+
+function dropNodes(n) {
+  for (const node of [n.src, n.analyser, n.comp, n.makeup, n.out]) { try { node.disconnect(); } catch {} }
+}
+
+function syncAudioGraph() {
+  const want = audioFx.levelling || document.body.classList.contains('has-stream-list');
+  if (!want && !audioFx.nodes.size) return;
+  const ctx = want ? audioCtx() : audioFx.ctx;
+  const stage = stageChannel();
+  for (const ch of channels.values()) {
+    const track = want && ch.stream && !ch.paused ? ch.stream.getAudioTracks()[0] || null : null;
+    let n = audioFx.nodes.get(ch.hostId);
+    if (n && n.track !== track) { dropNodes(n); audioFx.nodes.delete(ch.hostId); n = null; }
+    if (!track || !ctx) continue;
+    if (!n) {
+      const src = ctx.createMediaStreamSource(new MediaStream([track]));
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -26; comp.knee.value = 18; comp.ratio.value = 5;
+      comp.attack.value = 0.004; comp.release.value = 0.22;
+      // Brings the average back up after the peaks were pulled down
+      const makeup = ctx.createGain();
+      makeup.gain.value = 1.7;
+      const out = ctx.createGain();
+      out.gain.value = 0;
+      src.connect(analyser);
+      src.connect(comp); comp.connect(makeup); makeup.connect(out); out.connect(ctx.destination);
+      n = { track, src, analyser, comp, makeup, out, buf: new Float32Array(analyser.fftSize) };
+      audioFx.nodes.set(ch.hostId, n);
+    }
+    const isStage = ch === stage;
+    const silent = ch.muted || (isStage ? remoteVideo.muted : remoteVideo.muted && !navigator.userActivation?.hasBeenActive);
+    n.out.gain.value = audioFx.levelling && !silent ? masterVolume * chVolume(ch) : 0;
+  }
+  for (const [id, n] of audioFx.nodes) {
+    if (!channels.has(id)) { dropNodes(n); audioFx.nodes.delete(id); }
+  }
+}
+
+function setLevelling(on) {
+  audioFx.levelling = !!on;
+  storage.set(LEVELLING_KEY, on ? '1' : '0');
+  routeAudio();
+}
+
+// How loud a stream is right now (0..1), for the frog that lights up; null without the extras running
+function channelLevel(hostId) {
+  const n = audioFx.nodes.get(hostId);
+  if (!n || audioFx.ctx?.state !== 'running') return null;
+  n.analyser.getFloatTimeDomainData(n.buf);
+  let sum = 0;
+  for (let i = 0; i < n.buf.length; i++) sum += n.buf[i] * n.buf[i];
+  return Math.sqrt(sum / n.buf.length);
+}
 
 // The speaker button in the list and the player's mute (for the stream on stage) both land here
 function setChannelMuted(ch, muted) {
@@ -372,10 +533,20 @@ setInterval(() => {
   for (const id of [...firstSeenLive.keys()]) if (!hostsInfo.some(h => h.id === id)) firstSeenLive.delete(id);
 }, 3000);
 
-socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated, group, hosts }) => {
+// Names of everyone watching (player.js lists them) and whether the streamer locked the room
+let viewerNames = [];
+let roomLocked = false;
+
+socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated, group, hosts, viewerNames: names, locked }) => {
+  // Only members get room updates: getting one means we're in (a locked room let us back)
+  if (blockedState === 'locked') { blockedState = null; clearTimeout(lockedRetry); }
   viewerCount.textContent = `${count} assistindo`;
   hostsInfo = Array.isArray(hosts) ? hosts : [];
   groupOpen = !!group;
+  viewerNames = Array.isArray(names) ? names : [];
+  roomLocked = !!locked;
+  rememberRoom();
+  document.dispatchEvent(new CustomEvent('fs-room-update', { detail: { count } }));
   // Channels of streamers no longer in the room
   if (Array.isArray(hosts)) {
     for (const id of [...channels.keys()]) if (!hostsInfo.some(h => h.id === id)) dropChannel(id);
@@ -386,6 +557,50 @@ socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated, group, ho
   renderStage();
   renderStreamList();
 });
+
+// ======== Reactions, data saver, the streamer's health ========
+function sendReaction(emoji) {
+  if (!socket.connected) return false;
+  socket.emit('reaction', { emoji, hostId: selectedId });
+  return true;
+}
+socket.on('reaction', (r = {}) => {
+  // Our own comes back too; the page already showed it when the button was pressed
+  document.dispatchEvent(new CustomEvent('fs-reaction', { detail: { emoji: r.emoji, name: r.name, mine: r.from === socket.id } }));
+});
+
+// "Economizar dados": the streamer sends us a smaller, lighter copy (direct connections only; through
+// the media server everyone gets the same copy)
+const DATA_SAVER_KEY = 'fs-data-saver';
+let dataSaver = storage.get(DATA_SAVER_KEY) === '1';
+function sendQuality(ch) {
+  if (ch.pc && !ch.pc.isSfu) socket.emit('viewer-quality', { hostId: ch.hostId, low: dataSaver });
+}
+function setDataSaver(on) {
+  dataSaver = !!on;
+  storage.set(DATA_SAVER_KEY, on ? '1' : '0');
+  for (const ch of channels.values()) sendQuality(ch);
+}
+
+// What each streamer's PC reports every few seconds: capture fps, the target and what limits it
+const hostHealth = new Map();
+socket.on('host-health', (h = {}) => {
+  if (h.hostId) hostHealth.set(h.hostId, { fps: h.fps, target: h.target, limit: h.limit, away: !!h.away, at: Date.now() });
+});
+
+// The home page lists the rooms you watched, with who streams there
+const RECENT_KEY = 'fs-recent-rooms';
+let rememberedAs = '';
+function rememberRoom() {
+  const owner = hostsInfo.find(h => h.owner) || hostsInfo[0];
+  if (!owner || rememberedAs === owner.name) return;
+  rememberedAs = owner.name;
+  let list = [];
+  try { list = JSON.parse(storage.get(RECENT_KEY) || '[]'); } catch {}
+  if (!Array.isArray(list)) list = [];
+  list = [{ id: roomId, name: owner.name, at: Date.now() }, ...list.filter(r => r && r.id !== roomId)].slice(0, 8);
+  storage.set(RECENT_KEY, JSON.stringify(list));
+}
 
 socket.on('host-joined', ({ hostId } = {}) => {
   if (!hostId) return;
@@ -616,6 +831,8 @@ socket.on('offer', async ({ from, offer, sid }) => {
     if (state === 'connected') {
       setChannelStatus(ch, 'Abrindo a tela…');
       updateWatching();
+      // Each new connection starts at full quality on the streamer's side: say again what we want
+      sendQuality(ch);
     } else if (state === 'disconnected') {
       if (ch.paused) return;
       setChannelStatus(ch, 'Reconectando…');
@@ -691,6 +908,7 @@ function renderPlayerStreams(show) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = `player-stream slot-${info.slot}`;
+    b.dataset.hostId = info.id;
     b.setAttribute('aria-pressed', String(info.id === selectedId));
     b.setAttribute('aria-label', `Assistir ${info.name}`);
     b.title = `${info.name} (tecla ${i + 1})`;
@@ -714,6 +932,8 @@ function renderStreamList() {
   streamList.hidden = !show;
   document.body.classList.toggle('has-stream-list', show);
   renderPlayerStreams(show);
+  // A rebuild in the middle of dragging a volume slider would drop the drag
+  if (show && streamList.dataset.dragging) return;
   if (!show) {
     // Without the list there's no way to undo a per-stream mute: the player's volume is the only control
     if ([...channels.values()].some(c => c.muted)) {
@@ -732,13 +952,16 @@ function renderStreamList() {
     pick.setAttribute('aria-pressed', String(info.id === selectedId));
     pick.title = `Assistir ${info.name} (tecla ${i + 1})`;
     const frog = Object.assign(document.createElement('img'), { src: frogIcon(info.name), alt: '', className: 'stream-frog' + (frogIcon(info.name).includes('big') ? ' is-big' : '') });
+    // The ring that lights up while this stream has sound goes on the wrapper (see style.css)
+    const frogWrap = Object.assign(document.createElement('span'), { className: 'stream-frog-wrap' });
+    frogWrap.append(frog);
     const text = document.createElement('span');
     text.className = 'stream-text';
     text.append(
       streamNameLine(info),
       Object.assign(document.createElement('span'), { className: 'stream-state', textContent: streamState(info) })
     );
-    pick.append(frog, text);
+    pick.append(frogWrap, text);
     pick.addEventListener('click', () => { if (ch?.stream && !ch.paused) select(info.id); else { userPicked = true; selectedId = info.id; renderStage(); renderStreamList(); } });
     const mute = document.createElement('button');
     mute.type = 'button';
@@ -754,7 +977,25 @@ function renderStreamList() {
       const c = channelFor(info.id);
       setChannelMuted(c, !c.muted);
     });
-    row.append(pick, mute);
+    // The mixer: each streamer's own level, on top of the player's volume
+    const vol = document.createElement('input');
+    vol.type = 'range';
+    vol.min = '0'; vol.max = '100'; vol.step = '1';
+    vol.className = 'stream-vol';
+    const level = Math.round((ch ? chVolume(ch) : 1) * 100);
+    vol.value = String(level);
+    vol.style.setProperty('--fill', level + '%');
+    vol.setAttribute('aria-label', `Volume de ${info.name}`);
+    vol.title = `Volume de ${info.name}: ${level}%`;
+    vol.addEventListener('input', () => {
+      vol.style.setProperty('--fill', vol.value + '%');
+      vol.title = `Volume de ${info.name}: ${vol.value}%`;
+      setChannelVolume(channelFor(info.id), vol.value / 100);
+    });
+    // Dragging the slider re-renders nothing until it's let go (a rebuild would drop the drag)
+    vol.addEventListener('pointerdown', () => { streamList.dataset.dragging = '1'; });
+    row.dataset.hostId = info.id;
+    row.append(pick, mute, vol);
     return row;
   });
   const children = [
@@ -770,6 +1011,14 @@ function renderStreamList() {
     children.push(share);
   }
   streamList.replaceChildren(...children);
+}
+
+for (const type of ['pointerup', 'pointercancel']) {
+  window.addEventListener(type, () => {
+    if (!streamList?.dataset.dragging) return;
+    delete streamList.dataset.dragging;
+    renderStreamList();
+  });
 }
 
 // Opens the FrogShare app straight into this room. If nothing takes the link (app not installed),
@@ -858,7 +1107,11 @@ async function sampleInbound() {
   const emitted = v.jitterBufferEmittedCount - p.jitterBufferEmittedCount;
   const local = pair && stats.get(pair.localCandidateId);
   const remote = pair && stats.get(pair.remoteCandidateId);
+  const decoded = Math.max(0, (v.framesDecoded || 0) - (p.framesDecoded || 0));
   return {
+    decoded,
+    dropped: Math.max(0, (v.framesDropped || 0) - (p.framesDropped || 0)),
+    decodeMs: decoded ? ((v.totalDecodeTime || 0) - (p.totalDecodeTime || 0)) / decoded * 1000 : null,
     res: `${v.frameWidth || 0}x${v.frameHeight || 0}`,
     fps: v.framesPerSecond || 0,
     kbps: dt > 0 ? Math.round((v.bytesReceived - p.bytesReceived) * 8 / dt / 1000) : 0,
@@ -884,6 +1137,7 @@ function renderOverlay(s) {
     statsLines.appendChild(el);
   };
   if (!s) { line('Coletando dados...'); return; }
+  if (diag.text) line(diag.text, 'diag-line');
   const lossPct = s.packets ? (100 * s.lost / s.packets) : 0;
   const delay = s.rttMs != null && s.jbMs != null ? Math.round(s.rttMs / 2 + s.jbMs) : null;
   line(`Resolução   ${s.res} @ ${s.fps} fps`, s.fps && s.fps < 24 ? 'bad' : null);
@@ -927,14 +1181,78 @@ function flushTelemetry() {
     decoder: agg.last?.decoder,
     relay: agg.last?.relay,
     sfu: agg.last?.sfu,
-    visible: !document.hidden
+    visible: !document.hidden,
+    // What the stutter explanation said at the end of this minute, to check it against the field data
+    diag: diag.reason,
+    dataSaver
   });
   resetAgg();
+}
+
+// ======== Why is it stuttering? ========
+// When the picture freezes, tell the viewer whose end it is. In the field most freezes came from the
+// streamer's capture with no loss at all on the network, and everyone blamed their own Wi-Fi.
+// Works from our own stats alone; the streamer's report (host-health, apps from 1.7) makes it precise.
+const diag = { samples: [], level: 'ok', reason: null, text: '', calmSince: 0 };
+const DIAG_TEXT = {
+  'network-loss': (x) => `Sua internet está perdendo dados (${x.loss.toFixed(0)}%). No Wi-Fi, chegue mais perto do roteador. No 4G, ligue "Economizar dados" no menu ⋯.`,
+  'network-delay': (x) => `Sua conexão está lenta (atraso de ${x.rtt} ms). Se puder, use outra rede ou ligue "Economizar dados" no menu ⋯.`,
+  device: () => 'Seu aparelho está com dificuldade para mostrar o vídeo. Feche outras abas ou ligue "Economizar dados" no menu ⋯.',
+  'host-capture': (x) => `O PC de quem transmite está mandando poucos quadros (${x.hostFps} por segundo): o jogo está pesando lá. Sua internet está boa.`,
+  'host-upload': () => 'A internet de quem transmite está no limite. A sua está boa.',
+  'host-cpu': () => 'O computador de quem transmite está sobrecarregado. Sua internet está boa.',
+  'host-slow': () => 'A imagem está chegando com atraso do PC de quem transmite. Sua internet está boa.'
+};
+
+function diagnose(s) {
+  if (!s) { diag.samples = []; return setDiag('ok', null, ''); }
+  diag.samples.push(s);
+  if (diag.samples.length > 6) diag.samples.shift();
+  if (diag.samples.length < 3) return;
+  const w = diag.samples;
+  const sum = (k) => w.reduce((a, x) => a + (x[k] || 0), 0);
+  const freezes = sum('freezes'), freezeMs = sum('freezeMs');
+  const h = selectedId && hostHealth.get(selectedId);
+  const fresh = h && Date.now() - h.at < 20000;
+  // A frozen-looking picture is expected while the streamer's "already back" card is up
+  if (!freezes || (fresh && h.away)) {
+    if (diag.level !== 'ok') {
+      if (!diag.calmSince) diag.calmSince = Date.now();
+      // Back to normal only after a calm stretch, so the warning doesn't flicker
+      if (Date.now() - diag.calmSince > 12000) setDiag('ok', null, '');
+    }
+    return;
+  }
+  diag.calmSince = 0;
+  const loss = sum('packets') ? 100 * sum('lost') / sum('packets') : 0;
+  const rtt = Math.max(...w.map(x => x.rttMs || 0));
+  const decoded = sum('decoded'), dropped = sum('dropped');
+  const decodeMs = decoded ? w.reduce((a, x) => a + (x.decodeMs || 0) * (x.decoded || 0), 0) / decoded : 0;
+  let reason;
+  if (loss > 2) reason = 'network-loss';
+  else if (rtt > 450) reason = 'network-delay';
+  else if (decoded && (dropped / (decoded + dropped) > 0.08 || decodeMs > 30)) reason = 'device';
+  else if (fresh && h.fps != null && h.target && h.fps < h.target * 0.7) reason = 'host-capture';
+  else if (fresh && h.limit === 'bandwidth') reason = 'host-upload';
+  else if (fresh && h.limit === 'cpu') reason = 'host-cpu';
+  else reason = 'host-slow';
+  const level = freezes >= 3 || freezeMs > 1500 ? 'bad' : 'warn';
+  setDiag(level, reason, DIAG_TEXT[reason]({ loss, rtt, hostFps: fresh ? h.fps : null }));
+}
+
+function setDiag(level, reason, text) {
+  if (diag.level === level && diag.reason === reason && diag.text === text) return;
+  const newReason = reason && reason !== diag.reason;
+  Object.assign(diag, { level, reason, text });
+  btnInfo.dataset.diag = level;
+  document.dispatchEvent(new CustomEvent('fs-diag', { detail: { level, reason, text, newReason } }));
 }
 
 setInterval(async () => {
   let s = null;
   try { s = await sampleInbound(); } catch {}
+  if (remoteVideo.style.display === 'block') diagnose(s);
+  else if (diag.level !== 'ok') setDiag('ok', null, '');
   if (s) {
     agg.n++;
     agg.fpsSum += s.fps;
@@ -956,7 +1274,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.9', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.0', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }
@@ -975,13 +1293,13 @@ let wantMuted = false;
 
 try {
   const v = parseFloat(localStorage.getItem(VOL_KEY));
-  if (v >= 0 && v <= 1) remoteVideo.volume = v;
+  if (v >= 0 && v <= 1) masterVolume = v;
   wantMuted = localStorage.getItem(MUTED_KEY) === '1';
 } catch {}
 
 function saveVolume() {
   try {
-    localStorage.setItem(VOL_KEY, String(remoteVideo.volume));
+    localStorage.setItem(VOL_KEY, String(masterVolume));
     localStorage.setItem(MUTED_KEY, wantMuted ? '1' : '0');
   } catch {}
 }
@@ -992,17 +1310,17 @@ function stageChannel() {
   const ch = selectedId && channels.get(selectedId);
   return ch && ch.stream && ch.stream === remoteVideo.srcObject ? ch : null;
 }
-const stageSilent = () => remoteVideo.muted || remoteVideo.volume === 0 || !!stageChannel()?.muted;
+const stageSilent = () => remoteVideo.muted || masterVolume === 0 || !!stageChannel()?.muted;
 
 function updateVolumeUI() {
   const silent = stageSilent();
-  const pct = silent ? 0 : Math.round(remoteVideo.volume * 100);
+  const pct = silent ? 0 : Math.round(masterVolume * 100);
   volumeSlider.value = pct;
   volumeSlider.style.setProperty('--fill', pct + '%');
   volumeValue.textContent = pct + '%';
   iconX.style.display = silent ? '' : 'none';
   iconWave1.style.display = silent ? 'none' : '';
-  iconWave2.style.display = !silent && remoteVideo.volume > 0.5 ? '' : 'none';
+  iconWave2.style.display = !silent && masterVolume > 0.5 ? '' : 'none';
   const label = silent ? 'Desmutar' : 'Mutar';
   btnMute.setAttribute('aria-label', label);
   btnMute.title = label + ' (M)';
@@ -1013,14 +1331,14 @@ updateVolumeUI();
 
 let osdEl = null;
 let osdTimer = null;
-function showVolumeOsd() {
+function showVolumeOsd(text) {
   if (!osdEl) {
     osdEl = document.createElement('div');
     osdEl.className = 'volume-osd';
     videoArea.appendChild(osdEl);
   }
   const silent = stageSilent();
-  osdEl.textContent = silent ? 'Mudo' : `Volume ${Math.round(remoteVideo.volume * 100)}%`;
+  osdEl.textContent = text || (silent ? 'Mudo' : `Volume ${Math.round(masterVolume * 100)}%`);
   osdEl.classList.add('visible');
   clearTimeout(osdTimer);
   osdTimer = setTimeout(() => osdEl.classList.remove('visible'), 900);
@@ -1031,10 +1349,12 @@ function setVolume(v) {
   // Raising the volume of a stream muted in the list means "I want to hear it"
   const ch = stageChannel();
   if (ch?.muted && v > 0) setChannelMuted(ch, false);
-  remoteVideo.volume = v;
+  masterVolume = v;
   wantMuted = v === 0;
   remoteVideo.muted = wantMuted;
   if (!wantMuted) remoteVideo.play().catch(() => {});
+  routeAudio();
+  updateVolumeUI();
   saveVolume();
 }
 
@@ -1044,18 +1364,20 @@ function toggleMute() {
     // Group room: the player's mute is this stream's mute, like its speaker button in the list
     if (stageSilent()) {
       setChannelMuted(ch, false);
-      if (remoteVideo.volume === 0) remoteVideo.volume = 0.5;
+      if (masterVolume === 0) masterVolume = 0.5;
       wantMuted = false;
       remoteVideo.muted = false;
       remoteVideo.play().catch(() => {});
     } else {
       setChannelMuted(ch, true);
     }
+    routeAudio();
+    updateVolumeUI();
     saveVolume();
     return;
   }
-  if (remoteVideo.muted || remoteVideo.volume === 0) {
-    if (remoteVideo.volume === 0) remoteVideo.volume = 0.5;
+  if (remoteVideo.muted || masterVolume === 0) {
+    if (masterVolume === 0) masterVolume = 0.5;
     wantMuted = false;
     remoteVideo.muted = false;
     remoteVideo.play().catch(() => {});
@@ -1063,6 +1385,8 @@ function toggleMute() {
     wantMuted = true;
     remoteVideo.muted = true;
   }
+  routeAudio();
+  updateVolumeUI();
   saveVolume();
 }
 
@@ -1083,7 +1407,7 @@ function applyInitialAudio() {
 // viewer's permission, so the sound comes on with the first one instead of needing the speaker
 // button. Not when the viewer muted on purpose, and not for taps on the volume controls themselves.
 function unmuteOnInteraction(e) {
-  if (channels.size > 1) setTimeout(routeAudio);
+  if (channels.size > 1 || audioFx.ctx) setTimeout(routeAudio);
   if (e.target?.closest?.('#btn-mute, #volume-slider, #unmute-cta')) return;
   if (remoteVideo.style.display !== 'block' || !remoteVideo.muted || wantMuted) return;
   remoteVideo.muted = false;
@@ -1095,9 +1419,10 @@ volumeSlider.addEventListener('input', () => setVolume(volumeSlider.value / 100)
 btnMute.addEventListener('click', toggleMute);
 
 videoArea.addEventListener('wheel', (e) => {
-  if (volumeControl.style.display === 'none') return;
+  // Ctrl + wheel (and a touchpad pinch, which arrives the same way) zooms instead: see player.js
+  if (volumeControl.style.display === 'none' || e.ctrlKey) return;
   e.preventDefault();
-  const base = remoteVideo.muted ? 0 : remoteVideo.volume;
+  const base = remoteVideo.muted ? 0 : masterVolume;
   setVolume(base + (e.deltaY < 0 ? 0.05 : -0.05));
   showVolumeOsd();
 }, { passive: false });
@@ -1112,7 +1437,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (volumeControl.style.display === 'none') return;
-  const base = remoteVideo.muted ? 0 : remoteVideo.volume;
+  const base = remoteVideo.muted ? 0 : masterVolume;
   if (e.key === 'ArrowUp') setVolume(base + 0.05);
   else if (e.key === 'ArrowDown') setVolume(base - 0.05);
   else if (e.key === 'm' || e.key === 'M') toggleMute();

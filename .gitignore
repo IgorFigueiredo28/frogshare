@@ -4,3 +4,6 @@ dist/
 !native/AudioCapture.exe
 .env
 .env.local
+
+# Local dev launch configs (preview server)
+.claude/

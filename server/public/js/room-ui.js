@@ -13,7 +13,7 @@
   document.getElementById('btn-phone-fullscreen')?.addEventListener('click', () => toggleFullscreen());
 
   document.getElementById('btn-copy-room')?.addEventListener('click', () => {
-    const link = location.origin + '/room.html?room=' + encodeURIComponent(new URLSearchParams(location.search).get('room') || '');
+    const link = location.origin + '/s/' + encodeURIComponent(typeof roomId === 'string' ? roomId : '');
     navigator.clipboard.writeText(link)
       .then(() => showToast('Link da sala copiado. É só mandar para quem quiser assistir.'))
       .catch(() => showToast('Não deu para copiar. O link é: ' + link));
@@ -27,7 +27,9 @@
     paused: { chip: 'Pausado', cls: 'chip-warn', frog: 'frog-sleep', hint: 'Fique por aqui: quando o host voltar, o vídeo reaparece sozinho.' },
     reconnecting: { chip: 'Reconectando', cls: 'chip-warn', frog: 'frog-sad', hint: 'A conexão oscilou. Já estamos tentando de novo.', bubbles: true },
     left: { chip: 'Host saiu', cls: 'chip-danger', frog: 'frog-sad', hint: 'Quando o host abrir a sala de novo, a transmissão volta aqui.' },
-    notfound: { chip: 'Não encontrada', cls: 'chip-danger', frog: 'frog-sad', hint: 'Confira o código com quem te mandou o link, ou digite outro:' }
+    notfound: { chip: 'Não encontrada', cls: 'chip-danger', frog: 'frog-sad', hint: 'Confira o código com quem te mandou o link, ou digite outro:' },
+    kicked: { chip: 'Fora da sala', cls: 'chip-danger', frog: 'frog-sad', hint: 'Se foi engano, peça para quem transmite te deixar entrar de novo daqui a pouco.' },
+    locked: { chip: 'Trancada', cls: 'chip-warn', frog: 'frog-sleep', hint: 'Quem transmite trancou a sala para gente nova. Se destrancar, você entra sozinho.' }
   };
 
   // The tab says what's going on, for a viewer who left it in the background
@@ -39,13 +41,17 @@
     paused: 'Pausado · FrogShare',
     reconnecting: 'Reconectando… · FrogShare',
     left: 'Host saiu · FrogShare',
-    notfound: 'Sala não encontrada · FrogShare'
+    notfound: 'Sala não encontrada · FrogShare',
+    kicked: 'Fora da sala · FrogShare',
+    locked: 'Sala trancada · FrogShare'
   };
 
   function detect() {
     if (video.style.display === 'block') return 'live';
     const text = statusEl.textContent.toLowerCase();
     if (text.includes('não existe')) return 'notfound';
+    if (text.includes('removido')) return 'kicked';
+    if (text.includes('trancada')) return 'locked';
     if (text.includes('procurando')) return 'checking';
     if (text.includes('pausou')) return 'paused';
     if (text.includes('desconectou') || text.includes('saiu')) return 'left';
@@ -121,7 +127,8 @@
     videoArea.classList.remove('player-idle');
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (overBar || dragging || bar.contains(document.activeElement) || needsUnmute()) return showControls();
+      const menuOpen = !!bar.querySelector('.popover:not([hidden]), .react-tray:not([hidden])');
+      if (overBar || dragging || menuOpen || bar.contains(document.activeElement) || needsUnmute()) return showControls();
       videoArea.classList.remove('controls-visible');
       if (document.fullscreenElement) videoArea.classList.add('player-idle');
     }, 2500);
@@ -139,8 +146,10 @@
   const slider = document.getElementById('volume-slider');
   slider.addEventListener('pointerdown', () => { dragging = true; });
   window.addEventListener('pointerup', () => { if (dragging) { dragging = false; showControls(); } });
-  // Keyboard shortcuts (M, F, I, arrows) change things the bar shows: surface it briefly
-  document.addEventListener('keydown', (e) => { if (/^(m|f|i|ArrowUp|ArrowDown)$/i.test(e.key)) showControls(); });
+  // Keyboard shortcuts change things the bar shows: surface it briefly
+  document.addEventListener('keydown', (e) => { if (/^(m|f|i|t|j|p|c|z|ArrowUp|ArrowDown)$/i.test(e.key)) showControls(); });
+  // player.js asks for the bar while one of its menus is open
+  window.keepPlayerBar = () => showControls();
   document.addEventListener('fullscreenchange', showControls);
 
   new MutationObserver(render).observe(statusEl, { childList: true, characterData: true, subtree: true });

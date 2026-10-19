@@ -3,6 +3,7 @@ const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3030;
@@ -58,9 +59,50 @@ app.use(express.json({ limit: '64kb' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-app.use(express.static(path.join(__dirname, 'public')));
-
 const rooms = new Map();
+
+// ======== Room page with its own link preview ========
+// Discord and WhatsApp show the page's og: tags when a link is pasted. With the streamer's name, the
+// game and whether they're live, "Igor está ao vivo, jogando Deadlock" says more than a generic card.
+// /s/<id> is the short form of /room.html?room=<id>, the link the app now hands out.
+const ROOM_HTML = fs.readFileSync(path.join(__dirname, 'public', 'room.html'), 'utf8');
+const escHtml = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function roomPreview(roomId) {
+  const room = roomId && rooms.get(roomId);
+  if (!room) return null;
+  const live = hostsList(room).filter(h => !h.paused);
+  const owner = room.hostName || hostsList(room)[0]?.name;
+  if (!owner && !live.length) return null;
+  const names = live.length ? live.map(h => h.name) : [owner];
+  const who = names.length > 1 ? names.slice(0, -1).join(', ') + ' e ' + names[names.length - 1] : names[0];
+  const game = live.find(h => h.game)?.game;
+  const watching = room.viewers.size;
+  if (!live.length) {
+    return { title: `Sala de ${who} no FrogShare`, description: 'A transmissão aparece aqui assim que começar. Dá para assistir no navegador, sem instalar nada.' };
+  }
+  const parts = [game ? `Jogando ${game}.` : '', watching ? `${watching} assistindo.` : '', 'Clique para assistir no navegador, sem instalar nada.'];
+  return { title: `${who} ${names.length > 1 ? 'estão' : 'está'} ao vivo no FrogShare`, description: parts.filter(Boolean).join(' ') };
+}
+
+function roomPage(req, res) {
+  const roomId = String(req.params.id || req.query.room || '');
+  const preview = ROOM_ID_RE.test(roomId) ? roomPreview(roomId) : null;
+  let html = ROOM_HTML;
+  if (preview) {
+    const title = escHtml(preview.title), description = escHtml(preview.description);
+    html = html
+      .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
+      .replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${title}$2`)
+      .replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${description}$2`)
+      .replace(/(<meta name="description" content=")[^"]*(")/, `$1${description}$2`);
+  }
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+}
+app.get(['/room.html', '/s/:id'], roomPage);
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Clean up stale rooms every 10 minutes
 setInterval(() => {
@@ -530,7 +572,7 @@ app.get('/api/admin/telemetry', rateLimit(20, 60000), async (req, res) => {
 });
 
 // Rows the server itself writes and later trusts (usage totals, room blocks) must not be forgeable here
-const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room']);
+const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room', 'room-name']);
 
 // Error logging proxy — clients POST here, server forwards to Supabase
 app.post('/api/errors', rateLimit(60, 60000), async (req, res) => {
@@ -585,11 +627,92 @@ app.get('/api/room/create', rateLimit(20, 60000), (req, res) => {
   res.json({ roomId, hostKey });
 });
 
-app.get('/api/room/:id', (req, res) => {
+// ======== Named rooms ========
+// A streamer can give the room a name of their own (frogshare.onrender.com/s/igor) and keep it. Rooms
+// live in memory and this server sleeps and restarts often, so the name -> owner bond is stored: only a
+// hash of the owner's key, in the same table the room blocks use. Whoever holds the key gets the name back.
+const ROOM_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{1,22}[a-z0-9])$/;
+const RESERVED_NAMES = new Set(['admin', 'api', 'app', 'frogshare', 'room', 'rooms', 'sala', 'salas', 'site', 'suporte', 'support', 'www', 'transmitir', 'health', 'brand', 'css', 'js']);
+const namedRooms = new Map(); // name -> hash of its owner's key
+const keyHash = (key) => crypto.createHash('sha256').update(String(key || '')).digest('base64url');
+const ownsName = (name, key) => !!key && namedRooms.get(name) === keyHash(key);
+
+function nameProblem(name) {
+  if (!ROOM_NAME_RE.test(name)) return 'Use de 3 a 24 letras sem acento, números ou hífen (sem hífen no começo ou no fim).';
+  // The shape of the random room codes, which a later random room could collide with
+  if (/^[0-9a-f]{8}$/.test(name) || RESERVED_NAMES.has(name)) return 'Esse nome não está disponível. Tente outro.';
+  return null;
+}
+
+async function loadNamedRooms() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/error_logs?source=eq.room-name&select=room_id,context&order=created_at.asc&limit=10000`, { headers: supabaseHeaders() });
+    if (!resp.ok) return;
+    // The first claim of a name wins; later rows for it (there shouldn't be any) don't override it
+    for (const row of await resp.json()) {
+      if (row.room_id && row.context?.keyHash && !namedRooms.has(row.room_id)) namedRooms.set(row.room_id, row.context.keyHash);
+    }
+  } catch {}
+}
+
+app.post('/api/room/claim', rateLimit(10, 3600000), async (req, res) => {
+  const name = String(req.body?.name || '').trim().toLowerCase();
+  const problem = nameProblem(name);
+  if (problem) return res.status(400).json({ error: problem });
+  const givenKey = typeof req.body?.hostKey === 'string' ? req.body.hostKey.slice(0, 64) : '';
+  // Asking again for a name you already own (with its key) just hands it back
+  if (namedRooms.has(name)) {
+    if (ownsName(name, givenKey)) return res.json({ roomId: name, hostKey: givenKey });
+    return res.status(409).json({ error: 'Esse nome já tem dono. Tente outro.' });
+  }
+  if (rooms.has(name)) return res.status(409).json({ error: 'Esse nome já está em uso agora. Tente outro.' });
+  const hostKey = newHostKey();
+  namedRooms.set(name, keyHash(hostKey));
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+        method: 'POST',
+        headers: { ...supabaseHeaders(), Prefer: 'return=minimal' },
+        body: JSON.stringify({ source: 'room-name', level: 'info', message: 'room name claimed', room_id: name, context: { keyHash: keyHash(hostKey) } })
+      });
+      if (!resp.ok) throw new Error(`supabase ${resp.status}`);
+    } catch {
+      // Without the stored copy a restart would give the name to anyone: refuse rather than half-reserve it
+      namedRooms.delete(name);
+      return res.status(503).json({ error: 'Não deu para guardar o nome agora. Tente de novo em instantes.' });
+    }
+  }
+  rooms.set(name, newRoom({ hostKey, strict: true }));
+  res.json({ roomId: name, hostKey });
+});
+
+const roomLookupLimit = rateLimit(60, 60000);
+app.get('/api/room/:id', roomLookupLimit, (req, res) => {
   if (!ROOM_ID_RE.test(req.params.id)) return res.status(404).json({ error: 'Room not found' });
   const room = rooms.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
   res.json({ exists: true, hasHost: !!room.host, viewerCount: room.viewers.size });
+});
+
+// The home page's "recent rooms": who streams there and whether they're live right now. Anyone with a
+// room's code can open it and see the same, so this shows nothing new; it only saves opening each one.
+app.get('/api/rooms/status', rateLimit(30, 60000), (req, res) => {
+  const ids = [...new Set(String(req.query.ids || '').split(',').map(s => s.trim()).filter(s => ROOM_ID_RE.test(s)))].slice(0, 12);
+  res.set('Cache-Control', 'no-store');
+  res.json(ids.map(id => {
+    const room = rooms.get(id);
+    if (!room) return { id, exists: false, live: false };
+    const hosts = hostsList(room);
+    const live = hosts.filter(h => !h.paused);
+    return {
+      id, exists: true, live: live.length > 0,
+      name: room.hostName || hosts[0]?.name || null,
+      streamers: live.length,
+      game: (live.find(h => h.game) || {}).game || null,
+      viewers: room.viewers.size
+    };
+  }));
 });
 
 // Hosts up to 1.1.2 offer H264 baseline first (CPU encoding, one encode per viewer); 1.1.3+ put
@@ -608,6 +731,8 @@ function offerLooksLegacy(sdp) {
 
 function hostOutdated(room) {
   if (!room.host) return false;
+  // Streaming from the site itself (transmitir.html) is always the current version
+  if (room.hostWeb) return false;
   if (room.hostVersion) return versionOlder(room.hostVersion, LATEST_APP.minimum);
   return room.hostLegacy === true;
 }
@@ -621,7 +746,15 @@ const cleanName = (name, fallback) => {
   const s = String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 24);
   return s || fallback;
 };
-const newRoom = (extra) => ({ host: null, hostKey: null, strict: false, viewers: new Set(), cohosts: new Map(), group: false, createdAt: Date.now(), ...extra });
+// The game a streamer is playing, as the app names it (only known games: never a window title)
+const cleanGame = (game) => String(game || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 40) || null;
+const newRoom = (extra) => ({
+  host: null, hostKey: null, strict: false, viewers: new Set(), cohosts: new Map(), group: false, createdAt: Date.now(),
+  // Viewers: the name each one picked, and the key their page keeps (it survives reconnects, so a locked
+  // room still lets its own viewers back in and a removed viewer can't simply reload)
+  viewerNames: new Map(), viewerKeys: new Map(), knownKeys: new Set(), banned: new Map(), locked: false,
+  ...extra
+});
 
 function hostSockets(room) {
   return [room.host, ...(room.cohosts ? room.cohosts.keys() : [])].filter(Boolean);
@@ -629,10 +762,37 @@ function hostSockets(room) {
 
 function hostsList(room) {
   const list = [];
-  if (room.host) list.push({ id: room.host, name: room.hostName || 'Host', slot: 0, paused: !!room.hostPaused, owner: true });
-  for (const [id, c] of room.cohosts || []) list.push({ id, name: c.name, slot: c.slot, paused: !!c.paused, owner: false });
+  if (room.host) list.push({ id: room.host, name: room.hostName || 'Host', slot: 0, paused: !!room.hostPaused, owner: true, game: room.hostGame || null, web: !!room.hostWeb });
+  for (const [id, c] of room.cohosts || []) list.push({ id, name: c.name, slot: c.slot, paused: !!c.paused, owner: false, game: c.game || null });
   return list;
 }
+
+// Removed by the room's owner: out for a couple of hours, by the key their page keeps
+const KICK_BAN_MS = 2 * 3600 * 1000;
+function isBanned(room, key) {
+  const until = key && room.banned.get(key);
+  if (!until) return false;
+  if (until < Date.now()) { room.banned.delete(key); return false; }
+  return true;
+}
+
+function forgetViewer(room, viewerId) {
+  room.viewers.delete(viewerId);
+  room.viewerNames.delete(viewerId);
+  room.viewerKeys.delete(viewerId);
+}
+
+// Per-socket allowance for the chatty events (reactions, names, health reports)
+function allowance(max, windowMs) {
+  let start = 0, n = 0;
+  return () => {
+    const now = Date.now();
+    if (now - start > windowMs) { start = now; n = 0; }
+    return ++n <= max;
+  };
+}
+
+const REACTIONS = new Set(['🔥', '😂', '👏', '😮', '🐸', '❤️']);
 
 function freeSlot(room) {
   const used = new Set([...(room.cohosts || new Map()).values()].map(c => c.slot));
@@ -656,8 +816,14 @@ function emitRoomUpdate(roomId, room) {
     viewerCount: room.viewers.size,
     hostOutdated: hostOutdated(room),
     group: !!room.group,
-    hosts: hostsList(room)
+    hosts: hostsList(room),
+    // Who's watching, by the names they picked (the first 50; viewerCount has the total)
+    viewerNames: [...room.viewerNames.values()].slice(0, 50),
+    locked: !!room.locked
   });
+  // Streamers also get each viewer's id, which the owner needs to remove someone
+  const list = [...room.viewers].slice(0, 200).map(id => ({ id, name: room.viewerNames.get(id) || 'Sapo' }));
+  for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-list', { viewers: list });
 }
 
 io.on('connection', (socket) => {
@@ -666,6 +832,12 @@ io.on('connection', (socket) => {
   const isStreamer = () => role === 'host' || role === 'cohost';
   const offerRequests = new Map(); // hostId -> { at: last request-offer sent, timer: one queued }
   const myRoom = () => (currentRoom && rooms.get(currentRoom)) || null;
+  const allowReaction = allowance(6, 4000);
+  const allowName = allowance(4, 5000);
+  const allowHealth = allowance(3, 4000);
+  const allowQuality = allowance(6, 10000);
+  // Still a viewer of the room: someone the owner removed keeps the socket, but not the membership
+  const isViewerHere = () => role === 'viewer' && !!myRoom()?.viewers.has(socket.id);
 
   // Signaling only flows between members of the same room
   const inMyRoom = (id) => {
@@ -685,7 +857,7 @@ io.on('connection', (socket) => {
     for (const viewerId of room.viewers) socket.emit('viewer-joined', { viewerId });
   }
 
-  socket.on('join-room', ({ roomId, asHost, appVersion, hostKey, coHost, name } = {}) => {
+  socket.on('join-room', ({ roomId, asHost, appVersion, hostKey, coHost, name, viewerKey } = {}) => {
     if (typeof roomId !== 'string' || !ROOM_ID_RE.test(roomId)) return;
     if (isBlocked(roomId)) {
       // A closed room stays closed: the host gets no viewers and viewers see no host
@@ -727,6 +899,11 @@ io.on('connection', (socket) => {
       //   brings it back, keeping their key
       // - builds before 1.4.6 send no key: only while nobody is hosting and no key holder has joined
       const key = hostKey ? String(hostKey).slice(0, 64) : null;
+      // A named room only ever goes to the key it was claimed with, even right after a restart
+      if (namedRooms.has(roomId) && !ownsName(roomId, key)) {
+        socket.emit('host-rejected', { reason: 'Esta sala pertence a outro host.' });
+        return;
+      }
       if (!room) {
         room = newRoom({ hostKey: key, strict: !!key });
         rooms.set(roomId, room);
@@ -744,6 +921,14 @@ io.on('connection', (socket) => {
       rooms.set(roomId, room);
     }
 
+    // Viewers the owner removed stay out; a locked room only lets back in those who were already there
+    const vKey = !asHost && typeof viewerKey === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(viewerKey) ? viewerKey : '';
+    if (!asHost) {
+      if (isBanned(room, vKey)) { socket.emit('kicked', {}); return; }
+      if (room.locked && !room.viewers.has(socket.id) && !(vKey && room.knownKeys.has(vKey))) { socket.emit('room-locked', {}); return; }
+      if (room.viewers.size >= 200 && !room.viewers.has(socket.id)) return;
+    }
+
     enterRoom(roomId);
 
     if (asHost) {
@@ -752,12 +937,17 @@ io.on('connection', (socket) => {
       room.hostPaused = false;
       // Builds before 1.3.1 don't send a version at all
       room.hostVersion = typeof appVersion === 'string' ? appVersion.slice(0, 20) : null;
+      room.hostWeb = appVersion === 'web';
       room.hostLegacy = undefined;
       role = 'host';
       announceStreamer(room);
     } else {
-      if (room.viewers.size >= 200) return;
       room.viewers.add(socket.id);
+      room.viewerNames.set(socket.id, cleanName(name, 'Sapo'));
+      if (vKey) {
+        room.viewerKeys.set(socket.id, vKey);
+        if (room.knownKeys.size < 5000) room.knownKeys.add(vKey);
+      }
       role = 'viewer';
       for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-joined', { viewerId: socket.id });
       if (room.sfu) socket.emit('sfu-start', { hostId: room.host, ...room.sfu });
@@ -787,23 +977,86 @@ io.on('connection', (socket) => {
 
   socket.on('set-name', ({ name } = {}) => {
     const room = myRoom();
-    if (!room) return;
+    if (!room || !allowName()) return;
     if (role === 'host' && room.host === socket.id) room.hostName = cleanName(name, 'Host');
     else if (role === 'cohost' && room.cohosts.has(socket.id)) room.cohosts.get(socket.id).name = cleanName(name, 'Amigo');
+    else if (role === 'viewer' && room.viewers.has(socket.id)) room.viewerNames.set(socket.id, cleanName(name, 'Sapo'));
     else return;
     emitRoomUpdate(currentRoom, room);
   });
 
   // A viewer watching one stream tells the others it doesn't need their video for now
   socket.on('watch', ({ hostId, video } = {}) => {
-    if (role !== 'viewer' || !inMyRoom(hostId)) return;
+    if (!isViewerHere() || !inMyRoom(hostId)) return;
     io.to(hostId).emit('viewer-watch', { viewerId: socket.id, video: video !== false });
+  });
+
+  // Quick reactions: everyone in the room sees them float over the video, the streamer gets a count
+  socket.on('reaction', ({ emoji, hostId } = {}) => {
+    const room = myRoom();
+    if (!room || !isViewerHere() || !REACTIONS.has(emoji) || !allowReaction()) return;
+    const target = typeof hostId === 'string' && hostSockets(room).includes(hostId) ? hostId : room.host;
+    io.to(currentRoom).emit('reaction', { emoji, name: room.viewerNames.get(socket.id) || 'Sapo', hostId: target, from: socket.id });
+  });
+
+  // "Economizar dados": a viewer on a phone plan asks one streamer for a lighter copy of the stream
+  socket.on('viewer-quality', ({ hostId, low } = {}) => {
+    if (!isViewerHere() || typeof hostId !== 'string' || !hostSockets(myRoom()).includes(hostId) || !allowQuality()) return;
+    io.to(hostId).emit('viewer-quality', { viewerId: socket.id, low: !!low });
+  });
+
+  // What the streamer's PC is managing (capture fps, what limits the encoder), so a viewer whose video
+  // stutters can be told whether it's their connection or the other end
+  socket.on('host-health', (h = {}) => {
+    if (!isStreamer() || !myRoom() || !allowHealth()) return;
+    const num = (v, max) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(max, Math.round(Number(v)))) : null);
+    const limit = ['none', 'cpu', 'bandwidth', 'other'].includes(h.limit) ? h.limit : null;
+    socket.to(currentRoom).emit('host-health', { hostId: socket.id, fps: num(h.fps, 480), target: num(h.target, 480), limit, away: !!h.away });
+  });
+
+  // ---- Owner controls for viewers ----
+  socket.on('kick-viewer', ({ viewerId } = {}) => {
+    const room = myRoom();
+    if (!room || role !== 'host' || room.host !== socket.id || typeof viewerId !== 'string' || !room.viewers.has(viewerId)) return;
+    const key = room.viewerKeys.get(viewerId);
+    if (key) room.banned.set(key, Date.now() + KICK_BAN_MS);
+    forgetViewer(room, viewerId);
+    for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-left', { viewerId });
+    const target = io.sockets.sockets.get(viewerId);
+    if (target) {
+      target.emit('kicked', {});
+      target.leave(currentRoom);
+    }
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  // A locked room keeps everyone who is in it (they may reconnect) and lets nobody new in
+  socket.on('lock-room', ({ locked } = {}) => {
+    const room = myRoom();
+    if (!room || role !== 'host' || room.host !== socket.id) return;
+    room.locked = !!locked;
+    emitRoomUpdate(currentRoom, room);
+  });
+
+  socket.on('set-game', ({ game } = {}) => {
+    const room = myRoom();
+    if (!room || !isStreamer() || !allowName()) return;
+    const value = cleanGame(game);
+    if (role === 'host' && room.host === socket.id) {
+      if (room.hostGame === value) return;
+      room.hostGame = value;
+    } else if (room.cohosts.has(socket.id)) {
+      const c = room.cohosts.get(socket.id);
+      if (c.game === value) return;
+      c.game = value;
+    } else return;
+    emitRoomUpdate(currentRoom, room);
   });
 
   // A viewer lost one streamer's connection: reconnect just that one (the media server if it
   // publishes there, otherwise a fresh direct offer), leaving the other streams alone.
   socket.on('request-offer', ({ hostId } = {}) => {
-    if (role !== 'viewer' || typeof hostId !== 'string' || !inMyRoom(hostId)) return;
+    if (!isViewerHere() || typeof hostId !== 'string' || !inMyRoom(hostId)) return;
     // Requests closer than 1.5 s apart are merged into one, sent when the interval is up. Dropping
     // the later one instead could leave a viewer whose link just broke waiting for an offer forever.
     const entry = offerRequests.get(hostId) || { at: 0, timer: null };
@@ -868,7 +1121,7 @@ io.on('connection', (socket) => {
   // A viewer that can't reach the SFU asks that streamer for a direct connection instead
   socket.on('sfu-fallback', ({ hostId } = {}) => {
     const room = myRoom();
-    if (!room || role !== 'viewer') return;
+    if (!room || !isViewerHere()) return;
     const target = hostId && inMyRoom(hostId) ? hostId : room.host;
     if (target) io.to(target).emit('viewer-needs-p2p', { viewerId: socket.id });
   });
@@ -917,7 +1170,9 @@ io.on('connection', (socket) => {
     } else if (role === 'cohost') {
       if (room.cohosts.delete(socket.id)) socket.to(currentRoom).emit('host-left', { hostId: socket.id });
     } else {
-      room.viewers.delete(socket.id);
+      // Already gone if the owner removed this viewer
+      if (!room.viewers.has(socket.id)) return;
+      forgetViewer(room, socket.id);
       for (const hostId of hostSockets(room)) io.to(hostId).emit('viewer-left', { viewerId: socket.id });
     }
 
@@ -929,7 +1184,10 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Signaling server running on port ${PORT}`);
-  loadBlockedRooms();
+// Named rooms load before the first connection, or a fresh process would hand a name to whoever asked first
+Promise.race([loadNamedRooms(), new Promise(r => setTimeout(r, 8000))]).finally(() => {
+  server.listen(PORT, () => {
+    console.log(`Signaling server running on port ${PORT}`);
+    loadBlockedRooms();
+  });
 });
