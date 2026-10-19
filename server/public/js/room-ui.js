@@ -50,7 +50,7 @@
     if (video.style.display === 'block') return 'live';
     const text = statusEl.textContent.toLowerCase();
     if (text.includes('não existe')) return 'notfound';
-    if (text.includes('removido')) return 'kicked';
+    if (text.includes('expulso')) return 'kicked';
     if (text.includes('trancada')) return 'locked';
     if (text.includes('procurando')) return 'checking';
     if (text.includes('pausou')) return 'paused';

@@ -185,7 +185,7 @@ app.whenReady().then(async () => {
     // Removing someone, locking the room
     const v2id = await js(v2, `socket.id`);
     await js(host, `hostSocket.emit('kick-viewer', { viewerId: ${JSON.stringify(v2id)} }); true`);
-    check('quem foi tirado vê que foi removido', await until(v2, `document.body.dataset.state === 'kicked'`, 5000), await js(v2, `document.getElementById('status-text').textContent`));
+    check('quem foi expulso vê que foi expulso', await until(v2, `document.body.dataset.state === 'kicked'`, 5000), await js(v2, `document.getElementById('status-text').textContent`));
     await js(host, `hostSocket.emit('lock-room', { locked: true }); true`);
     await wait(300);
     const v3 = mk('v3-' + Date.now());
