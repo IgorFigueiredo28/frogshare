@@ -44,6 +44,13 @@
       <button id="btn-update" type="button" class="btn btn-secondary">Atualizar</button>
     </div>
 
+    <!-- Shown when Windows Graphics Capture can't capture what was picked (e.g. an exclusive fullscreen game) -->
+    <div class="notice update-banner" id="capture-fallback-banner" style="display:none" role="alert">
+      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
+      <span class="notice-text">A captura rápida não conseguiu capturar isso. A captura antiga costuma funcionar com jogos em tela cheia exclusiva.</span>
+      <button id="btn-capture-fallback" type="button" class="btn btn-secondary">Reiniciar com a captura antiga</button>
+    </div>
+
     <div class="notice update-banner" id="permission-banner" style="display:none" role="alert">
       <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
       <span class="notice-text">Falta autorizar o FrogShare no macOS. Sem isso a tela ou o som não chegam para os seus amigos.</span>

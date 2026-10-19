@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.6.7'
+        app_version: '1.6.8'
       })
     }).catch(() => {});
   } catch {}
@@ -121,6 +121,24 @@ ipcMain.handle('set-fast-capture', (event, { on, relaunch } = {}) => {
     app.quit();
   }
   return true;
+});
+
+// For host-stats: CPU of the app's processes by type (percent of one core since the last call) and,
+// once, the GPU model and driver. No personal data. Measured: getAppMetrics ~0.01 ms, basic GPU info 18 ms.
+let gpuSummary = null;
+ipcMain.handle('get-app-health', async () => {
+  const cpu = {};
+  for (const m of app.getAppMetrics()) cpu[m.type] = +((cpu[m.type] || 0) + (m.cpu?.percentCPUUsage || 0)).toFixed(1);
+  if (!gpuSummary) {
+    try {
+      const devices = (await app.getGPUInfo('basic')).gpuDevice || [];
+      const dev = devices.find(d => d.active) || devices[0] || {};
+      gpuSummary = { model: dev.deviceString || null, driver: dev.driverVersion || null };
+    } catch {
+      gpuSummary = { model: null, driver: null };
+    }
+  }
+  return { cpu, gpu: gpuSummary };
 });
 
 ipcMain.handle('take-group-invite', () => {

@@ -5,6 +5,8 @@ async function getSignalUrl() {
   return _signalUrl;
 }
 
+// 'wgc' or 'dxgi' once main has said which capturer this launch uses (see fastCapture below)
+let captureModeLabel = null;
 function reportError(message, stack, context) {
   getSignalUrl().then(url => {
     fetch(`${url}/api/errors`, {
@@ -15,9 +17,9 @@ function reportError(message, stack, context) {
         level: 'error',
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
-        context: context || null,
+        context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.6.7',
+        app_version: '1.6.8',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -880,7 +882,14 @@ btnStart.addEventListener('click', async () => {
     const isResume = !!roomId;
 
     // 1. Capture video with cursor hidden
-    const videoTrack = await captureVideo(selectedSourceId);
+    let videoTrack;
+    try {
+      videoTrack = await captureVideo(selectedSourceId);
+      captureStartedAt = Date.now();
+    } catch (err) {
+      offerOldCapture('start', err);
+      throw err;
+    }
     const tracks = [videoTrack];
 
     // 2. Handle audio based on mode
@@ -1582,6 +1591,9 @@ async function collectSenderStats() {
             res: `${r.frameWidth || 0}x${r.frameHeight || 0}`,
             targetBitrate: r.targetBitrate || 0,
             limit: r.qualityLimitationReason,
+            // Seconds this link has spent limited by CPU / bandwidth since it was created
+            limitCpuS: Math.round(r.qualityLimitationDurations?.cpu || 0),
+            limitBwS: Math.round(r.qualityLimitationDurations?.bandwidth || 0),
             encMs: r.framesEncoded ? +(1000 * r.totalEncodeTime / r.framesEncoded).toFixed(1) : null,
             rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
             relay: pair ? relayHops > 0 : null
@@ -1665,7 +1677,8 @@ function flushRelayUsage() {
   })).catch(() => { relayBytesPending += bytes; });
 }
 
-function reportQuality(samples, pipeline) {
+async function reportQuality(samples, pipeline) {
+  const health = await window.electronAPI.getAppHealth?.().catch(() => null);
   const viewers = samples.map(({ id, targetBitrate, ageMs, ...rest }) => ({
     ...rest,
     kbps: Math.round(targetBitrate / 1000),
@@ -1677,6 +1690,8 @@ function reportQuality(samples, pipeline) {
     pipeline,
     mode: sfu.active ? 'sfu' : 'p2p',
     capture: fastCapture.active ? 'wgc' : 'dxgi',
+    appCpu: health?.cpu || null,
+    gpu: health?.gpu || null,
     roomViewers: roomViewerCount,
     preset: `${quality.res}p${quality.fps}`,
     share: share.mode,
@@ -1685,7 +1700,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.7', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.8', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1899,7 +1914,15 @@ async function replaceVideoTrack(newVideoTrack) {
 }
 
 async function switchVideo(source) {
-  const newVideoTrack = await captureVideo(source.id);
+  let newVideoTrack;
+  try {
+    newVideoTrack = await captureVideo(source.id);
+  } catch (err) {
+    // While waiting for a window to come back, a brief refusal is normal and retried (see checkStandby)
+    if (!standby.active) offerOldCapture('switch', err);
+    throw err;
+  }
+  captureStartedAt = Date.now();
   stopStandby();
   await replaceVideoTrack(newVideoTrack);
   selectedSourceId = source.id;
@@ -1939,6 +1962,7 @@ function standbyCardTrack() {
 }
 
 function onCaptureEnded(endedTrack) {
+  if (Date.now() - captureStartedAt < 5000) offerOldCapture('ended');
   if (!isStreaming || !localStream) return;
   const live = localStream.getVideoTracks()[0];
   if (!live || (live.sourceTrack || live) !== endedTrack) return; // already switched away
@@ -2000,6 +2024,8 @@ async function checkStandby() {
     standby.failures = (standby.failures || 0) + 1;
     standby.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** standby.failures);
     if (standby.failures <= 3) reportError('Standby recovery failed: ' + err.message, err.stack, { attempt: standby.failures });
+    // Refused again and again: likely a game the fast capturer can't take (exclusive fullscreen)
+    if (standby.failures === 3) offerOldCapture('standby', err);
   } finally {
     standby.busy = false;
   }
@@ -2364,8 +2390,26 @@ window.electronAPI.onWindowMinimized((minimized) => {
 const fastCapture = { supported: false, active: false, wanted: false };
 const fastCaptureRow = document.getElementById('fast-capture-row');
 const fastCaptureInput = document.getElementById('fast-capture');
+let captureStartedAt = 0;
+const captureFallbackBanner = document.getElementById('capture-fallback-banner');
+
+// Windows Graphics Capture failed on what was picked. The 1.0 era saw it fail on exclusive fullscreen
+// games (error -2147467259) and 1.6.6 turned it on without testing that mode, so offer the old capturer
+// (applied on relaunch) instead of leaving the person stuck. Reported so the field shows how often.
+function offerOldCapture(when, err) {
+  if (!fastCapture.active || captureFallbackBanner.style.display !== 'none') return;
+  reportError('Fast capture failed (' + when + '): ' + (err?.message || 'track ended'), err?.stack, { source: currentSource?.isScreen ? 'screen' : 'window' });
+  captureFallbackBanner.style.display = '';
+}
+document.getElementById('btn-capture-fallback').addEventListener('click', () => {
+  fastCapture.wanted = false;
+  showToast('Reiniciando o FrogShare com a captura antiga…');
+  setTimeout(() => window.electronAPI.setFastCapture(false, true), 900);
+});
+
 window.electronAPI.getFastCapture?.().then(state => {
   Object.assign(fastCapture, state);
+  captureModeLabel = state.active ? 'wgc' : 'dxgi';
   fastCaptureRow.hidden = !state.supported;
   fastCaptureInput.checked = state.wanted;
 }).catch(() => {});
@@ -2390,8 +2434,17 @@ checkForUpdate();
 // For sessions left open for days: look again every few hours
 setInterval(checkForUpdate, 6 * 3600 * 1000);
 
-// Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start
-getSignalUrl().then(url => {
-  fetch(`${url}/health`).catch(() => {});
-  getIceConfig();
-});
+// Wake the Render free-tier server early so "Iniciar" doesn't wait on a cold start. It sleeps after
+// 15 idle minutes and the app can stay open for days, so also wake it when the window gets focus
+// (someone about to start), at most every 10 minutes. While live, Socket.IO's pings keep it awake.
+let lastWarmAt = 0;
+function warmServer() {
+  if (Date.now() - lastWarmAt < 10 * 60 * 1000) return;
+  lastWarmAt = Date.now();
+  getSignalUrl().then(url => {
+    fetch(`${url}/health`).catch(() => {});
+    getIceConfig();
+  });
+}
+warmServer();
+window.electronAPI.onWindowFocus((focused) => { if (focused && !isStreaming) warmServer(); });
