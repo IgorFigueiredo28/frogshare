@@ -17,7 +17,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.6.6',
+        app_version: '1.6.7',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1000,9 +1000,11 @@ async function createOfferForViewer(viewerId) {
   // 'disconnected' is often a transient blip that recovers; only tear down on failure
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') {
-      iceDiagnostics(pc).then(diag => reportError('PeerConnection failed', null, { viewerId, sid: pc.sid, ...diag }));
-      pc.close();
+      // Read the ICE state before closing: closing first left every report with empty candidate lists
       if (peerConnections.get(viewerId) === pc) peerConnections.delete(viewerId);
+      iceDiagnostics(pc)
+        .then(diag => reportError('PeerConnection failed', null, { viewerId, sid: pc.sid, ...diag }))
+        .finally(() => pc.close());
     } else if (pc.connectionState === 'closed') {
       if (peerConnections.get(viewerId) === pc) peerConnections.delete(viewerId);
     }
@@ -1683,7 +1685,7 @@ function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.6', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.7', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1870,11 +1872,23 @@ async function rememberSource(source) {
   if (owner && currentSource.id === source.id) currentSource.owner = owner.name;
 }
 
-async function replaceVideoTrack(newVideoTrack) {
+// Puts a track on every live connection. A viewer can leave (its connection closes) while this runs;
+// that one is skipped instead of aborting the swap for everybody else.
+async function replaceOnAllSenders(kind, track) {
   for (const pc of sendingPcs()) {
-    const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'video' && t.sender);
-    if (transceiver) await transceiver.sender.replaceTrack(newVideoTrack);
+    if (pc.signalingState === 'closed') continue;
+    const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === kind && t.sender);
+    if (!transceiver) continue;
+    try {
+      await transceiver.sender.replaceTrack(track);
+    } catch (err) {
+      if (pc.signalingState !== 'closed') reportError(`replaceTrack (${kind}) failed: ` + err.message, err.stack);
+    }
   }
+}
+
+async function replaceVideoTrack(newVideoTrack) {
+  await replaceOnAllSenders('video', newVideoTrack);
   const oldVideoTrack = localStream.getVideoTracks()[0];
   if (oldVideoTrack) {
     stopVideoTrack(oldVideoTrack);
@@ -1937,6 +1951,8 @@ async function enterStandby() {
   standby.name = currentSource.name;
   standby.owner = currentSource.owner;
   standby.lastIds = '';
+  standby.failures = 0;
+  standby.retryAt = 0;
   await replaceVideoTrack(standbyCardTrack());
   selectedSourceId = null;
   const name = standby.name || 'A janela';
@@ -1954,7 +1970,7 @@ function stopStandby() {
 
 async function checkStandby() {
   if (!isStreaming || !standby.active) return stopStandby();
-  if (standby.busy) return;
+  if (standby.busy || Date.now() < (standby.retryAt || 0)) return;
   standby.busy = true;
   try {
     // Cheap check first; the full list (thumbnails) only when a window opened or closed
@@ -1972,10 +1988,18 @@ async function checkStandby() {
     }
     if (!match || !standby.active) return;
     await switchVideo(match);
+    standby.failures = 0;
+    standby.retryAt = 0;
     showToast(`Voltou: mostrando ${match.name}`);
     window.electronAPI.notify('A transmissão voltou', `Mostrando "${match.name}" de novo.`);
   } catch (err) {
-    reportError('Standby recovery failed: ' + err.message, err.stack);
+    // A window that just reappeared can refuse capture for a moment ("Could not start video source",
+    // e.g. a game still switching to fullscreen). Forget the window list so the next pass tries again,
+    // instead of waiting for some other window to open or close (seen live: stuck on the standby card).
+    standby.lastIds = '';
+    standby.failures = (standby.failures || 0) + 1;
+    standby.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** standby.failures);
+    if (standby.failures <= 3) reportError('Standby recovery failed: ' + err.message, err.stack, { attempt: standby.failures });
   } finally {
     standby.busy = false;
   }
@@ -2018,10 +2042,7 @@ async function switchAudio(newPid, label = '', { quiet = false } = {}) {
   if (!localStream.getAudioTracks().includes(newAudioTrack)) localStream.addTrack(newAudioTrack);
 
   // Same audio sender on every connection (and the SFU), so no renegotiation
-  for (const pc of sendingPcs()) {
-    const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === 'audio' && t.sender);
-    if (transceiver) await transceiver.sender.replaceTrack(newAudioTrack);
-  }
+  await replaceOnAllSenders('audio', newAudioTrack);
 
   if (typeof newPid === 'number') selectedPid = newPid;
   liveAudio = newPid;

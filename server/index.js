@@ -392,20 +392,23 @@ async function sfuProxy(req, res, method, path, body) {
   const roomId = String(req.body?.roomId || req.query.roomId || '');
   if (!rooms.has(roomId)) return res.status(403).json({ errorDescription: 'sala invalida' });
   const { appId, secret } = sfuCredentials();
-  // A dropped connection to Cloudflare is retried once; otherwise the viewer gives up on the SFU
-  // and falls back to a direct link, which costs the host another upload.
+  // Only creating a session is safe to repeat. Adding tracks or renegotiating changes the session's
+  // state: when a slow reply was cut off, the first request may already have gone through, and sending
+  // it again makes Cloudflare refuse it ("renegotiation is expected before pulling or pushing tracks"),
+  // as happened in 1.6.4-1.6.5 while Cloudflare answered slowly. Those calls get one longer try.
+  const retryable = path === '/sessions/new';
   for (let attempt = 1; ; attempt++) {
     try {
       const resp = await fetch(`${SFU_BASE}/${appId}${path}`, {
         method,
         headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(15000)
       });
       const text = await resp.text();
       return res.status(resp.status).type('application/json').send(text || '{}');
     } catch (err) {
-      if (attempt < 2) { await new Promise(r => setTimeout(r, 400)); continue; }
+      if (retryable && attempt < 2) { await new Promise(r => setTimeout(r, 400)); continue; }
       return res.status(502).json({ errorDescription: 'SFU inacessivel: ' + err.message });
     }
   }
