@@ -126,6 +126,32 @@
         </div>
       </div>
 
+      <!-- The room's address stays the same between sessions; it can get a name of its own -->
+      <section class="card link-card" id="link-card" aria-labelledby="link-card-title">
+        <div class="link-card-main">
+          <h2 id="link-card-title">Seu link</h2>
+          <p class="link-card-url"><span id="room-link-text">Preparando o link…</span></p>
+          <p class="link-card-hint">É sempre o mesmo: seus amigos podem salvar nos favoritos.</p>
+        </div>
+        <div class="link-card-actions">
+          <button id="btn-copy-fixed-link" type="button" class="btn btn-secondary" disabled>
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar
+          </button>
+          <button id="btn-edit-link" type="button" class="btn btn-ghost" aria-expanded="false" aria-controls="link-form">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-pencil"/></svg>Mudar
+          </button>
+        </div>
+        <form class="link-form" id="link-form" autocomplete="off" hidden>
+          <label for="link-name">Escolha o fim do link (letras sem acento, números e hífen)</label>
+          <div class="link-form-row">
+            <span class="link-prefix" id="link-prefix">frogshare.onrender.com/s/</span>
+            <input id="link-name" class="input" type="text" maxlength="24" spellcheck="false" placeholder="igor">
+            <button type="submit" class="btn btn-primary">Salvar</button>
+          </div>
+          <p class="link-form-note">Ou <button type="button" class="link-button" id="btn-random-link">gere um link novo aleatório</button>, se o atual vazou para quem não devia. O link antigo para de funcionar.</p>
+        </form>
+      </section>
+
       <!-- Group streaming before going live: open your own room to friends, or join a friend's -->
       <div class="card group-card" id="group-card" role="region" aria-labelledby="group-card-title">
         <!-- A little crowd of frogs, one per group colour -->
@@ -226,6 +252,70 @@
           </label>
         </section>
 
+        <!-- host.js moves the camera and privacy cards under the preview while live, like the quality card -->
+        <section class="step card step-cam" id="cam-section" aria-labelledby="step-cam">
+          <div class="step-head">
+            <svg class="ico step-ico" aria-hidden="true"><use href="/brand/icons.svg#i-video"/></svg>
+            <h2 id="step-cam">Câmera</h2>
+          </div>
+          <label class="switch-row">
+            <input type="checkbox" id="cam-toggle" class="switch">
+            <span>Mostrar minha câmera num cantinho da transmissão</span>
+          </label>
+          <div class="cam-options" id="cam-options" hidden>
+            <label class="field-row" for="cam-device">
+              <span>Câmera</span>
+              <select id="cam-device" class="input"></select>
+            </label>
+            <div class="quality-row">
+              <span class="quality-label" id="cam-pos-label">Canto</span>
+              <div class="segmented" role="radiogroup" aria-labelledby="cam-pos-label">
+                <label class="segment"><input type="radio" name="cam-pos" value="tl"><span>↖ Em cima</span></label>
+                <label class="segment"><input type="radio" name="cam-pos" value="tr"><span>Em cima ↗</span></label>
+                <label class="segment"><input type="radio" name="cam-pos" value="bl"><span>↙ Embaixo</span></label>
+                <label class="segment"><input type="radio" name="cam-pos" value="br" checked><span>Embaixo ↘</span></label>
+              </div>
+            </div>
+            <div class="quality-row">
+              <span class="quality-label" id="cam-size-label">Tamanho</span>
+              <div class="segmented" role="radiogroup" aria-labelledby="cam-size-label">
+                <label class="segment"><input type="radio" name="cam-size" value="s"><span>Pequena</span></label>
+                <label class="segment"><input type="radio" name="cam-size" value="m" checked><span>Média</span></label>
+                <label class="segment"><input type="radio" name="cam-size" value="l"><span>Grande</span></label>
+              </div>
+            </div>
+            <p class="cam-note" id="cam-note"></p>
+          </div>
+        </section>
+
+        <section class="step card step-privacy" id="privacy-section" aria-labelledby="step-privacy">
+          <div class="step-head">
+            <svg class="ico step-ico" aria-hidden="true"><use href="/brand/icons.svg#i-shield"/></svg>
+            <h2 id="step-privacy">Privacidade</h2>
+          </div>
+          <label class="switch-row" id="protect-row">
+            <input type="checkbox" id="protect-toggle" class="switch" checked>
+            <span>Transmitindo a tela inteira: quando eu sair do jogo, mostrar "já volto" em vez do resto do PC</span>
+          </label>
+          <p class="privacy-status" id="privacy-status" hidden></p>
+          <div class="quality-row">
+            <span class="quality-label" id="hotkey-label">Pausa rápida, sem sair do jogo</span>
+            <select id="hotkey-select" class="input hotkey-select" aria-labelledby="hotkey-label">
+              <option value="CommandOrControl+Shift+F9">Ctrl + Shift + F9</option>
+              <option value="CommandOrControl+Shift+F10">Ctrl + Shift + F10</option>
+              <option value="CommandOrControl+Alt+P">Ctrl + Alt + P</option>
+              <option value="">Desligada</option>
+            </select>
+          </div>
+          <button type="button" id="btn-quick-pause" class="btn btn-secondary quick-pause" aria-pressed="false" hidden>
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-pause"/></svg><span id="quick-pause-label">Pausa rápida</span>
+          </button>
+          <label class="switch-row">
+            <input type="checkbox" id="game-name-toggle" class="switch" checked>
+            <span>Mostrar o nome do jogo para quem assiste (só jogos conhecidos, nunca o título da janela)</span>
+          </label>
+        </section>
+
       <!-- host.js re-inserts #quality-section before this button, so it must stay a direct child of the panel -->
       <button id="btn-start" type="button" class="btn btn-primary btn-lg btn-block btn-hop" aria-disabled="true">Começar a transmitir</button>
     </div>
@@ -278,6 +368,13 @@
               <span id="viewer-count" class="sr-only">0 assistindo</span>
             </span>
           </div>
+          <!-- Who's watching, by the names they picked; the owner can remove someone -->
+          <ul class="viewer-list" id="viewer-list" aria-label="Quem está assistindo"></ul>
+          <label class="switch-row lock-row" id="lock-row">
+            <input type="checkbox" id="lock-toggle" class="switch">
+            <span>Trancar a sala: quem já está continua, ninguém novo entra</span>
+          </label>
+          <p class="reaction-counts" id="reaction-counts" aria-live="polite" hidden></p>
           <dl class="room-facts" id="room-facts">
             <div><dt>Modo</dt><dd id="fact-mode">Esperando alguém entrar</dd></div>
             <div><dt>Imagem</dt><dd id="fact-video">–</dd></div>

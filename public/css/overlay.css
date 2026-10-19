@@ -56,3 +56,13 @@ body.compact .mini {
 .mini-close .ico { width: 14px; height: 14px; }
 .mini-close:hover, .mini-close:focus-visible { opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent); }
 .mini-body:hover { filter: brightness(1.08); }
+
+/* A reaction pops in next to the chip's text for a few seconds (one short transition, no loop) */
+.mini-emoji { font-size: 15px; line-height: 1; margin-left: -2px; }
+.mini-emoji[hidden] { display: none; }
+.mini-emoji.pop { animation: ov-pop 260ms var(--ease-hop); }
+@keyframes ov-pop { from { transform: scale(0.4); opacity: 0; } }
+/* "Já volto" on the stream: the notice says so in the warning colours */
+body.away .pill-title { color: var(--on-warn-soft); }
+body.away.compact .mini { background: var(--warn-soft); color: var(--on-warn-soft); border-color: var(--warn-border); }
+body.away .live-eyes { display: none; }

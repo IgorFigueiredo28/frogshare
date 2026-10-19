@@ -507,6 +507,74 @@ class AudioCapture
         WriteJson("{\"roots\":[" + string.Join(",", roots) + "]}");
     }
 
+    // ======== Foreground watcher ========
+    // While a whole screen is shared, the app covers the stream with "já volto" when the streamer leaves
+    // the game. This reports every change of the window in front (and the Alt+Tab switcher opening, which
+    // shows thumbnails of every window) as a JSON line, from system events: nothing is polled.
+    delegate void WinEventDelegate(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+    [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmod, WinEventDelegate callback, uint idProcess, uint idThread, uint flags);
+    [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, System.Text.StringBuilder name, int max);
+    [DllImport("user32.dll")] static extern int GetMessageW(out MSG msg, IntPtr hwnd, uint min, uint max);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG msg);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref MSG msg);
+    [DllImport("user32.dll")] static extern bool PostThreadMessageW(uint thread, uint msg, IntPtr w, IntPtr l);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x, y; }
+    const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_SWITCHSTART = 0x0014, EVENT_SYSTEM_SWITCHEND = 0x0015;
+    // Kept in a field: the system calls it from native code, so the GC must not collect it
+    static WinEventDelegate foregroundCallback;
+
+    static readonly HashSet<string> ShellClasses = new HashSet<string> { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
+    static readonly HashSet<string> ShellPrograms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "StartMenuExperienceHost", "SearchHost", "SearchApp", "ShellExperienceHost" };
+
+    static void ReportForeground(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        string exe = "";
+        try { exe = Process.GetProcessById((int)pid).ProcessName; } catch {}
+        RECT r;
+        GetWindowRect(hwnd, out r);
+        var cls = new System.Text.StringBuilder(128);
+        GetClassNameW(hwnd, cls, cls.Capacity);
+        // The desktop, the taskbar, the Start menu or search
+        bool shell = ShellClasses.Contains(cls.ToString()) || ShellPrograms.Contains(exe);
+        WriteJson("{\"hwnd\":" + hwnd.ToInt64() + ",\"pid\":" + pid + ",\"exe\":\"" + Esc(exe) + "\",\"x\":" + r.Left + ",\"y\":" + r.Top
+            + ",\"w\":" + (r.Right - r.Left) + ",\"h\":" + (r.Bottom - r.Top) + ",\"shell\":" + (shell ? "true" : "false") + "}");
+    }
+
+    static void WatchForeground()
+    {
+        uint loopThread = GetCurrentThreadId();
+        foregroundCallback = (hook, type, hwnd, idObject, idChild, thread, time) =>
+        {
+            if (type == EVENT_SYSTEM_SWITCHSTART) { WriteJson("{\"switching\":true}"); return; }
+            if (type == EVENT_SYSTEM_SWITCHEND) { WriteJson("{\"switching\":false}"); ReportForeground(GetForegroundWindow()); return; }
+            ReportForeground(hwnd);
+        };
+        // Out of context: the callback runs on this thread's message loop, nothing is injected anywhere
+        IntPtr hookForeground = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, foregroundCallback, 0, 0, 0);
+        IntPtr hookSwitch = SetWinEventHook(EVENT_SYSTEM_SWITCHSTART, EVENT_SYSTEM_SWITCHEND, IntPtr.Zero, foregroundCallback, 0, 0, 0);
+        ReportForeground(GetForegroundWindow());
+        // "stop" on stdin (or the app closing it) ends the loop
+        var stdin = new Thread(() =>
+        {
+            try { while (true) { string l = Console.In.ReadLine(); if (l == null || l.Trim() == "stop") break; } } catch {}
+            PostThreadMessageW(loopThread, 0x0012 /* WM_QUIT */, IntPtr.Zero, IntPtr.Zero);
+        });
+        stdin.IsBackground = true;
+        stdin.Start();
+        MSG msg;
+        while (GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref msg); DispatchMessageW(ref msg); }
+        UnhookWinEvent(hookForeground);
+        UnhookWinEvent(hookSwitch);
+    }
+
     static void WriteJson(string json) { Console.Error.WriteLine(json); Console.Error.Flush(); }
     static string Esc(string s) { return s.Replace("\\", "\\\\").Replace("\"", "\\\""); }
 
@@ -521,6 +589,7 @@ class AudioCapture
             if (args[0] == "window-owner" && args.Length > 1) { WindowOwner(args[1]); return; }
             if (args[0] == "gpu-priority" && args.Length > 2) { SetGpuPriority(args); return; }
             if (args[0] == "proc-root" && args.Length > 1) { ProcessRoot(args[1]); return; }
+            if (args[0] == "watch-foreground") { WatchForeground(); return; }
 
             var stdinThread = new Thread(() => {
                 try { while (true) { string l = Console.In.ReadLine(); if (l == null || l.Trim() == "stop") { capturing = false; break; } } }

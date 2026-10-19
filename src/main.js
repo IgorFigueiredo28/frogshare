@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences, screen, nativeImage, dialog, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, nativeTheme, systemPreferences, screen, nativeImage, dialog, Notification, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.6.9'
+        app_version: '1.7.0'
       })
     }).catch(() => {});
   } catch {}
@@ -199,11 +199,13 @@ async function createWindow() {
 
 // ======== "You're live" overlay ========
 let overlayWindow = null;
-const streamStatus = { streaming: false, viewers: 0, mode: 'direto' };
+// away: the "já volto" card is on the stream (quick pause, or the streamer left the game)
+const streamStatus = { streaming: false, viewers: 0, mode: 'direto', away: false };
 // x/y is where the full notice sits; anchor says which side the compact chip hugs
 const overlayPrefs = { enabled: true, x: null, y: null, anchor: 'right' };
 const OVERLAY_SIZE = { width: 340, height: 76 };
-const OVERLAY_COMPACT_SIZE = { width: 140, height: 44 };
+// Room for "Ao vivo · 12" and a reaction next to it
+const OVERLAY_COMPACT_SIZE = { width: 172, height: 44 };
 const OVERLAY_COMPACT_AFTER_MS = 30000;
 let overlayCompact = false;
 let overlayCompactTimer = null;
@@ -368,9 +370,108 @@ ipcMain.handle('set-stream-status', (event, status) => {
   if (!isMac && streamStatus.streaming !== wasStreaming && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setOverlayIcon(streamStatus.streaming ? liveBadge() : null, streamStatus.streaming ? 'Transmitindo' : '');
   }
-  if (!streamStatus.streaming) hideOverlay();
+  if (!streamStatus.streaming) { streamStatus.away = false; hideOverlay(); }
   else if (mainWindow && mainWindow.isMinimized() && !wasStreaming) showOverlay();
   sendOverlayStatus();
+  return true;
+});
+
+ipcMain.handle('set-away', (event, away) => {
+  streamStatus.away = !!away && streamStatus.streaming;
+  sendOverlayStatus();
+  return true;
+});
+
+// Someone arrived or left, a reaction, the quick pause: a line on the notice for a moment. Arrivals
+// open the full notice for a few seconds, then it goes back to the small chip.
+ipcMain.handle('overlay-event', (event, ev = {}) => {
+  if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return false;
+  const text = String(ev.text || '').slice(0, 80);
+  const emoji = typeof ev.emoji === 'string' ? ev.emoji.slice(0, 8) : '';
+  overlayWindow.webContents.send('overlay-event', { text, emoji });
+  if (ev.expand && overlayCompact) {
+    setOverlayCompact(false);
+    clearTimeout(overlayCompactTimer);
+    overlayCompactTimer = setTimeout(() => setOverlayCompact(true), 6000);
+  }
+  return true;
+});
+
+// ======== Quick pause shortcut ========
+// A global shortcut, so it works with a game in front. Registered only while live; one at a time.
+let hotkey = '';
+ipcMain.handle('set-hotkey', (event, accelerator) => {
+  if (hotkey) {
+    try { globalShortcut.unregister(hotkey); } catch {}
+    hotkey = '';
+  }
+  const accel = typeof accelerator === 'string' && /^[A-Za-z0-9+]{1,40}$/.test(accelerator) ? accelerator : '';
+  if (!accel) return { ok: true };
+  let ok = false;
+  try {
+    ok = globalShortcut.register(accel, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('privacy-hotkey');
+    });
+  } catch {}
+  if (ok) hotkey = accel;
+  return { ok };
+});
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
+
+// ======== Window in front (privacy while a whole screen is shared) ========
+// The capture helper reports each change of the foreground window; this adds what the page needs to
+// decide: is it on the screen being shared, does it cover that screen (a game), is it FrogShare itself.
+let foregroundProc = null;
+let capturedDisplay = null; // bounds (DIP) of the screen being shared
+
+function stopForegroundWatch() {
+  const proc = foregroundProc;
+  foregroundProc = null;
+  if (!proc) return;
+  try { proc.stdin.write('stop\n'); } catch {}
+  setTimeout(() => { try { proc.kill(); } catch {} }, 800);
+}
+
+function describeForeground(ev) {
+  if ('switching' in ev) return { switching: !!ev.switching };
+  // The helper measures windows in physical pixels; displays are in DIP
+  const r = screen.screenToDipRect(null, { x: ev.x, y: ev.y, width: ev.w, height: ev.h });
+  const d = capturedDisplay;
+  const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+  const onCaptured = !!d && cx >= d.x && cx < d.x + d.width && cy >= d.y && cy < d.y + d.height;
+  const overlapW = d ? Math.max(0, Math.min(r.x + r.width, d.x + d.width) - Math.max(r.x, d.x)) : 0;
+  const overlapH = d ? Math.max(0, Math.min(r.y + r.height, d.y + d.height) - Math.max(r.y, d.y)) : 0;
+  const own = app.getAppMetrics().some(m => m.pid === ev.pid);
+  return {
+    hwnd: ev.hwnd, pid: ev.pid, exe: String(ev.exe || '').toLowerCase(), shell: !!ev.shell, own, onCaptured,
+    // Fullscreen (or borderless) over the whole shared screen, taskbar area included, the way games
+    // run. A maximized window stops at the taskbar, so a browser left maximized doesn't count.
+    covers: !!d && overlapW * overlapH >= 0.99 * d.width * d.height
+  };
+}
+
+ipcMain.handle('watch-foreground', async (event, sourceId) => {
+  stopForegroundWatch();
+  if (isMac || typeof sourceId !== 'string' || !sourceId.startsWith('screen:')) return false;
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } }).catch(() => []);
+  const source = sources.find(s => s.id === sourceId);
+  const display = screen.getAllDisplays().find(d => String(d.id) === String(source?.display_id)) || screen.getPrimaryDisplay();
+  capturedDisplay = display.bounds;
+  const proc = spawn(AUDIO_CAPTURE_EXE, ['watch-foreground']);
+  foregroundProc = proc;
+  let buffer = '';
+  proc.stderr.on('data', (data) => {
+    buffer += data.toString();
+    let i;
+    while ((i = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, i).trim();
+      buffer = buffer.slice(i + 1);
+      if (!line || foregroundProc !== proc || !mainWindow || mainWindow.isDestroyed()) continue;
+      try { mainWindow.webContents.send('foreground', describeForeground(JSON.parse(line))); } catch {}
+    }
+  });
+  proc.on('close', () => { if (foregroundProc === proc) foregroundProc = null; });
+  proc.on('error', () => { if (foregroundProc === proc) foregroundProc = null; });
   return true;
 });
 
@@ -468,6 +569,7 @@ ipcMain.handle('set-capture-source', (event, sourceId) => {
 
 app.on('before-quit', () => {
   stopAudioCapture();
+  stopForegroundWatch();
 });
 
 app.on('window-all-closed', () => {

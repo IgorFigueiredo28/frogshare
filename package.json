@@ -1,6 +1,6 @@
 {
   "name": "screen-share-app",
-  "version": "1.6.9",
+  "version": "1.7.0",
   "description": "Screen sharing with per-process audio capture",
   "main": "src/main.js",
   "scripts": {
@@ -71,7 +71,8 @@
       "hardenedRuntime": false,
       "extendInfo": {
         "NSAudioCaptureUsageDescription": "O FrogShare captura o som do app escolhido para transmitir junto com a tela.",
-        "NSScreenCaptureUsageDescription": "O FrogShare grava a tela ou janela escolhida para transmitir aos seus amigos."
+        "NSScreenCaptureUsageDescription": "O FrogShare grava a tela ou janela escolhida para transmitir aos seus amigos.",
+        "NSCameraUsageDescription": "O FrogShare mostra a sua câmera num canto da transmissão, se você ligar essa opção."
       },
       "extraResources": [
         {

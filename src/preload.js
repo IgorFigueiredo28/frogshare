@@ -50,6 +50,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('audio-capture-error', (_, error) => callback(error));
   },
   getSourceIds: () => ipcRenderer.invoke('get-source-ids'),
+  // Privacy while live: the window in front, the quick pause shortcut, the "já volto" state
+  watchForeground: (sourceId) => ipcRenderer.invoke('watch-foreground', sourceId),
+  onForeground: (callback) => {
+    ipcRenderer.on('foreground', (_, fg) => callback(fg));
+  },
+  setHotkey: (accelerator) => ipcRenderer.invoke('set-hotkey', accelerator),
+  onPrivacyHotkey: (callback) => {
+    ipcRenderer.on('privacy-hotkey', () => callback());
+  },
+  setAway: (away) => ipcRenderer.invoke('set-away', away),
+  overlayEvent: (ev) => ipcRenderer.invoke('overlay-event', ev),
+  onOverlayEvent: (callback) => {
+    ipcRenderer.on('overlay-event', (_, ev) => callback(ev));
+  },
   notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
   getWindowOwner: (sourceId) => ipcRenderer.invoke('get-window-owner', sourceId),
   onWindowMinimized: (callback) => {

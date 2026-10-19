@@ -19,7 +19,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.6.9',
+        app_version: '1.7.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -232,6 +232,30 @@ function appName(processName) {
   const raw = String(processName || '');
   return APP_NAMES[raw.toLowerCase()] || raw;
 }
+
+// Games whose name viewers may see next to the stream ("Igor · Deadlock"). Only these, by process
+// name: a window title can carry anything (a chat, a document's name), so it never leaves the PC.
+const GAME_NAMES = {
+  project8: 'Deadlock', 'league of legends': 'League of Legends', cs2: 'Counter-Strike 2',
+  'valorant-win64-shipping': 'Valorant', r5apex: 'Apex Legends', r5apex_dx12: 'Apex Legends',
+  'fortniteclient-win64-shipping': 'Fortnite', rocketleague: 'Rocket League', overwatch: 'Overwatch 2',
+  dota2: 'Dota 2', gta5: 'GTA V', gta5_enhanced: 'GTA V', eldenring: 'Elden Ring', nightreign: 'Elden Ring Nightreign',
+  javaw: 'Minecraft', minecraft: 'Minecraft', robloxplayerbeta: 'Roblox', 'marvel-win64-shipping': 'Marvel Rivals',
+  rainbowsix: 'Rainbow Six Siege', rainbowsix_vulkan: 'Rainbow Six Siege', cod: 'Call of Duty', tslgame: 'PUBG',
+  wow: 'World of Warcraft', cyberpunk2077: 'Cyberpunk 2077', bg3: "Baldur's Gate 3", bg3_dx11: "Baldur's Gate 3",
+  helldivers2: 'Helldivers 2', 'palworld-win64-shipping': 'Palworld', 'deadbydaylight-win64-shipping': 'Dead by Daylight',
+  pathofexile_x64: 'Path of Exile', pathofexilesteam: 'Path of Exile', pathofexile2: 'Path of Exile 2',
+  'warframe.x64': 'Warframe', fallguys_client_game: 'Fall Guys', sekiro: 'Sekiro', darksoulsiii: 'Dark Souls III',
+  hollow_knight: 'Hollow Knight', terraria: 'Terraria', 'stardew valley': 'Stardew Valley', 'among us': 'Among Us',
+  discovery: 'The Finals', 'deltaforce-win64-shipping': 'Delta Force', witcher3: 'The Witcher 3', rdr2: 'Red Dead Redemption 2',
+  sotgame: 'Sea of Thieves', forzahorizon5: 'Forza Horizon 5', eurotrucks2: 'Euro Truck Simulator 2',
+  ffxiv_dx11: 'Final Fantasy XIV', genshinimpact: 'Genshin Impact', starrail: 'Honkai: Star Rail',
+  zenlesszonezero: 'Zenless Zone Zero', 'osu!': 'osu!', fc25: 'EA Sports FC 25', fc26: 'EA Sports FC 26',
+  'pioneergame': 'Arc Raiders', 'tarkov': 'Escape from Tarkov', 'escapefromtarkov': 'Escape from Tarkov',
+  hogwartslegacy: 'Hogwarts Legacy', 'monsterhunterwilds': 'Monster Hunter Wilds', 'brawlhalla': 'Brawlhalla',
+  'smite2-win64-shipping': 'Smite 2', 'tf_win64': 'Team Fortress 2', 'left4dead2': 'Left 4 Dead 2', 'rust': 'Rust'
+};
+const gameNameFor = (processName) => GAME_NAMES[String(processName || '').toLowerCase()] || null;
 
 function getAudioMode() {
   return document.querySelector('input[name="audio-mode"]:checked').value;
@@ -549,33 +573,72 @@ async function ensureRoom() {
     roomId = group.guestRoom;
     hostKey = null;
   } else {
-    const res = await fetch(`${signalServer}/api/room/create`);
-    const data = await res.json();
-    roomId = data.roomId;
-    hostKey = data.hostKey || null;
+    // The same room every time, so the link friends saved keeps working (see "fixed link" below)
+    const r = await fixedRoom();
+    roomId = r.roomId;
+    hostKey = r.hostKey;
   }
 
   socket = io(signalServer);
-  socket.on('connect', () => {
+  const joinAsHost = () => {
     if (group.guestRoom) {
       socket.emit('join-room', { roomId, asHost: true, coHost: true, appVersion, name: nickname() });
     } else {
       socket.emit('join-room', { roomId, asHost: true, appVersion, hostKey, name: nickname() });
-      // A restarted server forgets the room; bring the group back with it
+      // A restarted server forgets the room; bring the group and the lock back with it
       if (group.enabled) socket.emit('group-mode', { enabled: true });
+      if (roomLocked) socket.emit('lock-room', { locked: true });
     }
     // The server forgets the SFU session when the host socket drops
     if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
-  });
+    viewerListPrimed = false;
+    sendGame();
+  };
+  socket.on('connect', joinAsHost);
 
+  let rejectedOnce = false;
   socket.on('host-rejected', ({ reason, group: isGroup }) => {
-    showToast(reason || 'O servidor não aceitou esta sala.');
     if (isGroup && group.guestRoom) {
+      showToast(reason || 'O servidor não aceitou esta sala.');
       if (isStreaming) pauseStreaming();
       else exitGuestMode();
       return;
     }
     reportError('Host join rejected', null, { roomId });
+    // Our fixed room went to someone else (a server restart and an unlucky claim): take a new one, once
+    if (group.guestRoom || rejectedOnce) { showToast(reason || 'O servidor não aceitou esta sala.'); return; }
+    rejectedOnce = true;
+    createRoom().then(r => {
+      roomId = r.roomId;
+      hostKey = r.hostKey;
+      roomCodeEl.textContent = roomId;
+      roomCodeBar.textContent = roomId;
+      renderLinkCard();
+      joinAsHost();
+      showToast('O link da sala mudou. Copie o novo para os seus amigos.');
+    }).catch(() => showToast(reason || 'O servidor não aceitou esta sala.'));
+  });
+
+  // Who's watching (with ids, for removing someone), their reactions and "Economizar dados"
+  socket.on('viewer-list', ({ viewers } = {}) => {
+    const previous = viewerList;
+    viewerList = Array.isArray(viewers) ? viewers : [];
+    renderViewerList();
+    // The first list after joining is everyone already there, not people arriving
+    if (viewerListPrimed) announceViewers(previous, viewerList);
+    viewerListPrimed = true;
+  });
+  socket.on('reaction', ({ emoji, name, hostId } = {}) => {
+    if (hostId && hostId !== socket.id) return;
+    reactionCounts.set(emoji, (reactionCounts.get(emoji) || 0) + 1);
+    renderReactions();
+    overlayEvent({ emoji, text: `${emoji} ${name || 'Sapo'}` });
+  });
+  socket.on('viewer-quality', ({ viewerId, low } = {}) => {
+    if (!viewerId) return;
+    if (low) lowViewers.add(viewerId);
+    else lowViewers.delete(viewerId);
+    applySenderLimits();
   });
 
   socket.on('cohost-accepted', ({ slot, ownerName }) => {
@@ -618,6 +681,7 @@ async function ensureRoom() {
 
   socket.on('viewer-left', ({ viewerId }) => {
     pendingOffers.delete(viewerId);
+    lowViewers.delete(viewerId);
     const pc = peerConnections.get(viewerId);
     if (pc) pc.close();
     peerConnections.delete(viewerId);
@@ -645,10 +709,11 @@ async function ensureRoom() {
     else pc.pendingIce.push(candidate);
   });
 
-  socket.on('room-update', ({ viewerCount: count, group: groupOn, hosts }) => {
+  socket.on('room-update', ({ viewerCount: count, group: groupOn, hosts, locked }) => {
     roomViewerCount = count;
     group.hosts = Array.isArray(hosts) ? hosts : [];
     if (!group.guestRoom) group.enabled = !!groupOn;
+    if (typeof locked === 'boolean' && !group.guestRoom) { roomLocked = locked; lockToggle.checked = locked; }
     renderGroupUi();
     viewerCountEl.textContent = `${count} assistindo`;
     viewerCountBar.textContent = `${count} assistindo`;
@@ -790,13 +855,66 @@ function createPacer(writer) {
 // lives here and can keep releasing frames on time. (A pacer on the stalled thread gained nothing.)
 const PIPELINE_WORKER = `
 let quality = { res: '1080', fps: 60 };
+// "Já volto": drawn instead of the screen while the streamer is away from the game (or paused it)
+let away = false, card = null;
+// The streamer's camera in a corner: the newest frame, replaced as the next one arrives
+let camFrame = null, camLayout = null, camReader = null;
 function targetSize(w, h) {
   const maxH = quality.res === 'native' ? h : Math.min(h, parseInt(quality.res, 10));
   if (maxH >= h) return { w, h };
   return { w: Math.round((w * maxH / h) / 2) * 2, h: Math.round(maxH / 2) * 2 };
 }
+function stopCam() {
+  if (camReader) { camReader.cancel().catch(() => {}); camReader = null; }
+  if (camFrame) { camFrame.close(); camFrame = null; }
+}
+async function readCam(readable) {
+  stopCam();
+  const reader = readable.getReader();
+  camReader = reader;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (camReader !== reader) { value.close(); break; }
+      if (camFrame) camFrame.close();
+      camFrame = value;
+    }
+  } catch {}
+}
+function drawCam(ctx, w, h) {
+  if (!camFrame || !camLayout) return;
+  const ch = Math.round(h * ({ s: 0.2, m: 0.28, l: 0.38 }[camLayout.size] || 0.28));
+  const cw = Math.round(ch * camFrame.displayWidth / camFrame.displayHeight);
+  const m = Math.round(h * 0.025);
+  const x = camLayout.pos[1] === 'l' ? m : w - cw - m;
+  const y = camLayout.pos[0] === 't' ? m : h - ch - m;
+  const r = Math.round(ch * 0.08);
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, cw, ch, r);
+  ctx.clip();
+  ctx.drawImage(camFrame, x, y, cw, ch);
+  ctx.restore();
+  ctx.lineWidth = Math.max(2, Math.round(h / 360));
+  ctx.strokeStyle = 'rgba(243, 248, 236, 0.85)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, cw, ch, r);
+  ctx.stroke();
+}
+function drawCard(ctx, w, h) {
+  ctx.fillStyle = '#0B1A10';
+  ctx.fillRect(0, 0, w, h);
+  const s = Math.min(w / card.width, h / card.height);
+  ctx.drawImage(card, (w - card.width * s) / 2, (h - card.height * s) / 2, card.width * s, card.height * s);
+}
 self.onmessage = async (e) => {
-  if (e.data.quality) quality = e.data.quality;
+  const d = e.data;
+  if (d.quality) quality = d.quality;
+  if ('away' in d) away = !!d.away;
+  if (d.card) { if (card) card.close(); card = d.card; }
+  if ('camLayout' in d) camLayout = d.camLayout;
+  if ('cam' in d) { if (d.cam) readCam(d.cam); else stopCam(); }
   if (!e.data.readable) return;
   const reader = e.data.readable.getReader();
   const canvas = new OffscreenCanvas(e.data.width || 1920, e.data.height || 1080);
@@ -826,7 +944,12 @@ self.onmessage = async (e) => {
         canvas.height = h;
         ctx.imageSmoothingQuality = 'high';
       }
-      ctx.drawImage(frame, 0, 0, w, h);
+      if (away && card) {
+        drawCard(ctx, w, h);
+      } else {
+        ctx.drawImage(frame, 0, 0, w, h);
+        drawCam(ctx, w, h);
+      }
       const srcW = frame.displayWidth, srcH = frame.displayHeight;
       const out = new VideoFrame(canvas, { timestamp: frame.timestamp });
       frame.close();
@@ -837,6 +960,7 @@ self.onmessage = async (e) => {
   } catch (err) {
     self.postMessage({ done: true, error: err.message });
   }
+  stopCam();
 };
 `;
 
@@ -874,6 +998,7 @@ function gpuBackedTrack(source) {
       pacer.clear();
       writer.close().catch(() => {});
       worker.terminate();
+      for (const t of worker.camClones || []) t.stop();
     }
   };
   worker.onerror = (e) => reportError('GPU frame pipeline worker error: ' + e.message);
@@ -883,6 +1008,8 @@ function gpuBackedTrack(source) {
     { readable: processor.readable, quality: { ...quality }, width: settings.width, height: settings.height },
     [processor.readable]
   );
+  // A new capture (another window, the source coming back) gets the camera and the away card again
+  attachWorkerExtras(worker);
   return generator;
 }
 
@@ -973,9 +1100,10 @@ btnStart.addEventListener('click', async () => {
     roomCodeEl.textContent = roomId;
     panelSetup.style.display = 'none';
     panelStreaming.style.display = '';
-    document.getElementById('stream-main').appendChild(qualitySection);
+    document.getElementById('stream-main').append(qualitySection, camSection, privacySection);
 
     startStatsUpdate();
+    startLiveExtras();
 
   } catch (err) {
     showToast('Erro: ' + err.message);
@@ -995,7 +1123,8 @@ async function configureVideoSender(pc, maxBitrate, label) {
       params.encodings = [{}];
     }
     params.encodings[0].maxBitrate = maxBitrate;
-    params.encodings[0].maxFramerate = quality.fps;
+    params.encodings[0].maxFramerate = viewerFps(label);
+    params.encodings[0].scaleResolutionDownBy = lowScale(label);
     params.encodings[0].active = viewerWatch.get(label) !== false;
     params.encodings[0].networkPriority = 'high';
     params.encodings[0].priority = 'high';
@@ -1079,9 +1208,12 @@ async function pauseStreaming() {
   queueMicrotask(renderExcludeDiscord);
   isStreaming = false;
   stopStandby();
+  stopLiveExtras();
   window.electronAPI.setStreamingPriority(false);
   flushRelayUsage();
   panelSetup.insertBefore(qualitySection, btnStart);
+  panelSetup.insertBefore(camSection, btnStart);
+  panelSetup.insertBefore(privacySection, btnStart);
 
   if (localStream) {
     localStream.getTracks().forEach(t => t.kind === 'video' ? stopVideoTrack(t) : t.stop());
@@ -1302,8 +1434,7 @@ btnCopyCodeBar.addEventListener('click', () => {
 });
 
 btnCopyLink.addEventListener('click', async () => {
-  const url = signalServer || await window.electronAPI.getSignalServer();
-  const link = `${url}/room.html?room=${roomId}`;
+  const link = await roomLink(roomId);
   navigator.clipboard.writeText(link).then(() => showToast('Link copiado'));
 });
 
@@ -1491,10 +1622,22 @@ function isExcluded(viewerId) {
   return false;
 }
 
+// "Economizar dados": a viewer on a phone plan asked for a lighter copy, at most 540p30 and 1.2 Mbps
+// (~0.5 GB an hour instead of up to ~5). Direct connections only; through the SFU everyone shares one copy.
+const lowViewers = new Set();
+const LOW_VIEWER_BPS = 1200000;
+function lowScale(viewerId) {
+  if (!lowViewers.has(viewerId)) return 1;
+  const h = pipe.outH || 1080;
+  return h > 540 ? +(h / 540).toFixed(3) : 1;
+}
+const viewerFps = (viewerId) => (lowViewers.has(viewerId) ? Math.min(30, quality.fps) : quality.fps);
+
 function viewerBitrateCap(viewerId) {
   const preset = presetBitrate();
+  if (viewerId && lowViewers.has(viewerId)) return Math.min(LOW_VIEWER_BPS, preset);
   if (share.mode === 'off' || (viewerId && isExcluded(viewerId))) return preset;
-  const sharing = [...peerConnections.keys()].filter(id => !isExcluded(id) && viewerWatch.get(id) !== false).length || 1;
+  const sharing = [...peerConnections.keys()].filter(id => !isExcluded(id) && viewerWatch.get(id) !== false && !lowViewers.has(id)).length || 1;
   return Math.round(Math.min(preset, Math.max(MIN_SHARE_BPS, share.budget / sharing)));
 }
 
@@ -1503,14 +1646,19 @@ function applySenderLimits() {
   if (sfu.pc) entries.push([null, sfu.pc]);
   for (const [viewerId, pc] of entries) {
     // The SFU link carries the one copy everybody watches, so it always gets the full preset
-    const cap = pc === sfu.pc ? presetBitrate() : viewerBitrateCap(viewerId);
+    const isSfu = pc === sfu.pc;
+    const cap = isSfu ? presetBitrate() : viewerBitrateCap(viewerId);
+    const fps = isSfu ? quality.fps : viewerFps(viewerId);
+    const scale = isSfu ? 1 : lowScale(viewerId);
     const sender = pc.getSenders().find(s => s.track?.kind === 'video');
     if (!sender) continue;
     const params = sender.getParameters();
     if (!params.encodings?.length) continue;
-    if (params.encodings[0].maxBitrate === cap && params.encodings[0].maxFramerate === quality.fps) continue;
-    params.encodings[0].maxBitrate = cap;
-    params.encodings[0].maxFramerate = quality.fps;
+    const e = params.encodings[0];
+    if (e.maxBitrate === cap && e.maxFramerate === fps && (e.scaleResolutionDownBy || 1) === scale) continue;
+    e.maxBitrate = cap;
+    e.maxFramerate = fps;
+    e.scaleResolutionDownBy = scale;
     sender.setParameters(params).catch(() => {});
   }
 }
@@ -1522,7 +1670,8 @@ function resetShare() {
 }
 
 function updateUploadBudget(samples, captureSteady) {
-  const eligible = samples.filter(s => !isExcluded(s.id));
+  // Viewers on "Economizar dados" have their own small cap and stay out of the sharing
+  const eligible = samples.filter(s => !isExcluded(s.id) && !lowViewers.has(s.id));
   // A fresh connection is still ramping up bandwidth estimation, which looks like throttling.
   // So does a capture that stalled (a game hitch, a window switch): fewer frames, lower bitrate,
   // nothing to do with the uplink. Neither may move the budget.
@@ -1689,6 +1838,7 @@ function startStatsUpdate() {
     updateUploadBudget(samples.filter(x => !x.sfu && !x.idle), captureSteadySinceLastTick() && !standby.active);
     healStuckEncoders(samples);
     updateSfuMode();
+    if (statsTicks % 3 === 0) reportHealth(samples);
     if (statsTicks % 30 === 0) {
       const pipeline = pipelineRates();
       if (samples.length) reportQuality(samples, pipeline);
@@ -1733,7 +1883,7 @@ async function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.6.9', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -1953,8 +2103,10 @@ async function switchVideo(source) {
   stopStandby();
   await replaceVideoTrack(newVideoTrack);
   selectedSourceId = source.id;
-  rememberSource(source);
+  await rememberSource(source);
   (newVideoTrack.sourceTrack || newVideoTrack).addEventListener('ended', (e) => onCaptureEnded(e.target));
+  // Another screen or window: the game is found again from it
+  sourceChanged();
 }
 
 // ======== Captured window closed ========
@@ -2451,6 +2603,587 @@ fastCaptureInput.addEventListener('change', async () => {
     setTimeout(() => window.electronAPI.setFastCapture(on, true), 900);
   }
 });
+
+// ======== The room's fixed link ========
+// The app keeps one room for good (its id and owner key), so the link friends saved keeps working.
+// It can also get a name of its own (frogshare.onrender.com/s/igor); the server keeps that bond.
+const ROOM_KEY = 'fs-room';
+const OWNED_KEY = 'fs-owned-rooms';
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+function savedRoom() {
+  const r = store.get(ROOM_KEY);
+  return r && /^[A-Za-z0-9_-]{1,64}$/.test(r.roomId || '') && typeof r.hostKey === 'string' ? r : null;
+}
+function keepRoom(r) {
+  store.set(ROOM_KEY, { roomId: r.roomId, hostKey: r.hostKey });
+  // The keys of rooms used before, so a name you had can be taken back
+  const owned = store.get(OWNED_KEY) || {};
+  delete owned[r.roomId];
+  owned[r.roomId] = r.hostKey;
+  store.set(OWNED_KEY, Object.fromEntries(Object.entries(owned).slice(-10)));
+}
+async function createRoom() {
+  const url = await getSignalUrl();
+  const res = await fetch(`${url}/api/room/create`);
+  if (!res.ok) throw new Error(`o servidor respondeu ${res.status}`);
+  const r = await res.json();
+  keepRoom(r);
+  return r;
+}
+let roomPromise = null;
+function fixedRoom() {
+  const r = savedRoom();
+  if (r) return Promise.resolve(r);
+  roomPromise = roomPromise || createRoom().finally(() => { roomPromise = null; });
+  return roomPromise;
+}
+async function roomLink(id = roomId || savedRoom()?.roomId) {
+  const url = await getSignalUrl();
+  return id ? `${url}/s/${encodeURIComponent(id)}` : '';
+}
+
+const linkText = document.getElementById('room-link-text');
+const btnCopyFixed = document.getElementById('btn-copy-fixed-link');
+const btnEditLink = document.getElementById('btn-edit-link');
+const linkForm = document.getElementById('link-form');
+const linkName = document.getElementById('link-name');
+
+async function renderLinkCard() {
+  const link = await roomLink(group.guestRoom ? savedRoom()?.roomId : undefined).catch(() => '');
+  linkText.textContent = link ? link.replace(/^https?:\/\//, '') : 'O link aparece aqui quando o servidor responder.';
+  btnCopyFixed.disabled = !link;
+  const url = await getSignalUrl();
+  document.getElementById('link-prefix').textContent = url.replace(/^https?:\/\//, '') + '/s/';
+  btnEditLink.disabled = isStreaming;
+  btnEditLink.title = isStreaming ? 'Pare a transmissão para mudar o link' : '';
+}
+btnCopyFixed.addEventListener('click', async () => {
+  const link = await roomLink(savedRoom()?.roomId);
+  navigator.clipboard.writeText(link).then(() => showToast('Link copiado. É só mandar para os amigos.'));
+});
+btnEditLink.addEventListener('click', () => {
+  const open = linkForm.hidden;
+  linkForm.hidden = !open;
+  btnEditLink.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  const current = savedRoom()?.roomId || '';
+  linkName.value = /^[0-9a-f]{8}$/.test(current) ? '' : current;
+  linkName.focus();
+});
+
+// A new room while not live: drop the old connection so the next start joins the new one
+function moveToRoom(r) {
+  keepRoom(r);
+  if (!group.guestRoom && socket) leaveRoomConnection();
+  roomLocked = false;
+  lockToggle.checked = false;
+  linkForm.hidden = true;
+  btnEditLink.setAttribute('aria-expanded', 'false');
+  btnStart.textContent = startLabel();
+  renderLinkCard();
+}
+
+linkForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (isStreaming) { showToast('Pare a transmissão para mudar o link.'); return; }
+  const name = linkName.value.trim().toLowerCase();
+  if (!name) { linkName.focus(); return; }
+  try {
+    const url = await getSignalUrl();
+    const owned = store.get(OWNED_KEY) || {};
+    const res = await fetch(`${url}/api/room/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, hostKey: owned[name] || undefined })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || 'Não deu para usar esse nome.'); linkName.focus(); return; }
+    moveToRoom(data);
+    showToast('Pronto! Seu link agora é ' + (await roomLink(data.roomId)).replace(/^https?:\/\//, ''));
+  } catch (err) {
+    showToast('Não deu para mudar o link: ' + err.message);
+  }
+});
+document.getElementById('btn-random-link').addEventListener('click', async () => {
+  if (isStreaming) { showToast('Pare a transmissão para mudar o link.'); return; }
+  try {
+    const url = await getSignalUrl();
+    const res = await fetch(`${url}/api/room/create`);
+    if (!res.ok) throw new Error(`o servidor respondeu ${res.status}`);
+    moveToRoom(await res.json());
+    showToast('Link novo pronto. O antigo não leva mais à sua sala.');
+  } catch (err) {
+    showToast('Não deu para gerar outro link: ' + err.message);
+  }
+});
+
+// ======== Who's watching ========
+const viewerListEl = document.getElementById('viewer-list');
+const lockToggle = document.getElementById('lock-toggle');
+let viewerList = [];
+let viewerListPrimed = false;
+let roomLocked = false;
+
+function renderViewerList() {
+  const owner = !group.guestRoom;
+  document.getElementById('lock-row').hidden = !owner;
+  const shown = viewerList.slice(0, 30);
+  const items = shown.map(v => {
+    const li = document.createElement('li');
+    li.append(Object.assign(document.createElement('span'), { className: 'viewer-name', textContent: v.name, title: v.name }));
+    // Only the room's owner removes people; two clicks, so a slip of the mouse doesn't
+    if (owner) {
+      const kick = document.createElement('button');
+      kick.type = 'button';
+      kick.className = 'btn btn-ghost viewer-kick';
+      kick.textContent = 'Tirar';
+      kick.title = `Tirar ${v.name} da sala`;
+      kick.addEventListener('click', () => {
+        if (!kick.classList.contains('confirm')) {
+          kick.classList.add('confirm');
+          kick.textContent = 'Tirar mesmo?';
+          setTimeout(() => { kick.classList.remove('confirm'); kick.textContent = 'Tirar'; }, 3500);
+          return;
+        }
+        socket?.emit('kick-viewer', { viewerId: v.id });
+        showToast(`${v.name} saiu da sala e não volta por umas horas. Para ninguém novo entrar, tranque a sala.`);
+      });
+      li.append(kick);
+    }
+    return li;
+  });
+  if (viewerList.length > shown.length) items.push(Object.assign(document.createElement('li'), { className: 'viewer-more', textContent: `e mais ${viewerList.length - shown.length}` }));
+  viewerListEl.replaceChildren(...items);
+}
+
+lockToggle.addEventListener('change', () => {
+  roomLocked = lockToggle.checked;
+  socket?.emit('lock-room', { locked: roomLocked });
+  showToast(roomLocked ? 'Sala trancada: quem já está continua, ninguém novo entra.' : 'Sala aberta de novo.');
+});
+
+const listNames = (names) => (names.length > 2 ? `${names.slice(0, 2).join(', ')} e mais ${names.length - 2}` : names.join(' e '));
+function announceViewers(previous, next) {
+  if (!isStreaming) return;
+  const before = new Set(previous.map(v => v.id));
+  const after = new Set(next.map(v => v.id));
+  const joined = next.filter(v => !before.has(v.id)).map(v => v.name);
+  const left = previous.filter(v => !after.has(v.id)).map(v => v.name);
+  if (joined.length) overlayEvent({ text: `${listNames(joined)} ${joined.length > 1 ? 'entraram' : 'entrou'}`, expand: true });
+  else if (left.length) overlayEvent({ text: `${listNames(left)} ${left.length > 1 ? 'saíram' : 'saiu'}` });
+}
+
+// ======== Reactions ========
+const reactionCounts = new Map();
+function renderReactions() {
+  const el = document.getElementById('reaction-counts');
+  el.hidden = !reactionCounts.size;
+  el.replaceChildren(...[...reactionCounts].sort((a, b) => b[1] - a[1]).map(([emoji, n]) => {
+    const s = document.createElement('span');
+    s.title = `${n}× ${emoji}`;
+    s.append(emoji, Object.assign(document.createElement('small'), { textContent: String(n) }));
+    return s;
+  }));
+}
+
+// The "ao vivo" notice over the game shows who arrived and the reactions (see overlay.js)
+function overlayEvent(ev) {
+  window.electronAPI.overlayEvent?.(ev);
+}
+
+// ======== What viewers see when their picture stutters ========
+// Every ~6 s: how many frames the capture really delivers, against the target, and what (if anything)
+// limits the encoders. The room page uses it to say whether the problem is here or on their side.
+let healthPipe = { inFrames: 0, at: 0 };
+function reportHealth(samples) {
+  if (!socket?.connected || !isStreaming) return;
+  const now = performance.now();
+  const secs = healthPipe.at ? (now - healthPipe.at) / 1000 : 0;
+  const fps = secs > 0 ? (pipe.inFrames - healthPipe.inFrames) / secs : null;
+  healthPipe = { inFrames: pipe.inFrames, at: now };
+  if (fps == null) return;
+  const limits = samples.filter(s => !s.idle).map(s => s.limit).filter(l => l && l !== 'none');
+  const limit = limits.includes('cpu') ? 'cpu' : limits.includes('bandwidth') ? 'bandwidth' : limits.length ? 'other' : 'none';
+  socket.emit('host-health', { fps: Math.round(fps), target: quality.fps, limit, away: privacyAway() || standby.active });
+}
+
+// ======== Privacy: "já volto" when leaving the game, and the quick pause ========
+// Sharing a whole screen shows whatever is on it. Once the game is known (the first fullscreen window
+// after going live), switching away from it (Alt+Tab, the Start menu, the desktop, another app on that
+// screen) puts a "já volto" card on the stream instead; coming back shows the screen again. The card is
+// drawn by the pipeline worker, so it takes effect on the very next frame.
+const PROTECT_KEY = 'fs-protect';
+const HOTKEY_KEY = 'fs-hotkey';
+const GAME_NAME_KEY = 'fs-game-name';
+const camSection = document.getElementById('cam-section');
+const privacySection = document.getElementById('privacy-section');
+const protectToggle = document.getElementById('protect-toggle');
+const hotkeySelect = document.getElementById('hotkey-select');
+const btnQuickPause = document.getElementById('btn-quick-pause');
+const privacyStatus = document.getElementById('privacy-status');
+const gameNameToggle = document.getElementById('game-name-toggle');
+const privacy = { protect: true, manual: false, auto: false, game: null, watching: false, watchSource: null, supported: false };
+try {
+  privacy.protect = localStorage.getItem(PROTECT_KEY) !== '0';
+  gameNameToggle.checked = localStorage.getItem(GAME_NAME_KEY) !== '0';
+  const savedHotkey = localStorage.getItem(HOTKEY_KEY);
+  if (savedHotkey !== null && [...hotkeySelect.options].some(o => o.value === savedHotkey)) hotkeySelect.value = savedHotkey;
+} catch {}
+protectToggle.checked = privacy.protect;
+
+const privacyAway = () => privacy.manual || privacy.auto;
+const currentWorker = () => localStream?.getVideoTracks()[0]?.pipelineWorker || null;
+
+const cardFrog = new Image();
+cardFrog.src = '/brand/frog-sleep.svg';
+function awayCardCanvas() {
+  const c = document.createElement('canvas');
+  c.width = 1280; c.height = 720;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0B1A10';
+  g.fillRect(0, 0, 1280, 720);
+  if (cardFrog.complete && cardFrog.naturalWidth) g.drawImage(cardFrog, 560, 160, 160, 147);
+  g.textAlign = 'center';
+  g.fillStyle = '#F3F8EC';
+  g.font = '600 46px Fredoka, sans-serif';
+  const who = nickname();
+  g.fillText(who ? `${who} já volta` : 'Já volto!', 640, 400);
+  g.fillStyle = '#A9C6AC';
+  g.font = '28px Inter, sans-serif';
+  g.fillText('A transmissão continua sozinha em instantes.', 640, 452);
+  return c;
+}
+async function sendAwayState(worker) {
+  if (!worker) return;
+  if (privacyAway()) {
+    try {
+      const bitmap = await createImageBitmap(awayCardCanvas());
+      worker.postMessage({ card: bitmap, away: privacyAway() }, [bitmap]);
+      return;
+    } catch {}
+  }
+  worker.postMessage({ away: privacyAway() });
+}
+function setAway() {
+  sendAwayState(currentWorker());
+  renderPrivacy();
+  window.electronAPI.setAway?.(privacyAway());
+  // Viewers hear about it at once: a still card mustn't read as a frozen stream
+  if (socket?.connected && isStreaming) socket.emit('host-health', { fps: null, target: quality.fps, limit: 'none', away: privacyAway() || standby.active });
+}
+function setAuto(on) {
+  if (privacy.auto === on) return;
+  privacy.auto = on;
+  setAway();
+}
+
+function renderPrivacy() {
+  const live = isStreaming;
+  document.getElementById('protect-row').hidden = !privacy.supported;
+  btnQuickPause.hidden = !live;
+  btnQuickPause.setAttribute('aria-pressed', String(privacy.manual));
+  const key = hotkeySelect.value ? ` (${hotkeySelect.selectedOptions[0].textContent})` : '';
+  document.getElementById('quick-pause-label').textContent = privacy.manual ? 'Voltar a mostrar a tela' : `Pausa rápida${key}`;
+  const parts = [];
+  let away = false, action = null;
+  if (live && privacy.manual) {
+    away = true;
+    parts.push('Pausa rápida ligada: seus amigos veem "já volto".');
+  } else if (live && privacy.auto) {
+    away = true;
+    parts.push(`Você saiu ${privacy.game?.name ? 'do ' + privacy.game.name : 'do jogo'}: seus amigos veem "já volto". Volte para ele e a tela aparece de novo.`);
+    action = { label: 'Mostrar a tela agora', run: resetGame };
+  } else if (live && privacy.watching && privacy.protect) {
+    if (privacy.game) {
+      parts.push(`Protegendo: ao sair ${privacy.game.name ? 'do ' + privacy.game.name : 'do jogo'}, seus amigos veem "já volto".`);
+      action = { label: 'Trocar o jogo', run: resetGame };
+    } else {
+      parts.push('Abra o jogo: a primeira janela em tela cheia vira o jogo protegido.');
+    }
+  }
+  privacyStatus.hidden = !parts.length;
+  privacyStatus.classList.toggle('is-away', away);
+  privacyStatus.replaceChildren(Object.assign(document.createElement('span'), { textContent: parts.join(' ') }));
+  if (action) {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'link-button', textContent: action.label });
+    b.addEventListener('click', action.run);
+    privacyStatus.append(b);
+  }
+}
+
+// Forget the game: the next fullscreen window becomes it (and the screen shows again meanwhile)
+function resetGame() {
+  privacy.game = null;
+  if (currentSource.isScreen) setGame(null);
+  setAuto(false);
+  renderPrivacy();
+}
+
+// Programs that are never "the game", even fullscreen (a video in a browser, a launcher, a chat)
+const NOT_GAMES = new Set([
+  'chrome', 'msedge', 'brave', 'firefox', 'opera', 'vivaldi', 'discord', 'discordptb', 'discordcanary', 'explorer',
+  'spotify', 'steam', 'steamwebhelper', 'epicgameslauncher', 'riotclientux', 'riotclientservices', 'leagueclient',
+  'leagueclientux', 'leagueclientuxrender', 'battle.net', 'whatsapp', 'telegram', 'obs64', 'vlc', 'mpc-hc64', 'code',
+  'notepad', 'winword', 'excel', 'powerpnt', 'teams', 'ms-teams', 'zoom', 'slack', 'applicationframehost',
+  'systemsettings', 'taskmgr', 'frogshare', 'electron'
+]);
+const looksLikeGame = (fg) => !!gameNameFor(fg.exe) || (fg.covers && !NOT_GAMES.has(fg.exe));
+
+// What the window in front is, from main (the capture helper's foreground watcher)
+function onForeground(fg) {
+  if (!isStreaming || !privacy.watching || !fg) return;
+  // The Alt+Tab switcher shows thumbnails of every window: cover the screen as soon as it opens
+  if (fg.switching) { if (privacy.protect && privacy.game) setAuto(true); return; }
+  if (fg.switching === false && fg.hwnd == null) return;
+  // Focus moved to another monitor: the captured one still shows what it showed
+  if (!fg.onCaptured) return;
+  const candidate = !fg.own && !fg.shell && fg.exe && looksLikeGame(fg);
+  // The game is the first fullscreen program after going live, and a game we know beats an unknown one
+  if (candidate && (!privacy.game || (!privacy.game.name && gameNameFor(fg.exe) && fg.exe !== privacy.game.exe))) {
+    privacy.game = { pid: fg.pid, exe: fg.exe, name: gameNameFor(fg.exe) };
+    setGame(privacy.game.name);
+    setAuto(false);
+    renderPrivacy();
+    return;
+  }
+  if (!privacy.game) return;
+  const isGame = fg.pid === privacy.game.pid || fg.exe === privacy.game.exe;
+  setAuto(privacy.protect && !isGame);
+}
+window.electronAPI.onForeground?.(onForeground);
+
+function syncForegroundWatch() {
+  const want = privacy.supported && isStreaming && currentSource.isScreen && (privacy.protect || gameNameToggle.checked);
+  const source = want ? currentSource.id : null;
+  if (source === privacy.watchSource) return;
+  privacy.watchSource = source;
+  privacy.watching = !!source;
+  privacy.game = null;
+  setAuto(false);
+  window.electronAPI.watchForeground?.(source)?.catch?.(() => {});
+  renderPrivacy();
+}
+
+protectToggle.addEventListener('change', () => {
+  privacy.protect = protectToggle.checked;
+  try { localStorage.setItem(PROTECT_KEY, privacy.protect ? '1' : '0'); } catch {}
+  if (!privacy.protect) setAuto(false);
+  syncForegroundWatch();
+  renderPrivacy();
+});
+
+// The quick pause from anywhere, a game in front included (a global shortcut, registered while live)
+async function applyHotkey() {
+  const accelerator = isStreaming ? hotkeySelect.value : '';
+  const result = await window.electronAPI.setHotkey?.(accelerator).catch(() => null);
+  if (accelerator && result && !result.ok) {
+    showToast(`O atalho ${hotkeySelect.selectedOptions[0].textContent} já é usado por outro programa. Escolha outro em Privacidade.`);
+  }
+}
+hotkeySelect.addEventListener('change', () => {
+  try { localStorage.setItem(HOTKEY_KEY, hotkeySelect.value); } catch {}
+  applyHotkey();
+  renderPrivacy();
+});
+function toggleQuickPause() {
+  if (!isStreaming) return;
+  privacy.manual = !privacy.manual;
+  setAway();
+  overlayEvent({ text: privacy.manual ? 'Pausa rápida: seus amigos veem "já volto"' : 'Sua tela voltou para a transmissão', expand: true });
+}
+btnQuickPause.addEventListener('click', toggleQuickPause);
+window.electronAPI.onPrivacyHotkey?.(toggleQuickPause);
+
+// ======== The game's name, for viewers ========
+let currentGame = null;
+function setGame(name) {
+  if (currentGame === name) return;
+  currentGame = name;
+  sendGame();
+}
+function sendGame() {
+  if (socket?.connected && isStreaming) socket.emit('set-game', { game: gameNameToggle.checked ? currentGame : null });
+}
+gameNameToggle.addEventListener('change', () => {
+  try { localStorage.setItem(GAME_NAME_KEY, gameNameToggle.checked ? '1' : '0'); } catch {}
+  sendGame();
+  syncForegroundWatch();
+});
+// A window: the program it belongs to. A whole screen: the game the watcher found on it.
+async function updateGameFromSource() {
+  if (currentSource.isScreen) { setGame(privacy.game?.name || null); return; }
+  const id = currentSource.id;
+  const owner = id ? await window.electronAPI.getWindowOwner(id).catch(() => null) : null;
+  if (currentSource.id === id) setGame(owner ? gameNameFor(owner.name) : null);
+}
+
+// ======== Camera in a corner ========
+// Composited into the stream by the pipeline worker (one drawImage per frame), so it costs little and
+// follows any change of window. Hidden while "já volto" is up.
+const CAM_KEY = 'fs-cam';
+const cam = Object.assign({ enabled: false, deviceId: '', pos: 'br', size: 'm' }, store.get(CAM_KEY) || {}, { track: null });
+const camToggle = document.getElementById('cam-toggle');
+const camOptions = document.getElementById('cam-options');
+const camDevice = document.getElementById('cam-device');
+const camNote = document.getElementById('cam-note');
+const camLayout = () => ({ pos: cam.pos, size: cam.size });
+function saveCam() { store.set(CAM_KEY, { enabled: cam.enabled, deviceId: cam.deviceId, pos: cam.pos, size: cam.size }); }
+
+function attachCam(worker) {
+  if (!worker || !cam.track || cam.track.readyState !== 'live') return;
+  try {
+    // A clone per worker: each one reads (and ends) its own
+    const clone = cam.track.clone();
+    const processor = new MediaStreamTrackProcessor({ track: clone, maxBufferSize: 1 });
+    for (const t of worker.camClones || []) t.stop();
+    worker.camClones = [clone];
+    worker.postMessage({ cam: processor.readable, camLayout: camLayout() }, [processor.readable]);
+  } catch (err) {
+    reportError('Camera attach failed: ' + err.message, err.stack);
+  }
+}
+function attachWorkerExtras(worker) {
+  if (privacyAway()) sendAwayState(worker);
+  if (cam.track) attachCam(worker);
+}
+
+const camConstraints = (deviceId) => ({
+  video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 30, max: 30 }, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+  audio: false
+});
+async function openCamera() {
+  try {
+    return await navigator.mediaDevices.getUserMedia(camConstraints(cam.deviceId));
+  } catch (err) {
+    // The saved camera was unplugged: any camera will do
+    if (cam.deviceId && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')) {
+      cam.deviceId = '';
+      return navigator.mediaDevices.getUserMedia(camConstraints(''));
+    }
+    throw err;
+  }
+}
+function camError(err) {
+  camNote.textContent = err.name === 'NotAllowedError'
+    ? 'O Windows bloqueou a câmera. Libere em Configurações > Privacidade e segurança > Câmera.'
+    : err.name === 'NotReadableError' ? 'A câmera está sendo usada por outro programa.' : 'Não deu para abrir a câmera: ' + err.message;
+}
+async function startCam() {
+  if (cam.track) return;
+  try {
+    const stream = await openCamera();
+    cam.track = stream.getVideoTracks()[0];
+    cam.deviceId = cam.track.getSettings().deviceId || cam.deviceId;
+    camNote.textContent = '';
+    cam.track.addEventListener('ended', () => { if (cam.track?.readyState === 'ended') { cam.track = null; camNote.textContent = 'A câmera foi desligada.'; } });
+    if (!isStreaming) { stopCam(); return; }
+    attachCam(currentWorker());
+    loadCamDevices();
+  } catch (err) {
+    camError(err);
+  }
+}
+function stopCam() {
+  if (cam.track) { cam.track.stop(); cam.track = null; }
+  const worker = currentWorker();
+  if (worker) {
+    worker.postMessage({ cam: null });
+    for (const t of worker.camClones || []) t.stop();
+    worker.camClones = [];
+  }
+}
+async function loadCamDevices() {
+  try {
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    camDevice.replaceChildren(...devices.map((d, i) => Object.assign(document.createElement('option'), {
+      value: d.deviceId, textContent: d.label || `Câmera ${i + 1}`, selected: d.deviceId === cam.deviceId
+    })));
+    if (!devices.length) camNote.textContent = 'Nenhuma câmera encontrada.';
+  } catch {}
+}
+function renderCam() {
+  camToggle.checked = cam.enabled;
+  camOptions.hidden = !cam.enabled;
+  document.querySelectorAll('input[name="cam-pos"]').forEach(r => { r.checked = r.value === cam.pos; });
+  document.querySelectorAll('input[name="cam-size"]').forEach(r => { r.checked = r.value === cam.size; });
+}
+camToggle.addEventListener('change', async () => {
+  cam.enabled = camToggle.checked;
+  saveCam();
+  renderCam();
+  if (!cam.enabled) { stopCam(); return; }
+  if (isStreaming) { await startCam(); return; }
+  // Not live yet: open it once, to ask for permission and to learn the cameras' names
+  try {
+    const stream = await openCamera();
+    stream.getTracks().forEach(t => t.stop());
+    camNote.textContent = 'A câmera aparece quando você começar a transmitir.';
+    loadCamDevices();
+  } catch (err) {
+    camError(err);
+  }
+});
+camDevice.addEventListener('change', () => {
+  cam.deviceId = camDevice.value;
+  saveCam();
+  if (isStreaming && cam.enabled) { stopCam(); startCam(); }
+});
+document.querySelectorAll('input[name="cam-pos"], input[name="cam-size"]').forEach(input => {
+  input.addEventListener('change', () => {
+    if (input.name === 'cam-pos') cam.pos = input.value;
+    else cam.size = input.value;
+    saveCam();
+    currentWorker()?.postMessage({ camLayout: camLayout() });
+  });
+});
+renderCam();
+if (cam.enabled) loadCamDevices();
+
+// ======== Live extras on and off ========
+function startLiveExtras() {
+  reactionCounts.clear();
+  renderReactions();
+  lowViewers.clear();
+  privacy.manual = false;
+  privacy.auto = false;
+  healthPipe = { inFrames: pipe.inFrames, at: performance.now() };
+  syncForegroundWatch();
+  applyHotkey();
+  if (cam.enabled) startCam();
+  updateGameFromSource();
+  sendGame();
+  renderPrivacy();
+  renderLinkCard();
+  renderViewerList();
+}
+function stopLiveExtras() {
+  stopCam();
+  privacy.manual = false;
+  privacy.auto = false;
+  syncForegroundWatch();
+  applyHotkey();
+  window.electronAPI.setAway?.(false);
+  currentGame = null;
+  lowViewers.clear();
+  viewerList = [];
+  renderViewerList();
+  renderPrivacy();
+  setTimeout(renderLinkCard);
+}
+function sourceChanged() {
+  syncForegroundWatch();
+  updateGameFromSource();
+}
+
+window.electronAPI.getPlatform().then(p => {
+  // The foreground watcher is part of the Windows capture helper
+  privacy.supported = p === 'win32' && typeof window.electronAPI.watchForeground === 'function';
+  renderPrivacy();
+});
+fixedRoom().then(renderLinkCard).catch(() => renderLinkCard());
 
 // ======== Init ========
 initPermissions();
