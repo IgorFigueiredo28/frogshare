@@ -19,7 +19,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.7.1',
+        app_version: '1.7.2',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1510,13 +1510,18 @@ btnCopyLink.addEventListener('click', async () => {
 // and let it fan out; with 1-2 viewers stay direct, which is free and has the lowest latency.
 const SFU_MIN_VIEWERS = 3;
 const sfu = {
-  active: false, starting: false, pc: null, sessionId: null, tracks: [],
-  cooldownUntil: 0, lowSince: 0, enabled: false, checkedAt: 0
+  active: false, starting: false, pc: null, startingPc: null, sessionId: null, tracks: [],
+  cooldownUntil: 0, lowSince: 0, enabled: false, checkedAt: 0,
+  // After a link that never sent a frame: publish as plain baseline (see watchSfuSilence)
+  plainProfile: false, silentFailures: 0
 };
 let roomViewerCount = 0;
 
+// Every connection that carries our picture, the media server's included while it's still connecting:
+// a switch of picture during those seconds left it on the old track, stopped right after (1.7.1)
 function sendingPcs() {
-  return sfu.pc ? [...peerConnections.values(), sfu.pc] : [...peerConnections.values()];
+  const sfuPc = sfu.pc || sfu.startingPc;
+  return sfuPc ? [...peerConnections.values(), sfuPc] : [...peerConnections.values()];
 }
 
 async function sfuFetch(method, path, body) {
@@ -1588,6 +1593,8 @@ async function startSfu() {
     const { sessionId } = await sfuFetch('POST', '/sessions');
     const iceConfig = await getIceConfig();
     pc = new RTCPeerConnection({ ...iceConfig, bundlePolicy: 'max-bundle' });
+    pc.createdAt = performance.now();
+    sfu.startingPc = pc;
     const published = localStream.getTracks().map(track => ({
       transceiver: pc.addTransceiver(track, { direction: 'sendonly' }),
       trackName: track.kind
@@ -1602,7 +1609,7 @@ async function startSfu() {
     });
     const failed = (data.tracks || []).find(t => t.errorCode);
     if (failed) throw new Error(failed.errorDescription || failed.errorCode);
-    const answerSdp = await hardwareProfileSdp(data.sessionDescription.sdp);
+    const answerSdp = sfu.plainProfile ? data.sessionDescription.sdp : await hardwareProfileSdp(data.sessionDescription.sdp);
     await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswerSdp(preferH264(answerSdp)) });
     await waitConnected(pc, 10000);
     if (!isStreaming || !localStream) throw new Error('stream stopped during SFU start');
@@ -1612,6 +1619,12 @@ async function startSfu() {
     sfu.tracks = published.map(p => p.trackName);
     sfu.active = true;
     sfu.lowSince = 0;
+    sfuWatch.healedAt = 0;
+    // And what's on air right now, in case it changed before the link could take part in a switch
+    for (const p of published) {
+      const current = localStream.getTracks().find(t => t.kind === p.trackName);
+      if (current && p.transceiver.sender.track !== current) await p.transceiver.sender.replaceTrack(current).catch(() => {});
+    }
     pc.addEventListener('connectionstatechange', () => {
       if (sfu.pc === pc && pc.connectionState === 'failed') {
         reportError('SFU connection failed', null, { sessionId });
@@ -1638,7 +1651,35 @@ async function startSfu() {
     reportError('SFU start failed: ' + err.message, err.stack, { viewers: roomViewerCount });
   } finally {
     sfu.starting = false;
+    sfu.startingPc = null;
   }
+}
+
+// ======== A media server link that sends nothing ========
+// Seen live in 1.7.1: the link was up but carried no video at all (0x0, 0 fps) for six minutes; every
+// viewer fell back to a direct copy and the upload sank under four of them. A link that hasn't encoded a
+// single frame after 10 s gets the picture on air put on it again; still nothing 10 s later, it's
+// dropped (viewers go direct) and the next one is published as plain baseline, which any encoder takes
+// (the hardware "Main" trick needs the GPU encoder free). After that, no more media server this stream.
+const sfuWatch = { healedAt: 0 };
+async function watchSfuSilence(samples) {
+  const s = samples.find(x => x.sfu);
+  if (!s || !sfu.pc || s.framesEncoded > 0 || s.ageMs < 10000) return;
+  const sender = sfu.pc.getTransceivers().find(t => t.receiver.track.kind === 'video' && t.sender)?.sender;
+  const current = localStream?.getVideoTracks()[0];
+  if (!sfuWatch.healedAt) {
+    sfuWatch.healedAt = Date.now();
+    reportError('SFU link sends no video, putting the picture on it again', null, { trackLive: sender?.track?.readyState === 'live', same: sender?.track === current, plain: sfu.plainProfile });
+    if (sender && current) await sender.replaceTrack(current).catch(() => {});
+    return;
+  }
+  if (Date.now() - sfuWatch.healedAt < 10000) return;
+  sfu.silentFailures++;
+  reportError('SFU link still sends no video, dropping it', null, { failures: sfu.silentFailures, plain: sfu.plainProfile });
+  sfu.plainProfile = true;
+  sfu.cooldownUntil = Date.now() + (sfu.silentFailures >= 2 ? 6 * 3600000 : 60000);
+  sfuWatch.healedAt = 0;
+  stopSfu();
 }
 
 // Viewers answer 'sfu-stop' by re-joining, which brings back one P2P offer each
@@ -1837,6 +1878,7 @@ async function collectSenderStats() {
             enc: r.encoderImplementation,
             gpu: !!r.powerEfficientEncoder,
             fps: r.framesPerSecond || 0,
+            framesEncoded: r.framesEncoded || 0,
             res: `${r.frameWidth || 0}x${r.frameHeight || 0}`,
             targetBitrate: r.targetBitrate || 0,
             limit: r.qualityLimitationReason,
@@ -1904,6 +1946,7 @@ function startStatsUpdate() {
     }
     updateUploadBudget(samples.filter(x => !x.sfu && !x.idle), captureSteadySinceLastTick() && !standby.active);
     healStuckEncoders(samples);
+    await watchSfuSilence(samples);
     updateSfuMode();
     if (statsTicks % 3 === 0) reportHealth(samples);
     if (statsTicks % 30 === 0) {
@@ -1950,7 +1993,7 @@ async function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.1', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.2', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -3285,6 +3328,9 @@ function startLiveExtras() {
   renderReactions();
   lowViewers.clear();
   privacy.manual = false;
+  // A new stream gets the hardware encoder trick again (see watchSfuSilence)
+  sfu.plainProfile = false;
+  sfu.silentFailures = 0;
   healthPipe = { inFrames: pipe.inFrames, at: performance.now() };
   syncForegroundWatch();
   applyHotkey();

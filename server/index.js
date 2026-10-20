@@ -120,17 +120,17 @@ app.get('/health', (req, res) => res.send('ok'));
 // Hosts on old builds encode on the CPU once per viewer and stutter badly, and nothing told
 // anyone. The app checks this on start; viewers are told when the room's host is behind.
 const LATEST_APP = {
-  version: '1.7.1',
+  version: '1.7.2',
   // Below this, viewers are asked to have the host update. Before 1.6.6 the screen was captured the old
   // way (DXGI): ~32 fps at most, ~12% of a heavy game's FPS, and the mouse cursor drawn into the stream
   // (Chromium composites it whatever getDisplayMedia asks; measured 2026-10-19). 1.6.6+ uses Windows
   // Graphics Capture, which never draws it.
   minimum: '1.6.6',
   // The Windows installer attached to this version's GitHub release (the repo is public)
-  url: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.7.1/FrogShare.Setup.1.7.1.exe',
+  url: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.7.2/FrogShare.Setup.1.7.2.exe',
   // Exactly that file: the in-app updater refuses anything that doesn't match
-  size: 112043632,
-  sha512: 'Z9lwY05fDzocp6Tb0GzyYrvOyzW5+tvNee2S9O9x20/N8oi18tNx2lAeaEkOl13+ejDfkKOlzAczEQdxwmLt+Q==',
+  size: 112044507,
+  sha512: 'DncX7Ay4Ca3YIwu0ZTTlnrbbfIBNaGYkJGUzsj92VbrLn0/naBMhMpbTlVB5BazoeLpU+VYBSElir1tso7wmTQ==',
   // Apple Silicon .dmg; the site hides its download button while this is null
   macUrl: 'https://drive.usercontent.google.com/download?id=17eAsGhGXXWTauVKpL8l7T2Xkyvn_wr-E&export=download'
 };

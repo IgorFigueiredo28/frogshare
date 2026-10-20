@@ -235,6 +235,52 @@ app.whenReady().then(async () => {
     check('tirar alguém pela lista do app', await until(v1, `document.body.dataset.state === 'kicked'`, 6000));
     v1.destroy();
 
+    // The media server can't run here, so its two failure paths are played out on a local connection.
+    // 1) A link still connecting when the picture changes gets the new picture too (1.7.1 left it on
+    //    the old track, stopped right after, and it sent nothing for six minutes)
+    const race = await evalApp(`(async () => {
+      const pc = new RTCPeerConnection();
+      const tr = pc.addTransceiver(localStream.getVideoTracks()[0], { direction: 'sendonly' });
+      sfu.startingPc = pc;
+      const c = document.createElement('canvas'); c.width = 64; c.height = 36;
+      const g = c.getContext('2d'); setInterval(() => g.fillRect(0, 0, 64, 36), 200);
+      const next = c.captureStream(5).getVideoTracks()[0];
+      await replaceVideoTrack(next);
+      const ok = tr.sender.track === next && next.readyState === 'live';
+      sfu.startingPc = null;
+      pc.close();
+      return ok;
+    })()`);
+    check('troca de imagem no meio da conexão com o servidor de mídia chega a ela também', race);
+    // 2) A link that never sends a frame: the picture goes on it again, then it's dropped and the next
+    //    one is published as plain baseline
+    const silence = await evalApp(`(async () => {
+      const pc = new RTCPeerConnection();
+      pc.addTransceiver(localStream.getVideoTracks()[0], { direction: 'sendonly' });
+      Object.assign(sfu, { pc, active: true, sessionId: 'teste', plainProfile: false, silentFailures: 0 });
+      const fake = [{ sfu: true, framesEncoded: 0, ageMs: 12000 }];
+      await watchSfuSilence(fake);
+      const healed = !!sfuWatch.healedAt && sfu.active;
+      sfuWatch.healedAt = Date.now() - 11000;
+      await watchSfuSilence(fake);
+      const out = { healed, dropped: !sfu.active && !sfu.pc, plain: sfu.plainProfile, cooldown: sfu.cooldownUntil > Date.now() };
+      sfu.cooldownUntil = 0;
+      return out;
+    })()`);
+    check('servidor de mídia mudo: recoloca a imagem, depois larga e tenta de novo no perfil simples', silence.healed && silence.dropped && silence.plain && silence.cooldown, JSON.stringify(silence));
+    const quiet = await evalApp(`(async () => {
+      const pc = new RTCPeerConnection();
+      Object.assign(sfu, { pc, active: true, sessionId: 'teste2' });
+      sfuWatch.healedAt = 0;
+      // A still screen: frames were sent before, none now. That's not a broken link
+      await watchSfuSilence([{ sfu: true, framesEncoded: 240, fps: 0, ageMs: 60000 }]);
+      const ok = sfu.active && !sfuWatch.healedAt;
+      stopSfu(false);
+      pc.close();
+      return ok;
+    })()`);
+    check('tela parada no servidor de mídia não conta como falha', quiet);
+
     await evalApp(`pauseStreaming(); true`);
     check('parar: câmera e atalho desligados, cartões de volta à configuração', await untilApp(`!isStreaming && !cam.track && document.getElementById('cam-section').parentElement === panelSetup && document.getElementById('privacy-section').parentElement === panelSetup`, 5000));
   } catch (err) {
