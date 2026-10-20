@@ -688,6 +688,8 @@ kbd {
 .wh-card, .wh-link-card { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
 .wh-label { margin-top: var(--space-3); }
 .wh-audio { margin: var(--space-2) 0 var(--space-3); }
+.wh-audio-text { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+.wh-audio-text small { font-weight: 400; font-size: var(--text-xs); color: var(--text-2); line-height: 1.4; }
 .wh-fine { font-size: var(--text-xs); color: var(--text-2); }
 .wh-live-head { display: flex; align-items: center; gap: var(--space-2); }
 .wh-preview { aspect-ratio: 16 / 9; background: var(--video-bg); border-radius: var(--radius-lg); overflow: hidden; }
