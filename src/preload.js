@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   takeGroupInvite: () => ipcRenderer.invoke('take-group-invite'),
   findAppRoot: (exeName) => ipcRenderer.invoke('find-app-root', exeName),
+  findWindowRoot: (title) => ipcRenderer.invoke('find-window-root', title),
   getFastCapture: () => ipcRenderer.invoke('get-fast-capture'),
   getAppHealth: () => ipcRenderer.invoke('get-app-health'),
   setFastCapture: (on, relaunch) => ipcRenderer.invoke('set-fast-capture', { on, relaunch }),

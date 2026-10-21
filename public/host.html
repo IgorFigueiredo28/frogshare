@@ -210,10 +210,14 @@
               <span>Sem som</span>
             </label>
           </div>
-          <!-- "Todo o PC" can leave one program out; Discord, so friends don't hear the call -->
+          <!-- "Todo o PC" can leave programs out whose sound friends already hear: the call, the soundboard -->
           <label class="switch-row exclude-row" id="exclude-discord-row" hidden>
             <input type="checkbox" id="exclude-discord" class="switch">
             <span>Tirar o som do Discord (quem assiste não ouve a chamada)</span>
+          </label>
+          <label class="switch-row exclude-row" id="exclude-frogpad-row" hidden>
+            <input type="checkbox" id="exclude-frogpad" class="switch">
+            <span>Tirar o som do FrogPad (seus amigos já ouvem ele pelo seu microfone)</span>
           </label>
           <div id="audio-sessions-container">
             <div class="session-list" id="session-list">
@@ -401,6 +405,10 @@
           <label class="switch-row" id="exclude-discord-live-row" hidden>
             <input type="checkbox" id="exclude-discord-live" class="switch">
             <span>Tirar o som do Discord da transmissão</span>
+          </label>
+          <label class="switch-row" id="exclude-frogpad-live-row" hidden>
+            <input type="checkbox" id="exclude-frogpad-live" class="switch">
+            <span>Tirar o som do FrogPad da transmissão</span>
           </label>
           <div class="group-section" id="group-section">
             <label class="switch-row" id="group-toggle-row">

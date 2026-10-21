@@ -19,7 +19,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.7.2',
+        app_version: '1.7.3',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -1993,7 +1993,7 @@ async function reportQuality(samples, pipeline) {
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.2', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.3', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -2391,75 +2391,113 @@ async function switchAudio(newPid, label = '', { quiet = false } = {}) {
 
   if (typeof newPid === 'number') selectedPid = newPid;
   liveAudio = newPid;
-  if (newPid !== 'system') excludedDiscordPid = 0;
+  if (newPid !== 'system') excludedRoots = {};
   renderExcludeDiscord();
   if (!quiet) showToast(`Som trocado para ${label || 'o app escolhido'}`);
 }
 
-// ======== "Todo o PC" without Discord ========
-// Windows can capture everything the PC plays except one program's process tree. Discord is the one
-// people want out (friends would hear the call). On by default, remembered, and switchable live.
-const EXCLUDE_KEY = 'fs-exclude-discord';
-const excludeDiscord = document.getElementById('exclude-discord');
-const excludeDiscordRow = document.getElementById('exclude-discord-row');
-const excludeDiscordLive = document.getElementById('exclude-discord-live');
-const excludeDiscordLiveRow = document.getElementById('exclude-discord-live-row');
+// ======== "Todo o PC" without the programs friends already hear ========
+// Discord (they'd hear the call twice) and FrogPad, the soundboard that plays into the microphone (they'd
+// hear each sound through the mic and again through the stream). Each on by default, remembered, and
+// switchable live. Windows leaves out one program natively; two go through the helper's mix.
+// FrogPad started from its project runs as electron.exe, so it's also found by its window's title.
+const EXCLUDABLE = [
+  { key: 'discord', name: 'Discord', exe: 'Discord.exe', storage: 'fs-exclude-discord' },
+  { key: 'frogpad', name: 'FrogPad', exe: 'FrogPad.exe', title: 'FrogPad', storage: 'fs-exclude-frogpad', onlyWhenOpen: true }
+].map(a => Object.assign(a, {
+  input: document.getElementById(`exclude-${a.key}`),
+  row: document.getElementById(`exclude-${a.key}-row`),
+  liveInput: document.getElementById(`exclude-${a.key}-live`),
+  liveRow: document.getElementById(`exclude-${a.key}-live-row`),
+  open: false
+}));
 let excludeSupported = false;
-let excludedDiscordPid = 0; // Discord's top process left out of the live sound, 0 when none
-function excludeWanted() {
-  try { return localStorage.getItem(EXCLUDE_KEY) !== '0'; } catch { return true; }
+let excludedRoots = {}; // key -> top process left out of the live sound
+function excludeWanted(a) {
+  try { return localStorage.getItem(a.storage) !== '0'; } catch { return true; }
+}
+
+async function appRoot(a) {
+  const byExe = await window.electronAPI.findAppRoot(a.exe).catch(() => 0);
+  if (byExe || !a.title || !window.electronAPI.findWindowRoot) return byExe || 0;
+  return window.electronAPI.findWindowRoot(a.title).catch(() => 0);
+}
+
+// Which of them are running, and their top processes (the ones wanted out only)
+async function wantedRoots() {
+  const roots = {};
+  for (const a of EXCLUDABLE) {
+    const root = await appRoot(a);
+    a.open = !!root;
+    if (root && excludeWanted(a)) roots[a.key] = root;
+  }
+  return roots;
 }
 
 // What to ask the capture helper for when "Todo o PC" is picked
 async function systemAudioTarget() {
-  excludedDiscordPid = 0;
-  if (!excludeSupported || !excludeWanted()) return 'system';
-  const root = await window.electronAPI.findAppRoot('Discord.exe').catch(() => 0);
-  excludedDiscordPid = root || 0;
-  return root ? `system-except:${root}` : 'system';
+  excludedRoots = {};
+  if (!excludeSupported) return 'system';
+  excludedRoots = await wantedRoots();
+  renderExcludeDiscord();
+  const pids = Object.values(excludedRoots);
+  return pids.length ? `system-except:${pids.join(',')}` : 'system';
 }
 
-const systemAudioName = () => (excludeSupported && excludeWanted() ? 'Todo o PC, menos o Discord' : 'Todo o PC');
+const systemAudioName = () => {
+  const out = excludeSupported ? EXCLUDABLE.filter(a => excludeWanted(a) && (a.open || !a.onlyWhenOpen)).map(a => a.name) : [];
+  return out.length ? `Todo o PC, menos o ${out.join(' e o ')}` : 'Todo o PC';
+};
 
+// FrogPad's switch only shows where FrogPad is (or was) open: most people don't have it
 function renderExcludeDiscord() {
-  const wanted = excludeWanted();
-  excludeDiscord.checked = wanted;
-  excludeDiscordLive.checked = wanted;
-  excludeDiscordRow.hidden = !excludeSupported || getAudioMode() !== 'system';
-  excludeDiscordLiveRow.hidden = !excludeSupported || !isStreaming || liveAudio !== 'system';
+  for (const a of EXCLUDABLE) {
+    const wanted = excludeWanted(a);
+    const relevant = excludeSupported && (a.open || !a.onlyWhenOpen);
+    a.input.checked = wanted;
+    a.liveInput.checked = wanted;
+    a.row.hidden = !relevant || getAudioMode() !== 'system';
+    a.liveRow.hidden = !relevant || !isStreaming || liveAudio !== 'system';
+  }
 }
 
-async function setExcludeDiscord(on) {
-  try { localStorage.setItem(EXCLUDE_KEY, on ? '1' : '0'); } catch {}
+async function setExclude(a, on) {
+  try { localStorage.setItem(a.storage, on ? '1' : '0'); } catch {}
   renderExcludeDiscord();
   // Live with the whole PC's sound: apply right away
   if (isStreaming && liveAudio === 'system') {
     await switchAudio('system', '', { quiet: true });
-    showToast(on ? 'O som do Discord saiu da transmissão' : 'O som do Discord voltou para a transmissão');
+    showToast(on ? `O som do ${a.name} saiu da transmissão` : `O som do ${a.name} voltou para a transmissão`);
   }
 }
-excludeDiscord.addEventListener('change', () => setExcludeDiscord(excludeDiscord.checked));
-excludeDiscordLive.addEventListener('change', () => setExcludeDiscord(excludeDiscordLive.checked));
+for (const a of EXCLUDABLE) {
+  a.input.addEventListener('change', () => setExclude(a, a.input.checked));
+  a.liveInput.addEventListener('change', () => setExclude(a, a.liveInput.checked));
+}
 
-// Discord opened after the stream started, or restarted (updates do that): its new process isn't
-// excluded yet, so pick it up. A cheap helper call every 8 s, only while live with the whole PC.
+// One of them opened after the stream started, or restarted (updates do that): its new process isn't
+// excluded yet, so pick it up. Cheap helper calls every 8 s; before going live they only tell whether
+// FrogPad is open, so its switch can show.
 let excludeWatchBusy = false;
 setInterval(async () => {
-  if (!excludeSupported || !isStreaming || liveAudio !== 'system' || !excludeWanted() || excludeWatchBusy) return;
+  if (!excludeSupported || excludeWatchBusy) return;
+  const liveSystem = isStreaming && liveAudio === 'system';
+  if (!liveSystem && (isStreaming || getAudioMode() !== 'system')) return;
   excludeWatchBusy = true;
   try {
-    const root = await window.electronAPI.findAppRoot('Discord.exe').catch(() => 0);
-    if (root && root !== excludedDiscordPid && isStreaming && liveAudio === 'system') {
-      await switchAudio('system', '', { quiet: true });
-    }
+    const roots = await wantedRoots();
+    renderExcludeDiscord();
+    const changed = JSON.stringify(roots) !== JSON.stringify(excludedRoots);
+    if (changed && isStreaming && liveAudio === 'system') await switchAudio('system', '', { quiet: true });
   } finally {
     excludeWatchBusy = false;
   }
 }, 8000);
 
-window.electronAPI.getPlatform().then(p => {
-  // Process loopback (and so leaving one program out) exists on Windows only
+window.electronAPI.getPlatform().then(async p => {
+  // Process loopback (and so leaving programs out) exists on Windows only
   excludeSupported = p === 'win32' && typeof window.electronAPI.findAppRoot === 'function';
+  if (excludeSupported) await wantedRoots();
   renderExcludeDiscord();
 });
 

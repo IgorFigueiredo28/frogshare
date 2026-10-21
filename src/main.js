@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.7.2'
+        app_version: '1.7.3'
       })
     }).catch(() => {});
   } catch {}
@@ -617,6 +617,14 @@ ipcMain.handle('find-app-root', async (event, exeName) => {
   return Array.isArray(out.roots) && out.roots.length ? out.roots[0] : 0;
 });
 
+// The same, by the title of the program's window, for one that doesn't run under its own name (an
+// Electron app started from its project runs as electron.exe). Windows only; 0 when it isn't open.
+ipcMain.handle('find-window-root', async (event, title) => {
+  if (isMac || !/^[\w .-]{1,40}$/.test(String(title))) return 0;
+  const out = await runHelperJson(['title-root', String(title)]);
+  return Array.isArray(out.roots) && out.roots.length ? out.roots[0] : 0;
+});
+
 ipcMain.handle('get-sources', async () => {
   // Chromium leaves minimized windows out, and a game in exclusive fullscreen minimizes itself the
   // moment FrogShare is clicked. The helper's list brings them back (no picture) so the game can be picked.
@@ -735,11 +743,13 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
       stopAudioCapture();
     }
 
-    // 'system', 'system-except:<pid>' (all of the PC but that program) or an app's pid
-    const except = /^system-except:(\d+)$/.exec(String(pidOrMode));
+    // 'system', 'system-except:<pid>[,<pid>...]' (all of the PC but those programs) or an app's pid.
+    // One program out is Windows' own exclusion; more go through the helper's mix of everything else.
+    const except = /^system-except:(\d+(?:,\d+){0,7})$/.exec(String(pidOrMode));
     const args = pidOrMode === 'system'
       ? ['capture-system']
-      : except ? ['capture-exclude', except[1]] : ['capture', String(parseInt(pidOrMode, 10))];
+      : except ? (except[1].includes(',') ? ['capture-exclude-many', except[1]] : ['capture-exclude', except[1]])
+      : ['capture', String(parseInt(pidOrMode, 10))];
 
     const proc = spawn(AUDIO_CAPTURE_EXE, args);
     audioCaptureProcess = proc;
