@@ -76,14 +76,14 @@ Configure no painel do Render. **Nunca** coloque valores no código nem em commi
 ## Build
 
 - **Windows:** `npm run dist` gera o instalador NSIS (`dist/FrogShare Setup <versão>.exe`) e a versão portátil.
-- **macOS (Apple Silicon):** `npm run dist:mac` gera `dist/FrogShare-<versão>-arm64.dmg`.
-  - O som vem de `native/AudioCapture-mac` (Core Audio process taps, macOS 14.2+). Depois de mexer em `native/mac/AudioCapture.swift`, rode `npm run build:native:mac` e commite o binário.
+- **macOS (Apple Silicon):** o GitHub monta o `.dmg` sozinho a cada release publicada (`.github/workflows/mac-dmg.yml`, num Mac da nuvem): compila `native/mac/AudioCapture.swift`, gera `FrogShare-<versão>-arm64.dmg` e anexa na release, junto com uma cópia `FrogShare-mac.dmg`. Também dá para rodar à mão em Actions › Mac .dmg › Run workflow, com a tag (ex.: `v1.8.0`). Num Mac, `npm run build:native:mac` e `npm run dist:mac` fazem o mesmo localmente.
+  - O som vem do helper em Swift (Core Audio process taps, macOS 14.2+).
   - Sem conta Apple Developer, o app é assinado ad-hoc (`build/adhoc-sign.js`). Quem baixa precisa liberar em Ajustes do Sistema › Privacidade e Segurança › Abrir Mesmo Assim.
-  - Para aparecer o botão "Baixar para Mac" no site, preencha `macUrl` em `server/index.js`.
+  - O botão "Baixar para Mac" do site usa `macUrl` em `server/index.js`: aponte para o `.dmg` da release depois que o workflow terminar.
 
 ### Publicar uma versão
 
-1. Suba a versão em `package.json` e nas strings `app_version` (`src/main.js`, `public/js/host.js`, `server/public/js/room.js`) e gere o build.
+1. Suba a versão em `package.json` e nas strings `app_version` (`src/main.js`, `public/js/host.js`, `server/public/js/room.js`), gere o build e mande o código para o GitHub **antes** de criar a release: a tag nasce no último commit da `main`, e é dela que sai o `.dmg` do Mac.
 2. Crie a release `vX.Y.Z` no GitHub com o instalador `FrogShare Setup X.Y.Z.exe` (o GitHub o renomeia para `FrogShare.Setup.X.Y.Z.exe`) e uma cópia chamada `FrogShare-Setup.exe`. O botão do site aponta para `releases/latest/download/FrogShare-Setup.exe`, então ele passa a entregar a versão nova sozinho.
 3. Atualize `LATEST_APP` em `server/index.js` com `version`, o `url` do instalador dessa release, `size` e `sha512` (SHA-512 em base64). O atualizador do app recusa qualquer arquivo que não bata com esse hash.
 

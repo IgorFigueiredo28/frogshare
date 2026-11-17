@@ -132,8 +132,9 @@ const LATEST_APP = {
   // Exactly that file: the in-app updater refuses anything that doesn't match
   size: 112049586,
   sha512: '7rKg6Qju0bk+ZjAMcbZPvqAOVzIH6BpKRWNcdSfDU/83BlaYB83SKNNAx37/6LVY399L/67/gvX8cTWQjGkn8A==',
-  // Apple Silicon .dmg; the site hides its download button while this is null
-  macUrl: 'https://drive.usercontent.google.com/download?id=17eAsGhGXXWTauVKpL8l7T2Xkyvn_wr-E&export=download'
+  // Apple Silicon .dmg, built for this version by .github/workflows/mac-dmg.yml and attached to its release
+  // (set it once that run is green). The site hides its download button while this is null.
+  macUrl: 'https://github.com/IgorFigueiredo28/frogshare/releases/download/v1.8.0/FrogShare-1.8.0-arm64.dmg'
 };
 
 function versionOlder(a, b) {
