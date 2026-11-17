@@ -1,0 +1,61 @@
+# The Mac app (Apple Silicon) can only be built on a Mac: every published release gets its .dmg built
+# here from the same code, with the Swift sound helper compiled fresh, and attached to the release next
+# to the Windows installer. FrogShare-mac.dmg is a copy under a fixed name for the site's download link.
+# Can also be run by hand for an existing release: Actions > Mac .dmg > Run workflow > tag (v1.8.0).
+name: Mac .dmg
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach the .dmg to (for example v1.8.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Sound helper (Swift, Core Audio process taps)
+        run: |
+          npm run build:native:mac
+          file native/AudioCapture-mac
+          # Answers its protocol: an unknown command is a JSON error, not a crash
+          OUT=$(./native/AudioCapture-mac nothing 2>&1 || true)
+          echo "$OUT"
+          echo "$OUT" | grep -q '"error"'
+
+      - name: Build the .dmg (ad-hoc signed, see build/adhoc-sign.js)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac dmg --arm64 --publish never
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          DMG=$(ls dist/*.dmg | head -n 1)
+          test -f "$DMG"
+          cp "$DMG" dist/FrogShare-mac.dmg
+          gh release upload "$TAG" "$DMG" dist/FrogShare-mac.dmg --clobber --repo "$GITHUB_REPOSITORY"
+          shasum -a 512 "$DMG" dist/FrogShare-mac.dmg

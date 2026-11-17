@@ -19,7 +19,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: { ...(context || {}), capture: captureModeLabel },
         room_id: roomId,
-        app_version: '1.7.3',
+        app_version: '1.8.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -678,8 +678,9 @@ async function ensureRoom() {
     }
   });
 
-  socket.on('viewer-needs-p2p', async ({ viewerId }) => {
+  socket.on('viewer-needs-p2p', async ({ viewerId, reason }) => {
     if (!isStreaming || !localStream) return;
+    noteSfuDecodeFailure(viewerId, reason);
     // Its direct connection from before the switch may still be live: keep it rather than renegotiate
     const existing = peerConnections.get(viewerId);
     if (existing && existing.connectionState === 'connected') {
@@ -738,11 +739,22 @@ const QUALITY_KEY = 'ss-quality';
 const quality = { res: '1080', fps: 60 };
 try { Object.assign(quality, JSON.parse(localStorage.getItem(QUALITY_KEY)) || {}); } catch {}
 
+// The preset is a 16:9 box the picture fits in, whatever its shape. Capping only the height sent an
+// ultrawide 2560x1080 whole at "1080p": 16.6 Mbps, more than an RX 590's encoder kept up with (it fell to
+// 640x270 on the CPU and looped). In the box it goes as 1920x810.
+const PRESET_BOX = { 720: [1280, 720], 1080: [1920, 1080] };
 function targetSize(w, h) {
-  const maxH = quality.res === 'native' ? h : Math.min(h, parseInt(quality.res, 10));
-  if (maxH >= h) return { w, h };
-  return { w: Math.round((w * maxH / h) / 2) * 2, h: Math.round(maxH / 2) * 2 };
+  const box = PRESET_BOX[quality.res];
+  if (!box || !w || !h) return { w, h };
+  const s = Math.min(1, box[0] / w, box[1] / h);
+  if (s >= 1) return { w, h };
+  return { w: Math.round(w * s / 2) * 2, h: Math.round(h * s / 2) * 2 };
 }
+
+// The fps in use: the preset's, or 30 while the PC can't keep up with 60 (see "Load" below)
+const autoFps = { active: false, overTicks: 0, retryAt: 0, backoffMs: 3 * 60000, lastOffAt: 0 };
+const effFps = () => (autoFps.active ? Math.min(30, quality.fps) : quality.fps);
+const workerQuality = () => ({ ...quality, fps: effFps() });
 
 // Bits per pixel for fast-moving game content on H264; at 30fps each frame needs more bits
 function presetBitrate() {
@@ -752,8 +764,9 @@ function presetBitrate() {
   );
   // Bits per pixel per frame. At 0.075 (9.3 Mbps for 1080p60) the encoder sat at the cap in nearly
   // every session, so fast motion in games turned to blocks; 0.1 gives 1080p60 12.4 Mbps.
-  const bpp = quality.fps > 30 ? 0.1 : 0.13;
-  return Math.round(Math.min(25e6, Math.max(3e6, w * h * quality.fps * bpp)));
+  const fps = effFps();
+  const bpp = fps > 30 ? 0.1 : 0.13;
+  return Math.round(Math.min(25e6, Math.max(3e6, w * h * fps * bpp)));
 }
 
 const qualityHint = document.getElementById('quality-hint');
@@ -762,7 +775,9 @@ function renderQualityControls() {
   document.querySelectorAll('input[name="q-res"]').forEach(r => { r.checked = r.value === quality.res; });
   document.querySelectorAll('input[name="q-fps"]').forEach(r => { r.checked = Number(r.value) === quality.fps; });
   const mbps = (presetBitrate() / 1e6).toFixed(0);
-  qualityHint.textContent = `até ~${mbps} Mbps de upload por pessoa`;
+  qualityHint.textContent = autoFps.active
+    ? `Em 30 fps por enquanto: o PC está ocupado com o jogo e assim a imagem fica estável. Volta a 60 sozinho.`
+    : `até ~${mbps} Mbps de upload por pessoa`;
 }
 
 document.querySelectorAll('input[name="q-res"], input[name="q-fps"]').forEach(input => {
@@ -771,9 +786,11 @@ document.querySelectorAll('input[name="q-res"], input[name="q-fps"]').forEach(in
     else quality.fps = Number(input.value);
     try { localStorage.setItem(QUALITY_KEY, JSON.stringify(quality)); } catch {}
     const videoTrack = localStream?.getVideoTracks()[0];
-    videoTrack?.pipelineWorker?.postMessage({ quality: { ...quality } });
+    // A choice made by hand starts over at the preset
+    if (input.name === 'q-fps') Object.assign(autoFps, { active: false, overTicks: 0, backoffMs: 3 * 60000 });
+    videoTrack?.pipelineWorker?.postMessage({ quality: workerQuality() });
     const source = videoTrack?.sourceTrack;
-    if (source) await source.applyConstraints({ frameRate: { ideal: quality.fps, max: quality.fps } }).catch(() => {});
+    if (source) await source.applyConstraints({ frameRate: { ideal: effFps(), max: effFps() } }).catch(() => {});
     renderQualityControls();
     applySenderLimits();
   });
@@ -785,7 +802,7 @@ async function captureVideo(sourceId) {
   const stream = await navigator.mediaDevices.getDisplayMedia({
     // Keeps the mouse out of the stream, so a fullscreen game shows only its own crosshair. Electron 33
     // ignored this and drew the cursor; 44 honours it for both window and screen capture (measured).
-    video: { cursor: 'never', frameRate: { ideal: quality.fps, max: quality.fps } },
+    video: { cursor: 'never', frameRate: { ideal: effFps(), max: effFps() } },
     audio: false
   });
   const source = stream.getVideoTracks()[0];
@@ -834,7 +851,7 @@ function createPacer(writer) {
     pumping = true;
     try {
       while (queue.length) {
-        const slot = 1000 / quality.fps;
+        const slot = 1000 / effFps();
         // Drain faster when frames are piling up so the queue never becomes standing latency
         const gap = queue.length > 2 ? Math.min(slot * 0.9, Math.max(10, slot * 0.5)) : slot * 0.9;
         const now = performance.now();
@@ -877,6 +894,7 @@ function createPacer(writer) {
 // lives here and can keep releasing frames on time. (A pacer on the stalled thread gained nothing.)
 const PIPELINE_WORKER = `
 let quality = { res: '1080', fps: 60 };
+const PRESET_BOX = { 720: [1280, 720], 1080: [1920, 1080] };
 // "Já volto": drawn instead of the screen while the streamer took a quick pause
 let away = false, card = null;
 // The streamer's camera over the picture: the newest frame, replaced as the next one arrives.
@@ -886,9 +904,11 @@ let camFrame = null, camLayout = null, camReader = null, camRect = null;
 // Output: the screen frame last drawn (kept while the camera is on, to redraw it under a new camera frame)
 let canvas = null, ctx = null, lastScreen = null, lastScreenAt = 0, lastOutAt = 0, lastOutTs = -Infinity;
 function targetSize(w, h) {
-  const maxH = quality.res === 'native' ? h : Math.min(h, parseInt(quality.res, 10));
-  if (maxH >= h) return { w, h };
-  return { w: Math.round((w * maxH / h) / 2) * 2, h: Math.round(maxH / 2) * 2 };
+  const box = PRESET_BOX[quality.res];
+  if (!box || !w || !h) return { w, h };
+  const s = Math.min(1, box[0] / w, box[1] / h);
+  if (s >= 1) return { w, h };
+  return { w: Math.round(w * s / 2) * 2, h: Math.round(h * s / 2) * 2 };
 }
 function stopCam() {
   if (camReader) { camReader.cancel().catch(() => {}); camReader = null; }
@@ -1062,7 +1082,7 @@ function gpuBackedTrack(source) {
 
   const settings = source.getSettings();
   worker.postMessage(
-    { readable: processor.readable, quality: { ...quality }, width: settings.width, height: settings.height },
+    { readable: processor.readable, quality: workerQuality(), width: settings.width, height: settings.height },
     [processor.readable]
   );
   // A new capture (another window, the source coming back) gets the camera and the away card again
@@ -1513,8 +1533,23 @@ const sfu = {
   active: false, starting: false, pc: null, startingPc: null, sessionId: null, tracks: [],
   cooldownUntil: 0, lowSince: 0, enabled: false, checkedAt: 0,
   // After a link that never sent a frame: publish as plain baseline (see watchSfuSilence)
-  plainProfile: false, silentFailures: 0
+  plainProfile: false, silentFailures: 0,
+  // Viewers whose decoder couldn't take this link's picture (the hardware "Main" trick)
+  decodeFails: new Set()
 };
+
+// One viewer that can't decode the "Main" picture gets a direct link (two GPU encodes are still lighter
+// than one on the CPU). A second one on the same link means it's not a one-off: publish again as plain
+// baseline, which every decoder takes, and keep it so for the rest of this stream.
+function noteSfuDecodeFailure(viewerId, reason) {
+  if (reason !== 'decode' || !sfu.active || sfu.plainProfile) return;
+  sfu.decodeFails.add(viewerId);
+  if (sfu.decodeFails.size < 2) return;
+  reportError('SFU picture not decoding for 2 viewers, republishing as baseline', null, { viewers: roomViewerCount });
+  sfu.plainProfile = true;
+  sfu.cooldownUntil = Date.now() + 20000;
+  stopSfu();
+}
 let roomViewerCount = 0;
 
 // Every connection that carries our picture, the media server's included while it's still connecting:
@@ -1619,6 +1654,7 @@ async function startSfu() {
     sfu.tracks = published.map(p => p.trackName);
     sfu.active = true;
     sfu.lowSince = 0;
+    sfu.decodeFails.clear();
     sfuWatch.healedAt = 0;
     // And what's on air right now, in case it changed before the link could take part in a switch
     for (const p of published) {
@@ -1739,7 +1775,7 @@ function lowScale(viewerId) {
   const h = pipe.outH || 1080;
   return h > 540 ? +(h / 540).toFixed(3) : 1;
 }
-const viewerFps = (viewerId) => (lowViewers.has(viewerId) ? Math.min(30, quality.fps) : quality.fps);
+const viewerFps = (viewerId) => (lowViewers.has(viewerId) ? Math.min(30, effFps()) : effFps());
 
 function viewerBitrateCap(viewerId) {
   const preset = presetBitrate();
@@ -1756,7 +1792,7 @@ function applySenderLimits() {
     // The SFU link carries the one copy everybody watches, so it always gets the full preset
     const isSfu = pc === sfu.pc;
     const cap = isSfu ? presetBitrate() : viewerBitrateCap(viewerId);
-    const fps = isSfu ? quality.fps : viewerFps(viewerId);
+    const fps = isSfu ? effFps() : viewerFps(viewerId);
     const scale = isSfu ? 1 : lowScale(viewerId);
     const sender = pc.getSenders().find(s => s.track?.kind === 'video');
     if (!sender) continue;
@@ -1825,20 +1861,69 @@ function updateUploadBudget(samples, captureSteady) {
 // the software encoder (OpenH264) and keeps it there for good, even after things recover: viewers got
 // 320x180 at 7 fps until someone reconnected. While the GPU encoder works here, rebuild just that link
 // (the viewer swaps to the new one on its own). Not during the standby card, which is software on purpose.
-const encoderHeal = { gpuSeen: false, softTicks: new Map(), lastAt: new Map() };
+const encoderHeal = { gpuSeen: false, softTicks: new Map(), lastAt: new Map(), count: new Map() };
 function healStuckEncoders(samples) {
   if (samples.some(s => s.gpu)) encoderHeal.gpuSeen = true;
   for (const s of samples) {
-    const stuck = encoderHeal.gpuSeen && !s.gpu && !s.idle && !standby.active && s.ageMs > 15000 && /openh264/i.test(s.enc || '');
+    // A link the network holds down would only fall back again on a new one
+    // A plain baseline media server link may be on the CPU on purpose (see watchSfuSilence)
+    const stuck = encoderHeal.gpuSeen && !s.gpu && !s.idle && !standby.active && !(s.sfu && sfu.plainProfile)
+      && s.ageMs > 15000 && s.limit !== 'bandwidth' && /openh264/i.test(s.enc || '');
     const ticks = stuck ? (encoderHeal.softTicks.get(s.id) || 0) + 1 : 0;
     encoderHeal.softTicks.set(s.id, ticks);
-    if (ticks < 3 || Date.now() - (encoderHeal.lastAt.get(s.id) || 0) < 60000) continue;
+    // Each rebuild of the same link waits twice as long as the one before (1, 2, 4, 8, 15 min): an RX 590
+    // fell back right after every rebuild and was rebuilt every minute for an hour
+    const count = encoderHeal.count.get(s.id) || 0;
+    if (ticks < 3 || Date.now() - (encoderHeal.lastAt.get(s.id) || 0) < Math.min(15 * 60000, 60000 * 2 ** count)) continue;
+    encoderHeal.count.set(s.id, count + 1);
     encoderHeal.lastAt.set(s.id, Date.now());
     encoderHeal.softTicks.set(s.id, 0);
     reportError('Encoder stuck on software, rebuilding link', null, { viewer: s.viewer, sfu: s.sfu, res: s.res, kbps: Math.round(s.targetBitrate / 1000) });
     if (s.sfu) stopSfu(); // the next stats pass publishes again on a fresh connection
     else createOfferForViewer(s.id).catch(() => {});
   }
+}
+
+// ======== Load: 30 fps while the PC can't keep up with 60 ========
+// With a game holding the GPU (and a recorder like Medal on the same encoder), 60 fps went out as an
+// uneven 35-45 with frames thrown away on the way, which viewers see as stutter. A steady 30 looks smoother
+// and halves this app's work (redraw and encode). It tries 60 again a few minutes later; struggling again
+// right away keeps it at 30 longer each time (3, 6, 12 ... 30 min).
+let loadPipe = { outFrames: 0, pacerDropped: 0, at: 0 };
+function updateAutoFps(samples) {
+  const now = performance.now();
+  const secs = loadPipe.at ? (now - loadPipe.at) / 1000 : 0;
+  const outFps = secs ? (pipe.outFrames - loadPipe.outFrames) / secs : 0;
+  const dropped = secs ? (pipe.pacerDropped - loadPipe.pacerDropped) / secs : 0;
+  loadPipe = { outFrames: pipe.outFrames, pacerDropped: pipe.pacerDropped, at: now };
+  // Links capped at 30 on purpose ("Economizar dados") say nothing about the PC
+  const links = samples.filter(s => !s.idle && s.ageMs > 10000 && !lowViewers.has(s.id));
+  if (!secs || quality.fps <= 30 || standby.active || privacyAway() || !links.length) { autoFps.overTicks = 0; return; }
+  if (autoFps.active) {
+    if (Date.now() >= autoFps.retryAt) setAutoFps(false);
+    return;
+  }
+  // Frames the pipeline made that the encoder never sent, the pacer had to throw away, or an encoder
+  // that says the processor is what holds it back
+  const sent = Math.max(...links.map(s => s.fps || 0));
+  const struggling = outFps >= 40 && (dropped > 3 || sent < outFps * 0.75 || links.some(s => s.limit === 'cpu'));
+  autoFps.overTicks = struggling ? autoFps.overTicks + 1 : 0;
+  if (autoFps.overTicks >= 5) setAutoFps(true);
+}
+function setAutoFps(on) {
+  autoFps.active = on;
+  autoFps.overTicks = 0;
+  if (on) {
+    autoFps.backoffMs = Date.now() - autoFps.lastOffAt < 90000 ? Math.min(30 * 60000, autoFps.backoffMs * 2) : 3 * 60000;
+    autoFps.retryAt = Date.now() + autoFps.backoffMs;
+  } else {
+    autoFps.lastOffAt = Date.now();
+  }
+  const track = localStream?.getVideoTracks()[0];
+  track?.pipelineWorker?.postMessage({ quality: workerQuality() });
+  track?.sourceTrack?.applyConstraints({ frameRate: { ideal: effFps(), max: effFps() } }).catch(() => {});
+  applySenderLimits();
+  renderQualityControls();
 }
 
 // ======== Stats ========
@@ -1942,10 +2027,11 @@ function startStatsUpdate() {
       const kbps = samples.map(x => (x.targetBitrate / 1e6).toFixed(1)).join('/');
       const mode = sfu.active ? 'servidor (SFU)' : 'direto';
       streamStatsEl.textContent =
-        `${s.res} @ ${s.fps}fps | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${mode} | ${roomViewerCount} viewer(s)`;
+        `${s.res} @ ${s.fps}fps${autoFps.active ? ' ~auto' : ''} | ${s.gpu ? 'GPU' : 'CPU'} | ${kbps} Mbps | ${mode} | ${roomViewerCount} viewer(s)`;
     }
     updateUploadBudget(samples.filter(x => !x.sfu && !x.idle), captureSteadySinceLastTick() && !standby.active);
     healStuckEncoders(samples);
+    updateAutoFps(samples);
     await watchSfuSilence(samples);
     updateSfuMode();
     if (statsTicks % 3 === 0) reportHealth(samples);
@@ -1987,13 +2073,14 @@ async function reportQuality(samples, pipeline) {
     gpu: health?.gpu || null,
     roomViewers: roomViewerCount,
     preset: `${quality.res}p${quality.fps}`,
+    autoFps: autoFps.active,
     share: share.mode,
     budgetKbps: share.budget === Infinity ? null : Math.round(share.budget / 1000)
   };
   getSignalUrl().then(url => fetch(`${url}/api/errors`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.3', user_agent: navigator.userAgent })
+    body: JSON.stringify({ source: 'host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.8.0', user_agent: navigator.userAgent })
   })).catch(() => {});
 }
 
@@ -2434,11 +2521,25 @@ async function wantedRoots() {
   return roots;
 }
 
+// On macOS a process tap leaves out the audio processes an app has when the capture starts; one it opens
+// later (Discord joining a call) would slip in. So the check below also notices such an app starting to
+// play, which restarts the capture with it left out. Windows leaves out the whole program tree by itself.
+let excludeIsMac = false;
+let excludeAudioSeen = '';
+async function excludedPlaying(roots) {
+  if (!excludeIsMac || !Object.keys(roots).length) return '';
+  const { sessions } = await window.electronAPI.listAudioSessions().catch(() => ({}));
+  const pids = new Set((sessions || []).map(s => s.pid));
+  return Object.entries(roots).filter(([, pid]) => pids.has(pid)).map(([key]) => key).sort().join(',');
+}
+
 // What to ask the capture helper for when "Todo o PC" is picked
 async function systemAudioTarget() {
   excludedRoots = {};
+  excludeAudioSeen = '';
   if (!excludeSupported) return 'system';
   excludedRoots = await wantedRoots();
+  excludeAudioSeen = await excludedPlaying(excludedRoots);
   renderExcludeDiscord();
   const pids = Object.values(excludedRoots);
   return pids.length ? `system-except:${pids.join(',')}` : 'system';
@@ -2487,7 +2588,9 @@ setInterval(async () => {
   try {
     const roots = await wantedRoots();
     renderExcludeDiscord();
-    const changed = JSON.stringify(roots) !== JSON.stringify(excludedRoots);
+    const liveNow = isStreaming && liveAudio === 'system';
+    const changed = JSON.stringify(roots) !== JSON.stringify(excludedRoots)
+      || (liveNow && (await excludedPlaying(roots)) !== excludeAudioSeen);
     if (changed && isStreaming && liveAudio === 'system') await switchAudio('system', '', { quiet: true });
   } finally {
     excludeWatchBusy = false;
@@ -2495,8 +2598,9 @@ setInterval(async () => {
 }, 8000);
 
 window.electronAPI.getPlatform().then(async p => {
-  // Process loopback (and so leaving programs out) exists on Windows only
-  excludeSupported = p === 'win32' && typeof window.electronAPI.findAppRoot === 'function';
+  // Windows process loopback and macOS process taps (14.2+) can both leave programs out
+  excludeIsMac = p === 'darwin';
+  excludeSupported = (p === 'win32' || p === 'darwin') && typeof window.electronAPI.findAppRoot === 'function';
   if (excludeSupported) await wantedRoots();
   renderExcludeDiscord();
 });
@@ -2905,6 +3009,7 @@ const lockToggle = document.getElementById('lock-toggle');
 let viewerList = [];
 let viewerListPrimed = false;
 let roomLocked = false;
+let kickConfirm = { id: null, until: 0 };
 // How long someone removed stays out (the owner's pick, remembered), and how many are out right now
 const KICK_TIME_KEY = 'fs-kick-minutes';
 const kickTime = document.getElementById('kick-time');
@@ -2930,20 +3035,23 @@ function renderViewerList() {
   const items = shown.map(v => {
     const li = document.createElement('li');
     li.append(Object.assign(document.createElement('span'), { className: 'viewer-name', textContent: v.name, title: v.name }));
-    // Only the room's owner removes people; two clicks, so a slip of the mouse doesn't
+    // Only the room's owner removes people; two clicks, so a slip of the mouse doesn't. The pending
+    // confirmation survives the list being redrawn (someone arriving or leaving in between).
     if (owner) {
+      const confirming = kickConfirm.id === v.id && Date.now() < kickConfirm.until;
       const kick = document.createElement('button');
       kick.type = 'button';
-      kick.className = 'btn btn-ghost viewer-kick';
-      kick.textContent = 'Expulsar';
+      kick.className = 'btn btn-ghost viewer-kick' + (confirming ? ' confirm' : '');
+      kick.textContent = confirming ? 'Expulsar mesmo?' : 'Expulsar';
       kick.title = `Expulsar ${v.name} da sala`;
       kick.addEventListener('click', () => {
-        if (!kick.classList.contains('confirm')) {
-          kick.classList.add('confirm');
-          kick.textContent = 'Expulsar mesmo?';
-          setTimeout(() => { kick.classList.remove('confirm'); kick.textContent = 'Expulsar'; }, 3500);
+        if (!(kickConfirm.id === v.id && Date.now() < kickConfirm.until)) {
+          kickConfirm = { id: v.id, until: Date.now() + 3500 };
+          renderViewerList();
+          setTimeout(() => { if (kickConfirm.id === v.id && Date.now() >= kickConfirm.until) renderViewerList(); }, 3600);
           return;
         }
+        kickConfirm = { id: null, until: 0 };
         socket?.emit('kick-viewer', { viewerId: v.id, minutes: Number(kickTime.value) });
         showToast(`${v.name} foi expulso da sala e fica fora por ${kickTime.selectedOptions[0].textContent}. Para ninguém novo entrar, tranque a sala.`);
       });
@@ -3003,7 +3111,7 @@ function reportHealth(samples) {
   if (fps == null) return;
   const limits = samples.filter(s => !s.idle).map(s => s.limit).filter(l => l && l !== 'none');
   const limit = limits.includes('cpu') ? 'cpu' : limits.includes('bandwidth') ? 'bandwidth' : limits.length ? 'other' : 'none';
-  socket.emit('host-health', { fps: Math.round(fps), target: quality.fps, limit, away: privacyAway() || standby.active });
+  socket.emit('host-health', { fps: Math.round(fps), target: effFps(), limit, away: privacyAway() || standby.active });
 }
 
 // ======== Privacy: the quick pause ========
@@ -3023,6 +3131,11 @@ try {
   const savedHotkey = localStorage.getItem(HOTKEY_KEY);
   if (savedHotkey !== null && [...hotkeySelect.options].some(o => o.value === savedHotkey)) hotkeySelect.value = savedHotkey;
 } catch {}
+// "CommandOrControl" is ⌘ on a Mac, and Alt is ⌥ there: the labels say what to press
+const IS_MAC_HOST = /Macintosh|Mac OS X/.test(navigator.userAgent);
+if (IS_MAC_HOST) {
+  for (const o of hotkeySelect.options) o.textContent = o.textContent.replace('Ctrl', '⌘').replace('Alt', '⌥');
+}
 
 const privacyAway = () => privacy.manual;
 const currentWorker = () => localStream?.getVideoTracks()[0]?.pipelineWorker || null;
@@ -3062,7 +3175,7 @@ function setAway() {
   renderPrivacy();
   window.electronAPI.setAway?.(privacyAway());
   // Viewers hear about it at once: a still card mustn't read as a frozen stream
-  if (socket?.connected && isStreaming) socket.emit('host-health', { fps: null, target: quality.fps, limit: 'none', away: privacyAway() || standby.active });
+  if (socket?.connected && isStreaming) socket.emit('host-health', { fps: null, target: effFps(), limit: 'none', away: privacyAway() || standby.active });
 }
 
 function renderPrivacy() {
@@ -3210,7 +3323,9 @@ async function openCamera() {
 }
 function camError(err) {
   camNote.textContent = err.name === 'NotAllowedError'
-    ? 'O Windows bloqueou a câmera. Libere em Configurações > Privacidade e segurança > Câmera.'
+    ? (IS_MAC_HOST
+      ? 'O macOS bloqueou a câmera. Libere em Ajustes do Sistema > Privacidade e Segurança > Câmera e abra o FrogShare de novo.'
+      : 'O Windows bloqueou a câmera. Libere em Configurações > Privacidade e segurança > Câmera.')
     : err.name === 'NotReadableError' ? 'A câmera está sendo usada por outro programa.' : 'Não deu para abrir a câmera: ' + err.message;
 }
 async function startCam() {
@@ -3362,6 +3477,8 @@ if (cam.enabled) loadCamDevices();
 
 // ======== Live extras on and off ========
 function startLiveExtras() {
+  Object.assign(autoFps, { active: false, overTicks: 0, backoffMs: 3 * 60000, lastOffAt: 0 });
+  loadPipe = { outFrames: pipe.outFrames, pacerDropped: pipe.pacerDropped, at: 0 };
   reactionCounts.clear();
   renderReactions();
   lowViewers.clear();

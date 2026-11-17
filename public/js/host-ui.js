@@ -26,7 +26,7 @@
       return;
     }
     const [video, encoder, rate, mode] = parts;
-    facts.video.textContent = video.replace('@', '·').replace('fps', ' fps');
+    facts.video.textContent = video.replace(' ~auto', '').replace('@', '·').replace('fps', ' fps') + (video.includes('~auto') ? ' (automático: o PC está ocupado com o jogo)' : '');
     facts.encoder.textContent = encoder === 'GPU' ? 'Placa de vídeo (leve)' : 'Processador (pesado)';
     facts.encoder.dataset.tone = encoder === 'GPU' ? 'ok' : 'warn';
     facts.rate.textContent = rate.replace('Mbps', ' Mbps').replace(/\s+/g, ' ') + (rate.includes('/') ? ' por pessoa' : '');

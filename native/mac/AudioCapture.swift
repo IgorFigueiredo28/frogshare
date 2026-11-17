@@ -2,6 +2,8 @@
 //   list            -> stderr {"sessions":[{"pid","name","state"}]}
 //   capture <pid>   -> stderr {"started":true,...}, stdout [uint32 LE length][float32 interleaved PCM]
 //   capture-system  -> same, everything except FrogShare itself
+//   capture-exclude <pid>[,<pid>...] -> same, also without those apps (Discord, FrogPad: friends already hear them)
+//   window-owner <windowId> -> stderr {"pid","name"} of the app a window belongs to (or {})
 //   gpu-priority    -> no-op (no macOS equivalent)
 //   audio-permission [request] -> stderr {"status":"granted"|"denied"|"not-determined"|"unsupported"}
 // "stop" or EOF on stdin ends a capture. Process taps need macOS 14.2+.
@@ -146,15 +148,16 @@ final class TapCapture {
   let queue = DispatchQueue(label: "frogshare.audio", qos: .userInteractive)
   var scratch = [Float]()
 
-  func start(pid: pid_t?) {
+  func start(pid: pid_t?, excluding: Set<pid_t> = []) {
     let description: CATapDescription
     if let pid {
       let objects = audioProcesses().filter { $0.pid == pid || $0.owner == pid }.map(\.object)
       guard !objects.isEmpty else { fail("Esse app não está mais tocando som (PID \(pid))") }
       description = CATapDescription(stereoMixdownOfProcesses: objects)
     } else {
-      let own = audioProcesses().filter { isOwnProcess($0.pid) }.map(\.object)
-      description = CATapDescription(stereoGlobalTapButExcludeProcesses: own)
+      // Everything but FrogShare, and but the apps asked out along with all their helper processes
+      let out = audioProcesses().filter { isOwnProcess($0.pid) || excluding.contains($0.pid) || excluding.contains($0.owner) }.map(\.object)
+      description = CATapDescription(stereoGlobalTapButExcludeProcesses: out)
     }
     description.name = "FrogShare"
     description.isPrivate = true
@@ -199,7 +202,7 @@ final class TapCapture {
     guard status == noErr else { cleanup(); fail("Não deu para iniciar a captura (\(status))") }
 
     var info: [String: Any] = ["started": true, "sampleRate": Int(format.mSampleRate), "channels": channels,
-                               "bitsPerSample": 32, "mode": pid == nil ? "system" : "process"]
+                               "bitsPerSample": 32, "mode": pid != nil ? "process" : excluding.isEmpty ? "system" : "system-except"]
     if let pid { info["pid"] = Int(pid) }
     writeJson(info)
   }
@@ -289,15 +292,28 @@ case "audio-permission":
 case "list":
   guard #available(macOS 14.2, *) else { fail("Escolher o som de um app exige macOS 14.2 ou mais novo") }
   listSessions()
-case "capture", "capture-system":
+case "window-owner":
+  // A window's id as Electron gives it ("window:<id>:0"); the app behind it names the game and its sound
+  guard let raw = args.dropFirst().first, let wid = UInt32(raw) else { writeJson([:]); break }
+  let windows = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(wid)) as? [[String: Any]] ?? []
+  guard let entry = windows.first, let owner = entry[kCGWindowOwnerPID as String] as? Int, owner > 0 else { writeJson([:]); break }
+  let name = NSRunningApplication(processIdentifier: pid_t(owner))?.localizedName
+    ?? (entry[kCGWindowOwnerName as String] as? String) ?? ""
+  writeJson(["pid": owner, "name": name])
+case "capture", "capture-system", "capture-exclude":
   guard #available(macOS 14.2, *) else { fail("Capturar som exige macOS 14.2 ou mais novo") }
   var pid: pid_t?
+  var excluding = Set<pid_t>()
   if command == "capture" {
     guard let raw = args.dropFirst().first, let p = pid_t(raw), p > 0 else { fail("PID inválido") }
     pid = p
+  } else if command == "capture-exclude" {
+    let raw = args.dropFirst().first ?? ""
+    excluding = Set(raw.split(separator: ",").compactMap { pid_t($0) }.filter { $0 > 0 })
+    guard !excluding.isEmpty else { fail("PID inválido") }
   }
   let capture = TapCapture()
-  capture.start(pid: pid)
+  capture.start(pid: pid, excluding: excluding)
   Thread {
     while let line = readLine() {
       if line.trimmingCharacters(in: .whitespaces) == "stop" { break }

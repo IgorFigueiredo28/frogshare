@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { createServer } = require('./server');
 
 const isDev = !app.isPackaged;
@@ -27,7 +27,7 @@ function reportMainError(message, stack, context) {
         message: String(message).slice(0, 2000),
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
-        app_version: '1.7.3'
+        app_version: '1.8.0'
       })
     }).catch(() => {});
   } catch {}
@@ -601,21 +601,33 @@ ipcMain.handle('get-window-state', async (event, sourceId) => {
   return { exists: !!entry, minimized: !!entry && entry.endsWith('m') };
 });
 
-// The program behind a window ("window:<hwnd>:0"), so the page can pre-pick its sound. Windows only.
+// The program behind a window ("window:<hwnd>:0" on Windows, "window:<CGWindowID>:0" on macOS), so the
+// page can pre-pick its sound and name the game
 ipcMain.handle('get-window-owner', async (event, sourceId) => {
-  const hwnd = /^window:(\d+):/.exec(String(sourceId))?.[1];
-  if (isMac || !hwnd) return null;
-  const owner = await runHelperJson(['window-owner', hwnd]);
+  const id = /^window:(\d+):/.exec(String(sourceId))?.[1];
+  if (!id) return null;
+  const owner = await runHelperJson(['window-owner', id]);
   return owner.pid ? owner : null;
 });
 
 // The top process of a program (Discord runs as several Discord.exe), to leave its sound out of
-// "all of the PC". Windows only; 0 when it isn't running.
+// "all of the PC"; 0 when it isn't running. On macOS the app's main process, which Core Audio counts
+// its helpers under ("Discord.exe" -> the process named "Discord").
 ipcMain.handle('find-app-root', async (event, exeName) => {
-  if (isMac || !/^[\w .-]{1,64}\.exe$/i.test(String(exeName))) return 0;
+  if (!/^[\w .-]{1,64}\.exe$/i.test(String(exeName))) return 0;
+  if (isMac) return macAppPid(String(exeName).replace(/\.exe$/i, ''));
   const out = await runHelperJson(['proc-root', exeName]);
   return Array.isArray(out.roots) && out.roots.length ? out.roots[0] : 0;
 });
+
+function macAppPid(name) {
+  return new Promise((resolve) => {
+    execFile('pgrep', ['-x', name], { timeout: 3000 }, (err, stdout) => {
+      const pid = parseInt(String(stdout || '').split('\n')[0], 10);
+      resolve(Number.isFinite(pid) && pid > 0 ? pid : 0);
+    });
+  });
+}
 
 // The same, by the title of the program's window, for one that doesn't run under its own name (an
 // Electron app started from its project runs as electron.exe). Windows only; 0 when it isn't open.
@@ -744,11 +756,12 @@ ipcMain.handle('start-audio-capture', (event, pidOrMode) => {
     }
 
     // 'system', 'system-except:<pid>[,<pid>...]' (all of the PC but those programs) or an app's pid.
-    // One program out is Windows' own exclusion; more go through the helper's mix of everything else.
+    // On Windows one program out is the system's own exclusion and more go through the helper's mix of
+    // everything else; a macOS process tap leaves out any number by itself.
     const except = /^system-except:(\d+(?:,\d+){0,7})$/.exec(String(pidOrMode));
     const args = pidOrMode === 'system'
       ? ['capture-system']
-      : except ? (except[1].includes(',') ? ['capture-exclude-many', except[1]] : ['capture-exclude', except[1]])
+      : except ? (except[1].includes(',') && !isMac ? ['capture-exclude-many', except[1]] : ['capture-exclude', except[1]])
       : ['capture', String(parseInt(pidOrMode, 10))];
 
     const proc = spawn(AUDIO_CAPTURE_EXE, args);

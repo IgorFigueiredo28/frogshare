@@ -281,6 +281,88 @@ app.whenReady().then(async () => {
     })()`);
     check('tela parada no servidor de mídia não conta como falha', quiet);
 
+    // Two viewers whose decoder can't take the media server's "Main" picture: publish again as baseline
+    const decode = await evalApp(`(async () => {
+      const pc = new RTCPeerConnection();
+      Object.assign(sfu, { pc, active: true, sessionId: 'teste3', plainProfile: false, cooldownUntil: 0 });
+      sfu.decodeFails.clear();
+      noteSfuDecodeFailure('a', 'decode');
+      noteSfuDecodeFailure('a', 'decode');
+      const afterOne = sfu.active && !sfu.plainProfile;
+      noteSfuDecodeFailure('b', 'decode');
+      const out = { afterOne, afterTwo: !sfu.active && sfu.plainProfile && sfu.cooldownUntil > Date.now() };
+      // ...and a plain link on the CPU is on purpose, not an encoder to rebuild
+      let stopped = 0;
+      const realStop = window.stopSfu;
+      window.stopSfu = () => { stopped++; };
+      Object.assign(sfu, { active: true, pc });
+      encoderHeal.gpuSeen = true;
+      for (let i = 0; i < 4; i++) healStuckEncoders([{ id: 'sfu', sfu: true, idle: false, gpu: false, ageMs: 60000, limit: 'none', enc: 'OpenH264', targetBitrate: 3e6, res: '1920x1080' }]);
+      window.stopSfu = realStop;
+      out.plainLeftAlone = stopped === 0;
+      Object.assign(sfu, { active: false, pc: null, plainProfile: false, cooldownUntil: 0 });
+      pc.close();
+      return out;
+    })()`);
+    check('servidor de mídia: dois que não decodificam trazem o perfil simples (um só vai direto)', decode.afterOne && decode.afterTwo, JSON.stringify(decode));
+    check('perfil simples no processador não é tratado como codificador travado', decode.plainLeftAlone, JSON.stringify(decode));
+
+    // A link stuck on the software encoder: rebuilt after a minute, then 2, 4... and never for a network that's the limit
+    const heal = await evalApp(`(async () => {
+      let calls = 0;
+      const realOffer = window.createOfferForViewer;
+      window.createOfferForViewer = async () => { calls++; };
+      const s = (limit) => [{ id: 'viewer-x', viewer: 'viewer', sfu: false, idle: false, gpu: false, ageMs: 60000, limit, enc: 'OpenH264', targetBitrate: 5e5, res: '640x270' }];
+      encoderHeal.gpuSeen = true;
+      for (const m of [encoderHeal.softTicks, encoderHeal.lastAt, encoderHeal.count]) m.delete('viewer-x');
+      const tick3 = (limit = 'none') => { for (let i = 0; i < 3; i++) healStuckEncoders(s(limit)); };
+      tick3();
+      const first = calls;
+      encoderHeal.lastAt.set('viewer-x', Date.now() - 61000);
+      tick3();
+      const notAfterOneMinute = calls === first;
+      encoderHeal.lastAt.set('viewer-x', Date.now() - 121000);
+      tick3();
+      const afterTwo = calls === first + 1;
+      encoderHeal.lastAt.set('viewer-x', 0);
+      encoderHeal.count.delete('viewer-x');
+      const before = calls;
+      tick3('bandwidth');
+      const network = calls === before;
+      window.createOfferForViewer = realOffer;
+      for (const m of [encoderHeal.softTicks, encoderHeal.lastAt, encoderHeal.count]) m.delete('viewer-x');
+      return { first, notAfterOneMinute, afterTwo, network };
+    })()`);
+    check('codificador travado: refaz o link cada vez mais espaçado, e nunca quando a rede é o limite', heal.first === 1 && heal.notAfterOneMinute && heal.afterTwo && heal.network, JSON.stringify(heal));
+
+    // Presets fit a 16:9 box (an ultrawide no longer goes whole), and 30 fps while the PC can't keep 60
+    const perf = await evalApp(`(async () => {
+      const prevRes = quality.res, prevFps = quality.fps;
+      quality.res = '1080'; quality.fps = 60;
+      const box = [targetSize(2560, 1080), targetSize(3840, 2160), targetSize(1920, 1200), targetSize(1280, 720)].map(x => x.w + 'x' + x.h).join(' ');
+      Object.assign(autoFps, { active: false, overTicks: 0, backoffMs: 3 * 60000, lastOffAt: 0 });
+      const busy = [{ id: 'x', sfu: false, idle: false, ageMs: 60000, fps: 30, limit: 'none' }];
+      // The pipeline made ~55 frames a second, the encoder sent 30
+      const tick = () => { loadPipe = { outFrames: pipe.outFrames - 110, pacerDropped: pipe.pacerDropped, at: performance.now() - 2000 }; updateAutoFps(busy); };
+      const before = presetBitrate();
+      for (let i = 0; i < 4; i++) tick();
+      const notYet = !autoFps.active;
+      tick();
+      const on = autoFps.active && effFps() === 30 && presetBitrate() <= before && /30 fps/.test(document.getElementById('quality-hint').textContent);
+      autoFps.retryAt = Date.now() - 1;
+      tick();
+      const back = !autoFps.active && effFps() === 60;
+      for (let i = 0; i < 5; i++) tick();
+      const longer = autoFps.active && autoFps.backoffMs === 6 * 60000;
+      Object.assign(autoFps, { active: false, overTicks: 0, backoffMs: 3 * 60000, lastOffAt: 0 });
+      quality.res = prevRes; quality.fps = prevFps;
+      applySenderLimits();
+      renderQualityControls();
+      return { box, notYet, on, back, longer };
+    })()`);
+    check('qualidade cabe numa caixa 16:9 (ultrawide sai 1920x810)', perf.box === '1920x810 1920x1080 1728x1080 1280x720', perf.box);
+    check('PC ocupado: cai para 30 fps depois de 10 s, volta a tentar 60 e, se apertar de novo, fica mais tempo em 30', perf.notYet && perf.on && perf.back && perf.longer, JSON.stringify(perf));
+
     await evalApp(`pauseStreaming(); true`);
     check('parar: câmera e atalho desligados, cartões de volta à configuração', await untilApp(`!isStreaming && !cam.track && document.getElementById('cam-section').parentElement === panelSetup && document.getElementById('privacy-section').parentElement === panelSetup`, 5000));
   } catch (err) {
