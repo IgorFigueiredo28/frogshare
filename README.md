@@ -76,7 +76,7 @@ Configure no painel do Render. **Nunca** coloque valores no código nem em commi
 ## Build
 
 - **Windows:** `npm run dist` gera o instalador NSIS (`dist/FrogShare Setup <versão>.exe`) e a versão portátil.
-- **macOS (Apple Silicon):** o GitHub monta o `.dmg` sozinho a cada release publicada (`.github/workflows/mac-dmg.yml`, num Mac da nuvem): compila `native/mac/AudioCapture.swift`, gera `FrogShare-<versão>-arm64.dmg` e anexa na release, junto com uma cópia `FrogShare-mac.dmg`. Também dá para rodar à mão em Actions › Mac .dmg › Run workflow, com a tag (ex.: `v1.8.0`). Num Mac, `npm run build:native:mac` e `npm run dist:mac` fazem o mesmo localmente.
+- **macOS (Apple Silicon):** o GitHub monta o `.dmg` sozinho a cada release publicada (`.github/workflows/mac-dmg.yml`, num Mac da nuvem): compila `native/mac/AudioCapture.swift`, gera `FrogShare-<versão>-arm64.dmg` e anexa na release, junto com uma cópia `FrogShare-mac.dmg`. Também dá para rodar à mão em Actions › Mac .dmg › Run workflow, com a tag (ex.: `v1.8.0`). Num Mac, `npm run dist:mac` faz o mesmo localmente (recompila o helper antes; o binário `native/AudioCapture-mac` do repositório pode estar atrás do `.swift`).
   - O som vem do helper em Swift (Core Audio process taps, macOS 14.2+).
   - Sem conta Apple Developer, o app é assinado ad-hoc (`build/adhoc-sign.js`). Quem baixa precisa liberar em Ajustes do Sistema › Privacidade e Segurança › Abrir Mesmo Assim.
   - O botão "Baixar para Mac" do site usa `macUrl` em `server/index.js`: aponte para o `.dmg` da release depois que o workflow terminar.

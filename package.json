@@ -8,7 +8,7 @@
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
     "build:native:mac": "swiftc -O -target arm64-apple-macos11 native/mac/AudioCapture.swift -o native/AudioCapture-mac",
-    "dist:mac": "electron-builder --mac dmg --arm64"
+    "dist:mac": "npm run build:native:mac && electron-builder --mac dmg --arm64"
   },
   "build": {
     "appId": "com.screenshare.app",
