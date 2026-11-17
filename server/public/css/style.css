@@ -123,9 +123,6 @@
 #volume-slider:hover::-webkit-slider-thumb { transform: scale(1.12); }
 #volume-slider:focus-visible { box-shadow: var(--focus-ring); }
 
-.host-notice { margin: var(--space-3) var(--space-4) 0; }
-.host-notice .btn-icon { color: inherit; margin: -6px -8px -6px 0; }
-
 /* The stage: video is the hero, nothing decorative goes here */
 .stage { flex: 1; min-height: 0; display: flex; padding: var(--space-3) var(--space-4) var(--space-4); }
 
@@ -241,7 +238,6 @@
   #btn-fullscreen { width: var(--tap); padding: 0; }
   #btn-fullscreen .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
   .stage { padding: var(--space-2); }
-  .host-notice { margin: var(--space-2) var(--space-2) 0; }
 }
 
 @media (max-width: 460px) {
@@ -447,7 +443,7 @@
   background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-2);
   animation: fs-pop-in var(--dur) var(--ease-out);
 }
-.popover[hidden], .react-tray[hidden], .callout[hidden], .diag-bubble[hidden], .zoom-chip[hidden],
+.popover[hidden], .react-tray[hidden], .zoom-chip[hidden],
 .pip-note[hidden], .player-extras[hidden], .more-wrap[hidden], #shortcuts[hidden] { display: none; }
 @keyframes fs-pop-in { from { opacity: 0; transform: translateY(4px); } }
 .popover-title { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2); }
@@ -468,21 +464,6 @@
 .name-form { display: flex; gap: var(--space-2); }
 .name-form .input { min-height: 40px; font-size: var(--text-sm); }
 .name-form .btn { min-height: 40px; }
-/* A one-time nudge under the chip; it never covers the video */
-.callout {
-  position: absolute; top: calc(100% + 8px); left: 0; z-index: 25; width: min(330px, 86vw);
-  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
-  padding: var(--space-3); border-radius: var(--radius-md);
-  background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow-2);
-  font-size: var(--text-sm); line-height: 1.4;
-}
-.callout span { flex: 1 1 100%; }
-.callout .btn-icon { margin-left: auto; }
-.callout::before {
-  content: ""; position: absolute; top: -7px; left: 22px; width: 12px; height: 12px; transform: rotate(45deg);
-  background: var(--surface); border-left: 1px solid var(--accent); border-top: 1px solid var(--accent);
-}
-
 /* ---------- Bar extras: light on the dark picture, like the rest of the bar ---------- */
 .player-extras { display: flex; align-items: center; gap: 2px; }
 .react-wrap, .more-wrap { position: relative; }
@@ -551,7 +532,7 @@
 #remote-video { touch-action: none; }
 .video-area.zoomed #remote-video { cursor: grab; }
 .video-area.zoomed #remote-video:active { cursor: grabbing; }
-.zoom-chip, .diag-bubble, .pip-note {
+.zoom-chip, .pip-note {
   position: absolute; z-index: 7;
   background: rgba(8, 16, 10, 0.86); color: #F3F8EC; border: 1px solid rgba(183, 235, 106, 0.18);
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
@@ -565,24 +546,6 @@
   left: 50%; top: 50%; transform: translate(-50%, -50%); padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-pill); font-size: var(--text-sm); white-space: nowrap;
 }
-/* Why it stutters: a few words in the top corner, out of the way of the picture; a click explains it */
-.diag-bubble {
-  top: var(--space-3); right: var(--space-3); width: max-content; max-width: min(340px, calc(100% - 24px));
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: 2px 2px 2px var(--space-3); border-radius: var(--radius-pill);
-  animation: fs-pop-in var(--dur-slow) var(--ease-out);
-}
-.diag-text {
-  min-width: 0; padding: 4px 0; background: none; border: 0; color: inherit; cursor: pointer; text-align: left;
-  font: 600 var(--text-xs) var(--font-ui); line-height: 1.3; border-radius: var(--radius-xs);
-}
-.diag-text:hover { text-decoration: underline; }
-.diag-text:focus-visible { box-shadow: var(--focus-ring); outline: none; }
-.diag-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #FFD166; }
-.diag-bubble[data-level="bad"] .diag-dot { background: #FF7A7F; }
-.diag-bubble .btn-icon { color: inherit; }
-.diag-bubble .btn-icon:hover { background: rgba(255, 255, 255, 0.12); }
-
 /* Reactions rise from the lower right corner and fade, a few seconds each */
 .reaction-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
 .reaction {
@@ -678,24 +641,3 @@ kbd {
 .recent-forget { color: var(--text-3); flex-shrink: 0; }
 .recent-forget:hover { color: var(--text); }
 
-/* ================= Streaming from the browser (transmitir.html) ================= */
-.web-host { gap: var(--space-5); align-items: stretch; }
-.wh-setup, .wh-live { display: flex; flex-direction: column; gap: var(--space-4); }
-.wh-setup[hidden], .wh-live[hidden], .page-web-host .notice[hidden] { display: none; }
-.wh-head { display: flex; align-items: center; gap: var(--space-4); }
-.wh-head h1 { font-size: clamp(1.6rem, 4vw, var(--text-2xl)); }
-.wh-head .hero-sub { margin: var(--space-1) 0 0; text-align: left; font-size: var(--text-md); }
-.wh-card, .wh-link-card { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
-.wh-label { margin-top: var(--space-3); }
-.wh-audio { margin: var(--space-2) 0 var(--space-3); }
-.wh-audio-text { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
-.wh-audio-text small { font-weight: 400; font-size: var(--text-xs); color: var(--text-2); line-height: 1.4; }
-.wh-fine { font-size: var(--text-xs); color: var(--text-2); }
-.wh-live-head { display: flex; align-items: center; gap: var(--space-2); }
-.wh-preview { aspect-ratio: 16 / 9; background: var(--video-bg); border-radius: var(--radius-lg); overflow: hidden; }
-.wh-preview video { width: 100%; height: 100%; object-fit: contain; display: block; }
-.wh-link-card .input { font-family: var(--font-mono); font-size: var(--text-sm); }
-.wh-names { font-size: var(--text-sm); color: var(--text-2); margin-top: var(--space-2); }
-.wh-reactions { min-height: 1.4em; font-size: var(--text-md); }
-.wh-actions { display: flex; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
-@media (max-width: 480px) { .wh-head img { width: 64px; } }

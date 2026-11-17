@@ -52,7 +52,7 @@ function reportError(message, stack, context) {
         stack: stack ? String(stack).slice(0, 5000) : null,
         context: context || null,
         room_id: roomId,
-        app_version: '1.7.3',
+        app_version: '1.8.0',
         user_agent: navigator.userAgent
       })
     }).catch(() => {});
@@ -250,12 +250,11 @@ socket.on('room-locked', () => {
   lockedRetry = setTimeout(() => { if (socket.connected && blockedState === 'locked') socket.emit('join-room', joinPayload()); }, 15000);
 });
 
-const hostNotice = document.getElementById('host-notice');
-let hostNoticeDismissed = false;
-document.getElementById('host-notice-close').addEventListener('click', () => {
-  hostNoticeDismissed = true;
-  hostNotice.style.display = 'none';
-});
+// Warnings never cover the picture: the info button gets a dot and its panel says what's up
+let hostOutdatedNow = false;
+function updateInfoDot() {
+  btnInfo.dataset.diag = diag.level !== 'ok' ? diag.level : hostOutdatedNow ? 'warn' : 'ok';
+}
 
 // ======== Streams: one channel per streamer ========
 // A room has its owner and, in group mode, up to 3 more streamers. Each gets a channel with its own
@@ -567,7 +566,9 @@ socket.on('room-update', ({ hasHost, viewerCount: count, hostOutdated, group, ho
   }
   if (selectedId && !channels.has(selectedId)) selectedId = pickPlayable();
   if (!hasHost && !channels.size) statusText.textContent = 'Esperando o host entrar…';
-  hostNotice.style.display = hostOutdated && !hostNoticeDismissed ? '' : 'none';
+  hostOutdatedNow = !!hostOutdated;
+  updateInfoDot();
+  if (infoOpen) renderOverlay(agg.last);
   renderStage();
   renderStreamList();
 });
@@ -769,7 +770,7 @@ async function pullSfu(ch) {
       if (decoded === 0 && sfuPc.hasVideo && ch.pc === sfuPc && ch.hostId === selectedId) {
         reportError('SFU video not decoding', null, { sessionId });
         ch.sfuToken++;
-        socket.emit('sfu-fallback', { hostId: ch.hostId });
+        socket.emit('sfu-fallback', { hostId: ch.hostId, reason: 'decode' });
       }
     }, 8000);
 
@@ -1192,8 +1193,9 @@ function renderOverlay(s) {
     if (cls) el.className = cls;
     statsLines.appendChild(el);
   };
-  // The explanation first, also before the numbers are in
+  // The explanations first, also before the numbers are in
   if (diag.text) line(diag.text, 'diag-line');
+  if (hostOutdatedNow) line('O FrogShare de quem transmite está desatualizado: a imagem pode travar e mostrar o mouse. Para atualizar, é só fechar o app (ícone perto do relógio, Sair) e abrir de novo.', 'diag-line');
   if (!s) { line('Coletando dados...'); return; }
   const lossPct = s.packets ? (100 * s.lost / s.packets) : 0;
   const delay = s.rttMs != null && s.jbMs != null ? Math.round(s.rttMs / 2 + s.jbMs) : null;
@@ -1311,7 +1313,7 @@ function setDiag(level, reason, text) {
   if (diag.level === level && diag.reason === reason && diag.text === text) return;
   const newReason = reason && reason !== diag.reason;
   Object.assign(diag, { level, reason, text });
-  btnInfo.dataset.diag = level;
+  updateInfoDot();
   document.dispatchEvent(new CustomEvent('fs-diag', { detail: { level, reason, text, short: DIAG_SHORT[reason] || text, newReason } }));
 }
 
@@ -1341,7 +1343,7 @@ function reportViewerStats(context) {
     fetch('/api/errors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.7.3', user_agent: navigator.userAgent })
+      body: JSON.stringify({ source: 'viewer-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: '1.8.0', user_agent: navigator.userAgent })
     }).catch(() => {});
   } catch {}
 }

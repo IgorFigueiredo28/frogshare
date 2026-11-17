@@ -150,6 +150,14 @@ app.whenReady().then(async () => {
         const gaps = times.slice(1).map((t, i) => t - times[i]);
         return { duration: Math.round(v.duration * 10) / 10, frames: times.length, maxGapMs: Math.round(Math.max(0, ...gaps)), firstFrameAt: Math.round((first || 0) * 100) / 100 };
       })()`).catch(err => ({ error: err.message }));
+      // An ordinary MP4: one index up front with the duration, the media after it (no fragments)
+      const bytes = fs.readFileSync(clip.file);
+      const top = [];
+      for (let p = 0; p + 8 <= bytes.length;) { const size = bytes.readUInt32BE(p); top.push(bytes.toString('latin1', p + 4, p + 8)); if (size < 8) break; p += size; }
+      const mvhdAt = bytes.indexOf('mvhd');
+      const v1 = mvhdAt > 0 && bytes[mvhdAt + 4] === 1;
+      const mvhdSecs = mvhdAt < 0 ? 0 : v1 ? Number(bytes.readBigUInt64BE(mvhdAt + 28)) / bytes.readUInt32BE(mvhdAt + 24) : bytes.readUInt32BE(mvhdAt + 20) / bytes.readUInt32BE(mvhdAt + 16);
+      check('o clipe é um MP4 comum, com a duração no cabeçalho (abre no Windows e no celular)', top.join(',') === 'ftyp,moov,mdat' && mvhdSecs > 2, `${top.join(',')} ${mvhdSecs.toFixed(1)} s`);
       check('o clipe abre do começo, só com o trecho pedido, e toca sem travar',
         play.duration >= 2 && play.duration <= 7 && play.firstFrameAt < 0.5 && play.frames >= 18 && play.maxGapMs < 400, JSON.stringify(play));
       pv.destroy();
@@ -173,9 +181,12 @@ app.whenReady().then(async () => {
     const d1 = await js(v1, `(() => {
       hostHealth.set(selectedId, { fps: 18, target: 60, limit: 'none', away: false, at: Date.now() });
       for (let i = 0; i < 6; i++) diagnose({ freezes: 1, freezeMs: 400, packets: 200, lost: 0, rttMs: 40, decoded: 30, dropped: 0, decodeMs: 3, fps: 18 });
-      return { level: diag.level, reason: diag.reason, bubble: !document.getElementById('diag-bubble').hidden, text: document.getElementById('diag-text').textContent, dot: btnInfo.dataset.diag };
+      setInfoOpen(true);
+      const panel = statsLines.textContent;
+      setInfoOpen(false);
+      return { level: diag.level, reason: diag.reason, text: diag.text, panel, dot: btnInfo.dataset.diag, onPicture: !!document.querySelector('.video-area .diag-bubble, .video-area .callout, .host-notice') };
     })()`);
-    check('travando sem perda de pacotes: explica que é o PC de quem transmite', d1.reason === 'host-capture' && d1.bubble && /PC de quem transmite/.test(d1.text) && d1.dot !== 'ok', JSON.stringify(d1));
+    check('travando sem perda de pacotes: o ponto no i acende e o painel explica que é o PC de quem transmite', d1.reason === 'host-capture' && /PC de quem transmite/.test(d1.text) && d1.panel.includes(d1.text) && d1.dot !== 'ok' && !d1.onPicture, JSON.stringify(d1));
     const d2 = await js(v1, `(() => {
       for (let i = 0; i < 6; i++) diagnose({ freezes: 1, freezeMs: 300, packets: 200, lost: 12, rttMs: 60, decoded: 30, dropped: 0, decodeMs: 3, fps: 20 });
       return { reason: diag.reason, text: diag.text };

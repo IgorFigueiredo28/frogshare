@@ -22,7 +22,8 @@ app.use((req, res, next) => {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Frame-Options': 'DENY',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    // The camera only on the page that streams, where it can go over the picture
+    'Permissions-Policy': req.path === '/transmitir.html' ? 'camera=(self), microphone=(), geolocation=()' : 'camera=(), microphone=(), geolocation=()',
     'Content-Security-Policy': [
       "default-src 'self'",
       "script-src 'self'",
@@ -1189,11 +1190,12 @@ io.on('connection', (socket) => {
   });
 
   // A viewer that can't reach the SFU asks that streamer for a direct connection instead
-  socket.on('sfu-fallback', ({ hostId } = {}) => {
+  socket.on('sfu-fallback', ({ hostId, reason } = {}) => {
     const room = myRoom();
     if (!room || !isViewerHere()) return;
     const target = hostId && inMyRoom(hostId) ? hostId : room.host;
-    if (target) io.to(target).emit('viewer-needs-p2p', { viewerId: socket.id });
+    // 'decode': the media server's picture arrived but this viewer's decoder couldn't take it
+    if (target) io.to(target).emit('viewer-needs-p2p', { viewerId: socket.id, reason: reason === 'decode' ? 'decode' : undefined });
   });
 
   socket.on('host-pause', () => {

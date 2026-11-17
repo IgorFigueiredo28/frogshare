@@ -53,13 +53,6 @@
             </form>
             <p class="popover-hint">Quem transmite vê esses nomes.</p>
           </div>
-          <div class="callout" id="name-callout" role="status" hidden>
-            <span>Quem transmite vê quem está assistindo. Quer colocar seu nome?</span>
-            <button type="button" class="btn btn-secondary btn-sm" id="btn-name-callout">Colocar nome</button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" id="btn-name-callout-close" aria-label="Agora não">
-              <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
-            </button>
-          </div>
         </div>
       </div>
 
@@ -97,14 +90,6 @@
         </button>
       </div>
     </header>
-
-    <div class="notice host-notice" id="host-notice" style="display:none" role="status">
-      <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
-      <span class="notice-text">Quem transmite está usando uma versão antiga do FrogShare: a imagem pode travar e mostrar o cursor do mouse. Peça para fechar o app (ícone perto do relógio, Sair) e abrir de novo, que ele se atualiza sozinho. Se não atualizar, a versão nova está em <a href="/" target="_blank" rel="noopener">frogshare.onrender.com</a>.</span>
-      <button id="host-notice-close" type="button" class="btn btn-ghost btn-icon" aria-label="Fechar aviso">
-        <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
-      </button>
-    </div>
 
     <div class="notice share-help" id="share-help" role="status" hidden>
       <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
@@ -144,15 +129,6 @@
         <div class="reaction-layer" id="reaction-layer" aria-hidden="true"></div>
         <p class="pip-note" id="pip-note" hidden>Tocando na janelinha. <button type="button" class="link-button" id="btn-pip-back">Voltar para cá</button></p>
         <button type="button" class="zoom-chip" id="zoom-chip" hidden title="Voltar ao tamanho normal (Z)"></button>
-        <!-- Why the picture stutters, when it does: their end or ours -->
-        <div class="diag-bubble" id="diag-bubble" role="status" hidden>
-          <span class="diag-dot" aria-hidden="true"></span>
-          <button type="button" class="diag-text" id="diag-text" aria-describedby="diag-more"></button>
-          <span class="sr-only" id="diag-more">Abre os detalhes da conexão</span>
-          <button type="button" class="btn btn-ghost btn-icon btn-sm" id="diag-close" aria-label="Fechar">
-            <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-x"/></svg>
-          </button>
-        </div>
         <button id="unmute-cta" type="button" class="unmute-cta" hidden>
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/><path d="M16 10l4 4m0 -4l-4 4"/></svg>
           Ativar som

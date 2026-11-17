@@ -59,8 +59,6 @@
       setOpen(pops.react, false);
       setOpen(pops.more, false);
       exitZoom();
-    } else {
-      setTimeout(maybeCallout, 4000);
     }
     syncClips();
   }
@@ -138,31 +136,7 @@
     if (!setViewerName(nameInput.value)) { nameInput.focus(); return; }
     showToast(`Pronto, agora você aparece como ${viewerName}.`);
     setOpen(pops.viewers, false);
-    hideCallout();
   });
-
-  // Once: the first stream watched here while the name is still the automatic "Sapo 123"
-  const callout = $('name-callout');
-  const CALLOUT_KEY = 'fs-name-callout';
-  let calloutTimer = null;
-  function hideCallout() {
-    callout.hidden = true;
-    clearTimeout(calloutTimer);
-    storage.set(CALLOUT_KEY, '1');
-  }
-  function maybeCallout() {
-    if (!live() || !callout.hidden || storage.get(VIEWER_NAME_SET_KEY) === '1' || storage.get(CALLOUT_KEY) === '1') return;
-    callout.hidden = false;
-    calloutTimer = setTimeout(() => { callout.hidden = true; }, 15000);
-  }
-  $('btn-name-callout').addEventListener('click', (e) => {
-    e.stopPropagation();
-    hideCallout();
-    setOpen(pops.viewers, true);
-    nameInput.focus();
-    nameInput.select();
-  });
-  $('btn-name-callout-close').addEventListener('click', (e) => { e.stopPropagation(); hideCallout(); });
 
   // ---------- Menu: data saver, levelled sound, clips ----------
   const optSaver = $('opt-data-saver');
@@ -345,9 +319,172 @@
     }
     if (first < 0 || !ring.init.length) { showToast('O clipe ainda está começando. Tente de novo em alguns segundos.'); return; }
     const parts = ring.frags.slice(first);
-    const offset = Math.min(...[...parts[0].bases].map(([id, base]) => base.value / (ring.tracks.get(id) || 1)));
-    const body = parts.flatMap((f, i) => [retimed(f, offset, i + 1, ring.tracks), f.mdat]);
-    saveClipFile(new Blob([...ring.init, ...body], { type: 'video/mp4' }), Date.now() - parts[0].start);
+    let file;
+    try {
+      // A plain MP4 (one index, a duration): what Windows, phones and chat apps expect
+      file = progressiveMp4(ring.init, parts);
+    } catch (err) {
+      reportError('Clip remux failed: ' + err.message, err.stack);
+      // Still a clip: the pieces as recorded, re-timed (plays in browsers, not everywhere)
+      const offset = Math.min(...[...parts[0].bases].map(([id, base]) => base.value / (ring.tracks.get(id) || 1)));
+      const body = parts.flatMap((f, i) => [retimed(f, offset, i + 1, ring.tracks), f.mdat]);
+      file = new Blob([...ring.init, ...body], { type: 'video/mp4' });
+    }
+    saveClipFile(file, Date.now() - parts[0].start);
+  }
+
+  // ---- The pieces as one ordinary MP4 ----
+  // The recorder writes fragments (each with its own little index) and no duration up front: browsers
+  // play that, but Windows' players, phones and chat apps show 00:00, can't seek or refuse it. Here the
+  // sample tables of every piece are gathered into one index (moov first) and the media is copied after
+  // it unchanged. Nothing is encoded again.
+  const u32 = (n) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  const mkBox = (type, ...parts) => {
+    const body = parts.flat(Infinity);
+    const size = 8 + body.reduce((s, p) => s + (p instanceof Uint8Array ? p.length : 1), 0);
+    const out = new Uint8Array(size);
+    out.set(u32(size), 0);
+    for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    let o = 8;
+    for (const p of body) {
+      if (p instanceof Uint8Array) { out.set(p, o); o += p.length; } else out[o++] = p;
+    }
+    return out;
+  };
+  const fullBox = (type, version, flags, ...parts) => mkBox(type, version, (flags >>> 16) & 255, (flags >>> 8) & 255, flags & 255, ...parts);
+  const boxBytes = (b, box) => b.subarray(box.at, box.at + box.size);
+  function withDuration(b, box, offsetV0, offsetV1, value) {
+    const copy = boxBytes(b, box).slice();
+    const v = new DataView(copy.buffer);
+    if (copy[box.head] === 1) v.setBigUint64(box.head + offsetV1, BigInt(Math.round(value)));
+    else v.setUint32(box.head + offsetV0, Math.min(0xffffffff, Math.round(value)));
+    return copy;
+  }
+
+  function progressiveMp4(init, frags) {
+    const ftyp = init.find(b => fourcc(b, 4) === 'ftyp');
+    const moovBytes = init.find(b => fourcc(b, 4) === 'moov');
+    const moov = mp4Boxes(moovBytes)[0];
+    const mv = new DataView(moovBytes.buffer, moovBytes.byteOffset, moovBytes.byteLength);
+    const mvhd = mp4Child(moovBytes, moov, 'mvhd')[0];
+    const movieScale = mv.getUint32(mvhd.at + mvhd.head + (boxVersion(moovBytes, mvhd) === 1 ? 20 : 12));
+    // Defaults each track's pieces may lean on
+    const trex = new Map();
+    for (const mvex of mp4Child(moovBytes, moov, 'mvex')) {
+      for (const t of mp4Child(moovBytes, mvex, 'trex')) {
+        const p = t.at + t.head + 4;
+        trex.set(mv.getUint32(p), { duration: mv.getUint32(p + 8), size: mv.getUint32(p + 12), flags: mv.getUint32(p + 16) });
+      }
+    }
+    const tracks = new Map();
+    for (const trak of mp4Child(moovBytes, moov, 'trak')) {
+      const tkhd = mp4Child(moovBytes, trak, 'tkhd')[0];
+      const mdia = mp4Child(moovBytes, trak, 'mdia')[0];
+      const mdhd = mp4Child(moovBytes, mdia, 'mdhd')[0];
+      const hdlr = mp4Child(moovBytes, mdia, 'hdlr')[0];
+      const minf = mp4Child(moovBytes, mdia, 'minf')[0];
+      const stbl = mp4Child(moovBytes, minf, 'stbl')[0];
+      const id = mv.getUint32(tkhd.at + tkhd.head + (boxVersion(moovBytes, tkhd) === 1 ? 20 : 12));
+      tracks.set(id, {
+        id, tkhd, mdhd, hdlr, minf, stbl,
+        scale: mv.getUint32(mdhd.at + mdhd.head + (boxVersion(moovBytes, mdhd) === 1 ? 20 : 12)),
+        video: fourcc(moovBytes, hdlr.at + hdlr.head + 8) === 'vide',
+        samples: [], chunks: []
+      });
+    }
+    // Every sample of every piece: duration, size, keyframe, display offset, and where its bytes are.
+    // The chunks go into the new mdat in the order they were recorded.
+    const order = [];
+    for (const frag of frags) {
+      const b = frag.moof;
+      const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+      const moof = mp4Boxes(b)[0];
+      for (const traf of mp4Child(b, moof, 'traf')) {
+        const tfhd = mp4Child(b, traf, 'tfhd')[0];
+        const tf = v.getUint32(tfhd.at + tfhd.head) & 0xffffff;
+        if (tf & 0x1) throw new Error('absolute data offsets');
+        let p = tfhd.at + tfhd.head + 4;
+        const id = v.getUint32(p); p += 4;
+        const track = tracks.get(id);
+        if (!track) continue;
+        const def = { ...(trex.get(id) || { duration: 0, size: 0, flags: 0 }) };
+        if (tf & 0x2) p += 4;
+        if (tf & 0x8) { def.duration = v.getUint32(p); p += 4; }
+        if (tf & 0x10) { def.size = v.getUint32(p); p += 4; }
+        if (tf & 0x20) { def.flags = v.getUint32(p); p += 4; }
+        for (const trun of mp4Child(b, traf, 'trun')) {
+          let q = trun.at + trun.head;
+          const version = b[q];
+          const rf = v.getUint32(q) & 0xffffff; q += 4;
+          const count = v.getUint32(q); q += 4;
+          let dataOffset = 0;
+          if (rf & 0x1) { dataOffset = v.getInt32(q); q += 4; }
+          let firstFlags = null;
+          if (rf & 0x4) { firstFlags = v.getUint32(q); q += 4; }
+          // Offsets count from the start of the moof, and the mdat comes right after it
+          let at = dataOffset - b.length;
+          const runStart = at, before = track.samples.length;
+          for (let i = 0; i < count; i++) {
+            const s = { duration: def.duration, size: def.size, flags: def.flags, cto: 0 };
+            if (rf & 0x100) { s.duration = v.getUint32(q); q += 4; }
+            if (rf & 0x200) { s.size = v.getUint32(q); q += 4; }
+            if (rf & 0x400) { s.flags = v.getUint32(q); q += 4; } else if (i === 0 && firstFlags !== null) s.flags = firstFlags;
+            if (rf & 0x800) { s.cto = version === 1 ? v.getInt32(q) : v.getUint32(q); q += 4; }
+            s.sync = !(s.flags & 0x10000);
+            track.samples.push(s);
+            at += s.size;
+          }
+          if (at > frag.mdat.size || runStart < 8) throw new Error('sample data outside its mdat');
+          if (track.samples.length > before) {
+            const chunk = { blob: frag.mdat.slice(runStart, at), count: track.samples.length - before, size: at - runStart };
+            track.chunks.push(chunk);
+            order.push({ track, chunk });
+          }
+        }
+      }
+    }
+    const list = [...tracks.values()].filter(t => t.samples.length);
+    if (!list.some(t => t.video)) throw new Error('no video samples');
+
+    // The index of one track, with its chunk offsets left as placeholders (filled in once sizes are known)
+    function trakBox(t, chunkOffsets) {
+      const total = t.samples.reduce((s, x) => s + x.duration, 0);
+      const stts = [];
+      for (const s of t.samples) {
+        const last = stts[stts.length - 1];
+        if (last && last[1] === s.duration) last[0]++; else stts.push([1, s.duration]);
+      }
+      const stsc = [];
+      t.chunks.forEach((c, i) => { if (!stsc.length || stsc[stsc.length - 1][1] !== c.count) stsc.push([i + 1, c.count]); });
+      const syncs = t.samples.map((s, i) => (s.sync ? i + 1 : 0)).filter(Boolean);
+      const hasCto = t.samples.some(s => s.cto);
+      const boxes = [
+        boxBytes(moovBytes, mp4Child(moovBytes, t.stbl, 'stsd')[0]),
+        fullBox('stts', 0, 0, u32(stts.length), stts.map(([n, d]) => [u32(n), u32(d)])),
+        t.video && syncs.length < t.samples.length ? fullBox('stss', 0, 0, u32(syncs.length), syncs.map(u32)) : [],
+        hasCto ? fullBox('ctts', 1, 0, u32(t.samples.length), t.samples.map(s => [u32(1), u32(s.cto)])) : [],
+        fullBox('stsc', 0, 0, u32(stsc.length), stsc.map(([first, n]) => [u32(first), u32(n), u32(1)])),
+        fullBox('stsz', 0, 0, u32(0), u32(t.samples.length), t.samples.map(s => u32(s.size))),
+        fullBox('stco', 0, 0, u32(t.chunks.length), chunkOffsets.map(u32))
+      ].filter(x => !Array.isArray(x) || x.length);
+      const minfKids = mp4Boxes(moovBytes, t.minf.at + t.minf.head, t.minf.at + t.minf.size).filter(x => x.type !== 'stbl').map(x => boxBytes(moovBytes, x));
+      return mkBox('trak',
+        withDuration(moovBytes, t.tkhd, 20, 28, total / t.scale * movieScale),
+        mkBox('mdia',
+          withDuration(moovBytes, t.mdhd, 16, 24, total),
+          boxBytes(moovBytes, t.hdlr),
+          mkBox('minf', ...minfKids, mkBox('stbl', ...boxes))));
+    }
+    const movieLength = Math.max(...list.map(t => t.samples.reduce((s, x) => s + x.duration, 0) / t.scale));
+    const buildMoov = (offsets) => mkBox('moov', withDuration(moovBytes, mvhd, 16, 24, movieLength * movieScale), ...list.map((t, i) => trakBox(t, offsets[i])));
+    const placeholder = list.map(t => t.chunks.map(() => 0));
+    const head = (ftyp ? ftyp.length : 0) + buildMoov(placeholder).length + 8;
+    let pos = head;
+    const offsetOf = new Map();
+    for (const o of order) { offsetOf.set(o.chunk, pos); pos += o.chunk.size; }
+    const moovOut = buildMoov(list.map(t => t.chunks.map(c => offsetOf.get(c))));
+    const mdatHeader = new Uint8Array([...u32(8 + (pos - head)), 109, 100, 97, 116]);
+    return new Blob([...(ftyp ? [ftyp] : []), moovOut, mdatHeader, ...order.map(o => o.chunk.blob)], { type: 'video/mp4' });
   }
 
   function startRing(stream) {
@@ -438,7 +575,7 @@
     clip.slots = [];
     clip.stream = null;
     clip.mode = null;
-    btnClip.hidden = true;
+    btnClip.hidden = isTouch || !live();
   }
 
   // The fallback: two recorders half a minute apart, the older one always holding the last 30 s
@@ -481,7 +618,15 @@
   remoteVideo.addEventListener('emptied', syncClips);
 
   function saveClip() {
-    if (!clip.stream) { showToast('Ligue "Clipes" no menu ⋯ para poder salvar os últimos segundos.'); return; }
+    if (!clip.stream) {
+      // The first press turns clips on: from then on the last half minute is kept
+      if (isTouch || !live()) return;
+      optClips.checked = true;
+      storage.set(CLIPS_KEY, '1');
+      syncClips();
+      showToast('Clipes ligados: em alguns segundos já dá para salvar. Daí em diante ele guarda os últimos 30 s.');
+      return;
+    }
     if (clip.mode === 'ring') {
       const ring = clip.ring;
       if (!ring?.frags.length) { showToast('O clipe ainda está começando. Tente de novo em alguns segundos.'); return; }
@@ -688,29 +833,6 @@
     else return;
     e.preventDefault();
   });
-
-  // ---------- Why it stutters ----------
-  // A small note in the corner, in a few words; a click opens the info panel, which explains it in full
-  const bubble = $('diag-bubble');
-  const shownAt = new Map();
-  let bubbleTimer = null;
-  document.addEventListener('fs-diag', (e) => {
-    const { level, reason, text, short } = e.detail;
-    bubble.dataset.level = level;
-    if (level === 'ok') { bubble.hidden = true; return; }
-    $('diag-text').textContent = short || text;
-    $('diag-text').title = text;
-    // The info panel already says it at the top
-    if (infoOpen) { bubble.hidden = true; return; }
-    // Each explanation pops up at most every 3 minutes; meanwhile the info button keeps a dot
-    if (!bubble.hidden || Date.now() - (shownAt.get(reason) || 0) < 180000) return;
-    shownAt.set(reason, Date.now());
-    bubble.hidden = false;
-    clearTimeout(bubbleTimer);
-    bubbleTimer = setTimeout(() => { bubble.hidden = true; }, 8000);
-  });
-  $('diag-text').addEventListener('click', () => { bubble.hidden = true; toggleInfo(true); });
-  $('diag-close').addEventListener('click', () => { bubble.hidden = true; });
 
   // ---------- Frogs light up while their stream has sound (group rooms) ----------
   const smoothed = new Map();

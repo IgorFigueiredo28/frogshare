@@ -18,6 +18,7 @@
   <script src="/brand/theme.js"></script>
   <link rel="stylesheet" href="/brand/frog-theme.css">
   <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/web-host.css">
 </head>
 <body class="page-home page-web-host" data-state="setup">
   <div class="lilypads" aria-hidden="true">
@@ -36,14 +37,14 @@
     </button>
   </header>
 
-  <main class="home web-host">
-    <!-- ======== Before going live ======== -->
+  <main class="wh">
+    <!-- ======== Before going live: the same steps as the app ======== -->
     <section class="wh-setup" id="wh-setup" aria-labelledby="wh-title">
-      <div class="wh-head">
+      <div class="setup-hero" id="wh-head">
         <img src="/brand/frog.svg" alt="" width="88" height="81">
         <div>
           <h1 id="wh-title">Transmitir pelo navegador</h1>
-          <p class="hero-sub" id="wh-sub">Sem instalar nada: escolha a tela ou a janela e mande o link para os amigos.</p>
+          <p class="subtitle" id="wh-sub">Sem instalar nada: escolha a tela ou a janela e mande o link para os amigos.</p>
         </div>
       </div>
 
@@ -51,59 +52,222 @@
         <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
         <span class="notice-text">Este navegador não consegue transmitir a tela. Use o Chrome ou o Edge num computador, ou <a href="/">baixe o FrogShare</a>.</span>
       </div>
-
       <div class="notice" id="wh-group-note" role="status" hidden>
         <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-info"/></svg>
         <span class="notice-text" id="wh-group-text"></span>
       </div>
 
-      <div class="card wh-card">
-        <label class="field-label" for="wh-name">Seu nome na sala</label>
-        <input id="wh-name" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Ex.: Igor">
-
-        <p class="field-label wh-label" id="wh-quality-label">Qualidade</p>
-        <div class="segmented" role="radiogroup" aria-labelledby="wh-quality-label">
-          <label class="segment"><input type="radio" name="wh-quality" value="720-30"><span>720p · 30 fps</span></label>
-          <label class="segment"><input type="radio" name="wh-quality" value="1080-30" checked><span>1080p · 30 fps</span></label>
-          <label class="segment"><input type="radio" name="wh-quality" value="1080-60"><span>1080p · 60 fps</span></label>
+      <!-- The room's address stays the same in this browser; it can get a name of its own -->
+      <section class="card link-card" id="wh-link-card" aria-labelledby="wh-link-card-title">
+        <div class="link-card-main">
+          <h2 id="wh-link-card-title">Seu link</h2>
+          <p class="link-card-url" id="wh-link-text">Preparando o link…</p>
+          <p class="link-card-hint">É sempre o mesmo neste navegador: seus amigos podem salvar nos favoritos.</p>
         </div>
+        <div class="link-card-actions">
+          <button id="wh-copy-fixed" type="button" class="btn btn-secondary" disabled>
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar
+          </button>
+          <button id="wh-edit-link" type="button" class="btn btn-ghost" aria-expanded="false" aria-controls="wh-link-form">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-pencil"/></svg>Mudar
+          </button>
+        </div>
+        <form class="link-form" id="wh-link-form" autocomplete="off" hidden>
+          <label for="wh-link-name">Escolha o fim do link (letras sem acento, números e hífen)</label>
+          <div class="link-form-row">
+            <span class="link-prefix" id="wh-link-prefix">frogshare.onrender.com/s/</span>
+            <input id="wh-link-name" class="input" type="text" maxlength="24" spellcheck="false" placeholder="igor">
+            <button type="submit" class="btn btn-primary">Salvar</button>
+          </div>
+          <p class="link-form-note">Ou <button type="button" class="link-button" id="wh-random-link">gere um link novo aleatório</button>, se o atual vazou para quem não devia. O link antigo para de funcionar.</p>
+        </form>
+      </section>
 
+      <section class="card step" aria-labelledby="wh-basics-title">
+        <div class="step-head">
+          <span class="step-num" aria-hidden="true">1</span>
+          <h2 id="wh-basics-title">Você e o som</h2>
+        </div>
+        <div class="wh-fields">
+          <label class="field-row" for="wh-name">
+            <span>Seu nome na sala</span>
+            <input id="wh-name" class="input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Ex.: Igor">
+          </label>
+          <label class="field-row" for="wh-game">
+            <span>Jogo <small>(opcional, aparece para quem assiste)</small></span>
+            <input id="wh-game" class="input" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Ex.: Valorant">
+          </label>
+        </div>
         <label class="switch-row wh-audio">
           <input type="checkbox" id="wh-audio" class="switch" checked>
           <span class="wh-audio-text">Transmitir o som também<small>Tela inteira leva todo o som do PC. Uma aba leva só o som dela. Janela vai sem som.</small></span>
         </label>
+      </section>
 
-        <button id="wh-start" type="button" class="btn btn-primary btn-lg btn-block btn-hop">Escolher a tela e começar</button>
-        <p class="wh-fine">O navegador pergunta o que mostrar. Para jogos, o <a href="/">app</a> pesa menos e leva só o som do jogo.</p>
+      <section class="card step" id="wh-quality-section" aria-labelledby="wh-quality-title">
+        <div class="step-head">
+          <span class="step-num" aria-hidden="true">2</span>
+          <h2 id="wh-quality-title">Qualidade</h2>
+        </div>
+        <div class="quality-row">
+          <span class="quality-label" id="wh-res-label">Resolução</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="wh-res-label">
+            <label class="segment"><input type="radio" name="wh-res" value="720"><span>720p</span></label>
+            <label class="segment"><input type="radio" name="wh-res" value="1080"><span>1080p</span></label>
+            <label class="segment"><input type="radio" name="wh-res" value="native"><span>Nativa</span></label>
+          </div>
+        </div>
+        <div class="quality-row">
+          <span class="quality-label" id="wh-fps-label">Quadros por segundo</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="wh-fps-label">
+            <label class="segment"><input type="radio" name="wh-fps" value="30"><span>30 fps</span></label>
+            <label class="segment"><input type="radio" name="wh-fps" value="60"><span>60 fps</span></label>
+          </div>
+        </div>
+        <p class="quality-hint">
+          <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-gauge"/></svg>
+          <span id="wh-quality-hint"></span>
+        </p>
+      </section>
+
+      <!-- Moved under the preview while live, like the quality card (web-host.js) -->
+      <section class="card step step-cam" id="wh-cam-section" aria-labelledby="wh-cam-title" hidden>
+        <div class="step-head">
+          <svg class="ico step-ico" aria-hidden="true"><use href="/brand/icons.svg#i-video"/></svg>
+          <h2 id="wh-cam-title">Câmera</h2>
+        </div>
+        <label class="switch-row">
+          <input type="checkbox" id="wh-cam-toggle" class="switch">
+          <span>Mostrar minha câmera na transmissão</span>
+        </label>
+        <div class="cam-options" id="wh-cam-options" hidden>
+          <label class="field-row" for="wh-cam-device">
+            <span>Câmera</span>
+            <select id="wh-cam-device" class="input"></select>
+          </label>
+          <div class="quality-row">
+            <span class="quality-label" id="wh-cam-pos-label">Canto</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="wh-cam-pos-label">
+              <label class="segment"><input type="radio" name="wh-cam-pos" value="tl"><span>↖ Em cima</span></label>
+              <label class="segment"><input type="radio" name="wh-cam-pos" value="tr"><span>Em cima ↗</span></label>
+              <label class="segment"><input type="radio" name="wh-cam-pos" value="bl"><span>↙ Embaixo</span></label>
+              <label class="segment"><input type="radio" name="wh-cam-pos" value="br"><span>Embaixo ↘</span></label>
+            </div>
+          </div>
+          <div class="quality-row">
+            <span class="quality-label" id="wh-cam-size-label">Tamanho</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="wh-cam-size-label">
+              <label class="segment"><input type="radio" name="wh-cam-size" value="s"><span>Pequena</span></label>
+              <label class="segment"><input type="radio" name="wh-cam-size" value="m"><span>Média</span></label>
+              <label class="segment"><input type="radio" name="wh-cam-size" value="l"><span>Grande</span></label>
+            </div>
+          </div>
+          <p class="cam-hint">Ao vivo, arraste a câmera na prévia para qualquer lugar e puxe o canto dela para mudar o tamanho.</p>
+          <p class="cam-note" id="wh-cam-note"></p>
+        </div>
+      </section>
+
+      <!-- Group streaming: open this room to friends (not shown when joining a friend's group) -->
+      <div class="card group-card" id="wh-group-card" role="region" aria-labelledby="wh-group-card-title">
+        <span class="group-card-frogs" aria-hidden="true">
+          <img class="group-frog slot-1" src="/brand/frog-head.svg" alt="">
+          <img class="group-frog slot-2" src="/brand/frog-head.svg" alt="">
+          <img class="group-frog slot-3" src="/brand/frog-head.svg" alt="">
+          <img class="group-frog slot-0" src="/brand/frog-head.svg" alt="">
+        </span>
+        <div class="group-card-body">
+          <h2 id="wh-group-card-title">Transmissão em grupo</h2>
+          <label class="switch-row">
+            <input type="checkbox" id="wh-group-setup" class="switch">
+            <span>Deixar até 4 pessoas mostrarem a tela na minha sala ao mesmo tempo</span>
+          </label>
+        </div>
       </div>
+
+      <button id="wh-start" type="button" class="btn btn-primary btn-lg btn-block btn-hop">Escolher a tela e começar</button>
+      <p class="wh-fine">O navegador pergunta o que mostrar. Para jogos, o <a href="/">app</a> pesa menos e leva só o som do jogo.</p>
     </section>
 
-    <!-- ======== Live ======== -->
+    <!-- ======== Live: preview and controls on one side, the room on the other ======== -->
     <section class="wh-live" id="wh-live" aria-labelledby="wh-live-title" hidden>
-      <div class="wh-live-head">
-        <span class="chip chip-live"><span class="live-eyes" aria-hidden="true"><i></i><i></i></span><span id="wh-live-title">Ao vivo</span></span>
-        <span class="chip chip-watchers"><svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg><span id="wh-count">0 assistindo</span></span>
-      </div>
-      <div class="wh-preview"><video id="wh-preview" autoplay muted playsinline></video></div>
-
-      <div class="card wh-link-card">
-        <label class="field-label" for="wh-link" id="wh-link-label">Link para os amigos</label>
-        <div class="join-row">
-          <input id="wh-link" class="input" type="text" readonly>
-          <button id="wh-copy" type="button" class="btn btn-secondary"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar link</button>
+      <div class="stream-header">
+        <div class="stream-info">
+          <span class="chip chip-live chip-onair"><span class="live-eyes" aria-hidden="true"><i></i><i></i></span><span id="wh-live-title">Ao vivo</span></span>
+          <span class="chip chip-group" id="wh-chip-group" hidden>
+            <img class="group-frog" id="wh-chip-frog" src="/brand/frog-head.svg" alt="" width="20" height="18"><span id="wh-chip-group-text">Em grupo</span>
+          </span>
         </div>
-        <p class="wh-fine" id="wh-link-fine">O link é sempre o mesmo neste navegador. Deixe esta aba aberta: fechando, a transmissão para.</p>
-        <p class="wh-names" id="wh-names"></p>
-        <p class="wh-reactions" id="wh-reactions" aria-live="polite"></p>
-        <div class="notice" id="wh-crowd" hidden>
-          <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-alert"/></svg>
-          <span class="notice-text">Pelo navegador, cada pessoa recebe uma cópia da sua internet. Com tanta gente, pode travar; o app manda uma só para todos.</span>
+        <div class="stream-actions">
+          <button id="wh-pause" type="button" class="btn btn-secondary quick-pause" aria-pressed="false" title="Seus amigos veem &quot;já volto&quot; até você voltar">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-pause"/></svg><span id="wh-pause-label">Pausa rápida</span>
+          </button>
+          <button id="wh-switch" type="button" class="btn btn-secondary">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-switch"/></svg>Trocar o que mostrar
+          </button>
+          <button id="wh-copy" type="button" class="btn btn-secondary">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-link"/></svg>Copiar link
+          </button>
+          <button id="wh-stop" type="button" class="btn btn-danger">
+            <svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-stop"/></svg><span id="wh-stop-label">Parar</span>
+          </button>
         </div>
       </div>
 
-      <div class="wh-actions">
-        <button id="wh-switch" type="button" class="btn btn-secondary"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-switch"/></svg>Trocar o que mostrar</button>
-        <button id="wh-stop" type="button" class="btn btn-danger"><svg class="ico" aria-hidden="true"><use href="/brand/icons.svg#i-stop"/></svg>Parar</button>
+      <div class="stream-body">
+        <div class="stream-main" id="wh-main">
+          <div class="preview-area" id="wh-preview-area">
+            <video id="wh-preview" autoplay muted playsinline></video>
+            <!-- Over the camera in the preview: drag to move it, pull the corner to resize -->
+            <div class="cam-handle" id="wh-cam-handle" title="Arraste para mudar a câmera de lugar; puxe o canto para mudar o tamanho" hidden>
+              <span class="cam-resize" aria-hidden="true"></span>
+            </div>
+          </div>
+          <p class="wh-link-line"><span class="sr-only">Link: </span><input id="wh-link" class="wh-link-input" type="text" readonly aria-label="Link para os amigos"></p>
+        </div>
+
+        <aside class="room-panel card" aria-labelledby="wh-room-title">
+          <h2 id="wh-room-title">Sala</h2>
+          <div class="room-watchers">
+            <span class="room-watchers-num" id="wh-watchers-num">0</span>
+            <span class="room-watchers-label">
+              <svg class="ico ico-sm" aria-hidden="true"><use href="/brand/icons.svg#i-eye"/></svg>
+              <span aria-hidden="true">assistindo agora</span>
+              <span id="wh-count" class="sr-only">0 assistindo</span>
+            </span>
+          </div>
+          <p class="wh-empty" id="wh-empty">Ninguém assistindo ainda: mande o link.</p>
+          <!-- Who's watching, by the names they picked; the owner can remove someone -->
+          <ul class="viewer-list" id="wh-viewer-list" aria-label="Quem está assistindo"></ul>
+          <div class="kick-row" id="wh-kick-row" hidden>
+            <label for="wh-kick-time">Quem eu expulsar fica fora por</label>
+            <select id="wh-kick-time" class="input kick-select">
+              <option value="10">10 minutos</option>
+              <option value="60" selected>1 hora</option>
+              <option value="1440">1 dia</option>
+              <option value="10080">1 semana</option>
+            </select>
+          </div>
+          <button type="button" class="link-button kick-undo" id="wh-clear-bans" hidden>Deixar voltar quem eu expulsei</button>
+          <label class="switch-row lock-row" id="wh-lock-row">
+            <input type="checkbox" id="wh-lock" class="switch">
+            <span>Trancar a sala: quem já está continua, ninguém novo entra</span>
+          </label>
+          <p class="reaction-counts" id="wh-reactions" aria-live="polite" hidden></p>
+          <dl class="room-facts">
+            <div><dt>Modo</dt><dd id="wh-fact-mode">Esperando alguém entrar</dd></div>
+            <div><dt>Imagem</dt><dd id="wh-fact-video">–</dd></div>
+            <div><dt>Codificação</dt><dd id="wh-fact-encoder">–</dd></div>
+            <div><dt>Envio</dt><dd id="wh-fact-rate">–</dd></div>
+          </dl>
+          <div class="group-section" id="wh-group-section">
+            <label class="switch-row" id="wh-group-row">
+              <input type="checkbox" id="wh-group-live" class="switch">
+              <span>Transmissão em grupo: até 4 pessoas mostram a tela nesta sala</span>
+            </label>
+            <ul class="group-list" id="wh-group-list" aria-label="Quem está transmitindo"></ul>
+            <p class="group-hint" id="wh-link-fine"></p>
+          </div>
+        </aside>
       </div>
     </section>
   </main>
