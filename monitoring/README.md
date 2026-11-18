@@ -95,6 +95,7 @@ avisam no contato "FrogShare Discord":
 | Quem assiste está travando | nos últimos 30 minutos, com pelo menos 20 minutos assistidos, a imagem ficou parada mais de 8 s por minuto em média, por 10 minutos seguidos |
 | Cloudflare passou de 70% do mês | o uso do mês passa de 630 GB |
 | Cloudflare passou de 90% do mês | o uso do mês passa de 810 GB (urgente: perto de 900 GB o servidor deixa de usar relay e servidor de mídia) |
+| Banco do Supabase passou de 400 MB | o banco chega a 400 MB dos 500 do plano grátis (cheio, pode ficar só para leitura; a limpeza opcional de `supabase.sql` resolve) |
 
 Para mudar um limite: edite `alertRules` em `grafana-sync.js` e rode o `apply` (ele refaz o grupo inteiro), ou
 mude no próprio Grafana.

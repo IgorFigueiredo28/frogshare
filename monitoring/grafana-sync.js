@@ -153,6 +153,10 @@ function alertRules(ds) {
       WHERE cloudflare_gb IS NOT NULL AND time > now() - interval '2 days' ORDER BY time DESC LIMIT 1`, 'gt', 70, {
       windowSec: 172800, summary: 'A Cloudflare está em {{ printf "%.0f" $values.B.Value }}% do limite do mês (900 GB).'
     }),
+    rule('frogshare-banco-400', 'Banco do Supabase passou de 400 MB', `
+      SELECT round(pg_database_size(current_database()) / 1048576.0, 1) AS mb`, 'gt', 400, {
+      summary: 'O banco do Supabase está com {{ printf "%.0f" $values.B.Value }} MB de 500 (plano grátis). Cheio, ele pode ficar só para leitura: ligue a limpeza automática do fim de monitoring/supabase.sql.'
+    }),
     rule('frogshare-cloudflare-90', 'Cloudflare passou de 90% do mês', `
       SELECT 100.0 * cloudflare_gb / nullif(cloudflare_cap_gb, 0) AS porcento FROM monitoring.server_stats
       WHERE cloudflare_gb IS NOT NULL AND time > now() - interval '2 days' ORDER BY time DESC LIMIT 1`, 'gt', 90, {

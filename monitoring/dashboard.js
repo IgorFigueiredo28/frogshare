@@ -172,15 +172,20 @@ panels.push(
     description: 'Direto não custa nada. Relay e servidor de mídia passam pela Cloudflare e contam no limite do mês.',
     overrides: [fixed('direto', 'green'), fixed('relay (TURN)', 'yellow'), fixed('servidor de mídia', 'blue')]
   }),
-  panel('bargauge', 'Cloudflare: usado e projeção', { h: 8, w: 8, x: 16, y: top }, sql(`
+  panel('bargauge', 'Limites do plano grátis', { h: 8, w: 8, x: 16, y: top }, sql(`
     WITH last AS (SELECT cloudflare_gb FROM monitoring.server_stats
                   WHERE cloudflare_gb IS NOT NULL AND time > date_trunc('month', now()) ORDER BY time DESC LIMIT 1),
          k AS (SELECT greatest(extract(epoch FROM now() - date_trunc('month', now())) / 86400.0, 1) AS passed,
                       extract(day FROM date_trunc('month', now()) + interval '1 month - 1 day') AS total)
-    SELECT round(cloudflare_gb, 0) AS "usado até agora", round(cloudflare_gb / passed * total, 0) AS "no fim do mês, neste ritmo" FROM last, k`, 'table'), {
-    description: 'O limite do servidor é 900 GB por mês (a Cloudflare cobra acima de 1.000).',
-    fieldConfig: { defaults: { unit: 'decgbytes', decimals: 0, min: 0, max: 900, color: { mode: 'thresholds' }, thresholds: steps(['green', null], ['orange', 630], ['red', 810]) }, overrides: [] },
-    options: { reduceOptions: { calcs: ['lastNotNull'], fields: '', values: false }, displayMode: 'gradient', orientation: 'horizontal', showUnfilled: true, valueMode: 'color', namePlacement: 'top', sizing: 'auto', minVizHeight: 16, maxVizHeight: 40 }
+    SELECT (SELECT round(cloudflare_gb, 0) FROM last) AS "Cloudflare: usado no mês",
+           (SELECT round(cloudflare_gb / passed * total, 0) FROM last, k) AS "Cloudflare: no fim do mês, neste ritmo",
+           round(pg_database_size(current_database()) / 1048576.0, 0) AS "Banco do Supabase"`, 'table'), {
+    description: 'Cloudflare: o servidor para de usar relay e servidor de mídia em 900 GB por mês (ela cobra acima de 1.000). Supabase: 500 MB no plano grátis; cheio, o banco pode ficar só para leitura (a limpeza opcional de monitoring/supabase.sql resolve).',
+    fieldConfig: {
+      defaults: { unit: 'decgbytes', decimals: 0, min: 0, max: 900, color: { mode: 'thresholds' }, thresholds: steps(['green', null], ['orange', 630], ['red', 810]) },
+      overrides: [field('Banco do Supabase', prop('unit', 'decmbytes'), prop('max', 500), prop('thresholds', steps(['green', null], ['orange', 400], ['red', 450])))]
+    },
+    options: { reduceOptions: { calcs: ['lastNotNull'], fields: '', values: false }, displayMode: 'gradient', orientation: 'horizontal', showUnfilled: true, valueMode: 'color', namePlacement: 'top', sizing: 'auto', minVizHeight: 16, maxVizHeight: 32 }
   })
 );
 top += 8;
