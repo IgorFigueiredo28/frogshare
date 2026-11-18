@@ -46,6 +46,13 @@ passo 3 e clique em **Import**.
 As partes "Agora", "Ao vivo ao longo do tempo" e "Cloudflare" se enchem com o retrato do servidor, que
 começa a ser gravado depois que esta versão do servidor está no Render. O resto já vem do histórico.
 
+- **Filtro "Versão do app":** fica no topo e serve para comparar uma versão nova com a anterior nos quadros de quem transmite.
+- **Marcas roxas:** aparecem nos gráficos quando uma versão do app transmite pela primeira vez.
+- **Atualizar o painel:** importe o JSON de novo e escolha **Import (Overwrite)**.
+
+Na conexão do Grafana, deixe **Max open** em 5: o login só pode abrir 5 conexões ao mesmo tempo, e o painel
+carrega vários quadros juntos. Com mais, alguns quadros falham com "too many connections".
+
 Para mudar o painel: edite `dashboard.js` e rode `node monitoring/dashboard.js`, que gera o JSON de novo.
 
 ## 5. Alertas (próximo passo)

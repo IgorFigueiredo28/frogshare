@@ -32,26 +32,106 @@
   "timezone": "browser",
   "editable": true,
   "graphTooltip": 1,
+  "liveNow": false,
   "refresh": "5m",
   "time": {
     "from": "now-24h",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+    "refresh_intervals": [
+      "1m",
+      "5m",
+      "15m",
+      "1h"
+    ]
+  },
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
+  "links": [
+    {
+      "title": "Como funciona",
+      "type": "link",
+      "url": "https://github.com/IgorFigueiredo28/frogshare/tree/main/monitoring",
+      "targetBlank": true,
+      "icon": "doc",
+      "tooltip": "monitoring/README.md"
+    }
+  ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "versao",
+        "label": "Versão do app",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "${DS_FROGSHARE}"
+        },
+        "definition": "SELECT DISTINCT coalesce(app_version, '?') FROM monitoring.host_quality WHERE time > now() - interval '30 days' ORDER BY 1 DESC",
+        "query": "SELECT DISTINCT coalesce(app_version, '?') FROM monitoring.host_quality WHERE time > now() - interval '30 days' ORDER BY 1 DESC",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "'__all'",
+        "sort": 0,
+        "hide": 0,
+        "regex": "",
+        "skipUrlSync": false,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      }
+    ]
   },
   "annotations": {
-    "list": []
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Versões novas",
+        "enable": true,
+        "iconColor": "purple",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "${DS_FROGSHARE}"
+        },
+        "target": {
+          "refId": "Anno",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT min(time) AS time, 'FrogShare ' || app_version || ': primeira transmissão nesta versão' AS text, 'versão' AS tags FROM monitoring.host_quality WHERE app_version IS NOT NULL GROUP BY app_version HAVING min(time) BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz"
+        }
+      }
+    ]
   },
-  "links": [],
   "panels": [
     {
       "id": 1,
       "type": "row",
-      "title": "Agora",
+      "title": "Resumo do período escolhido",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -64,14 +144,14 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Transmissões ao vivo",
+      "title": "Resumo",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
+        "h": 5,
+        "w": 24,
         "x": 0,
         "y": 1
       },
@@ -85,10 +165,10 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT coalesce((SELECT streams FROM monitoring.server_stats WHERE time > now() - interval '12 minutes' ORDER BY time DESC LIMIT 1), 0) AS valor"
+          "rawSql": "SELECT (SELECT count(*) FROM monitoring.viewer_quality WHERE $__timeFilter(time)) / 60.0 AS \"horas assistidas\", ((SELECT count(*) FROM monitoring.host_quality WHERE $__timeFilter(time)) + (SELECT count(*) FROM monitoring.web_host_quality WHERE $__timeFilter(time))) / 60.0 AS \"horas transmitidas\", (SELECT 100.0 * avg(CASE WHEN freezes = 0 THEN 1 ELSE 0 END) FROM monitoring.viewer_quality WHERE $__timeFilter(time)) AS \"imagem fluida\", (SELECT avg(avg_fps) FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND avg_fps IS NOT NULL) AS \"fps de quem assiste\", (SELECT count(*) FROM monitoring.errors WHERE $__timeFilter(time)) AS \"erros\""
         }
       ],
-      "description": "Do retrato que o servidor grava a cada 5 minutos enquanto está acordado.",
+      "description": "Imagem fluida: parte dos minutos assistidos sem nenhuma travada. Cada pessoa assistindo ou transmitindo manda um relatório por minuto.",
       "fieldConfig": {
         "defaults": {
           "unit": "none",
@@ -104,9 +184,157 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "0"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "horas assistidas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "horas transmitidas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "imagem fluida"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fps de quem assiste"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix: fps"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 24
+                    },
+                    {
+                      "color": "green",
+                      "value": 45
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "erros"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 20
+                    },
+                    {
+                      "color": "red",
+                      "value": 100
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
@@ -118,85 +346,39 @@
         },
         "colorMode": "value",
         "graphMode": "none",
-        "textMode": "value",
+        "textMode": "value_and_name",
         "justifyMode": "center",
-        "orientation": "auto"
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
       }
     },
     {
       "id": 3,
-      "type": "stat",
-      "title": "Pessoas assistindo",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "${DS_FROGSHARE}"
-      },
+      "type": "row",
+      "title": "Agora",
+      "collapsed": false,
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 1
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
       },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "${DS_FROGSHARE}"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT coalesce((SELECT viewers FROM monitoring.server_stats WHERE time > now() - interval '12 minutes' ORDER BY time DESC LIMIT 1), 0) AS valor"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value",
-        "justifyMode": "center",
-        "orientation": "auto"
-      }
+      "panels": []
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Salas ao vivo",
+      "title": "Ao vivo agora",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 1
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 7
       },
       "targets": [
         {
@@ -208,9 +390,10 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT coalesce((SELECT rooms_live FROM monitoring.server_stats WHERE time > now() - interval '12 minutes' ORDER BY time DESC LIMIT 1), 0) AS valor"
+          "rawSql": "WITH last AS (SELECT * FROM monitoring.server_stats WHERE time > now() - interval '12 minutes' ORDER BY time DESC LIMIT 1) SELECT coalesce((SELECT streams FROM last), 0) AS \"transmissões\", coalesce((SELECT viewers FROM last), 0) AS \"assistindo\", coalesce((SELECT rooms_live FROM last), 0) AS \"salas\", coalesce((SELECT sfu_streams FROM last), 0) AS \"pelo servidor de mídia\""
         }
       ],
+      "description": "Do retrato que o servidor grava a cada 5 minutos enquanto está acordado. Dormindo (ninguém usando há 15 minutos), é zero.",
       "fieldConfig": {
         "defaults": {
           "unit": "none",
@@ -226,9 +409,71 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "0"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pelo servidor de mídia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "transmissões"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "assistindo"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "salas"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
@@ -240,75 +485,15 @@
         },
         "colorMode": "value",
         "graphMode": "none",
-        "textMode": "value",
+        "textMode": "value_and_name",
         "justifyMode": "center",
-        "orientation": "auto"
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
       }
     },
     {
       "id": 5,
-      "type": "stat",
-      "title": "Pelo servidor de mídia",
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "${DS_FROGSHARE}"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 12,
-        "y": 1
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "${DS_FROGSHARE}"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT coalesce((SELECT sfu_streams FROM monitoring.server_stats WHERE time > now() - interval '12 minutes' ORDER BY time DESC LIMIT 1), 0) AS valor"
-        }
-      ],
-      "description": "Transmissões que mandam uma cópia só para a Cloudflare repassar (3 ou mais assistindo).",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "decimals": 0,
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value",
-        "justifyMode": "center",
-        "orientation": "auto"
-      }
-    },
-    {
-      "id": 6,
       "type": "gauge",
       "title": "Cloudflare no mês",
       "datasource": {
@@ -316,10 +501,10 @@
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 1
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 7
       },
       "targets": [
         {
@@ -334,7 +519,7 @@
           "rawSql": "SELECT cloudflare_gb AS usado FROM monitoring.server_stats WHERE cloudflare_gb IS NOT NULL AND time > date_trunc('month', now()) ORDER BY time DESC LIMIT 1"
         }
       ],
-      "description": "Relay e servidor de mídia somados, como a Cloudflare cobra. O servidor para de usar os dois perto de 900 GB.",
+      "description": "Relay e servidor de mídia somados, como a Cloudflare cobra. O servidor deixa de usar os dois perto de 900 GB.",
       "fieldConfig": {
         "defaults": {
           "unit": "decgbytes",
@@ -373,11 +558,14 @@
           "values": false
         },
         "showThresholdMarkers": true,
-        "showThresholdLabels": false
+        "showThresholdLabels": false,
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "sizing": "auto"
       }
     },
     {
-      "id": 7,
+      "id": 6,
       "type": "stat",
       "title": "Projeção do mês",
       "datasource": {
@@ -385,10 +573,10 @@
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 1
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 7
       },
       "targets": [
         {
@@ -400,13 +588,13 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT round(cloudflare_gb / greatest(extract(epoch FROM now() - date_trunc('month', now())) / 86400.0, 1) * extract(day FROM date_trunc('month', now()) + interval '1 month - 1 day'), 0) AS valor FROM monitoring.server_stats WHERE cloudflare_gb IS NOT NULL AND time > date_trunc('month', now()) ORDER BY time DESC LIMIT 1"
+          "rawSql": "WITH last AS (SELECT cloudflare_gb, cloudflare_cap_gb FROM monitoring.server_stats WHERE cloudflare_gb IS NOT NULL AND time > date_trunc('month', now()) ORDER BY time DESC LIMIT 1), k AS (SELECT greatest(extract(epoch FROM now() - date_trunc('month', now())) / 86400.0, 1) AS passed, extract(day FROM date_trunc('month', now()) + interval '1 month - 1 day') AS total) SELECT round(cloudflare_gb / passed * total, 0) AS \"no fim do mês\", round(100.0 * cloudflare_gb / passed * total / nullif(cloudflare_cap_gb, 0), 0) AS \"do limite\" FROM last, k"
         }
       ],
       "description": "No ritmo do mês até agora.",
       "fieldConfig": {
         "defaults": {
-          "unit": "decgbytes",
+          "unit": "none",
           "decimals": 0,
           "color": {
             "mode": "thresholds"
@@ -415,13 +603,66 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "purple",
+                "color": "green",
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "0"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "no fim do mês"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decgbytes"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "do limite"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
@@ -433,13 +674,15 @@
         },
         "colorMode": "value",
         "graphMode": "none",
-        "textMode": "value",
+        "textMode": "value_and_name",
         "justifyMode": "center",
-        "orientation": "auto"
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
       }
     },
     {
-      "id": 8,
+      "id": 7,
       "type": "timeseries",
       "title": "Ao vivo ao longo do tempo",
       "datasource": {
@@ -450,7 +693,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 12
       },
       "targets": [
         {
@@ -472,14 +715,18 @@
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 8,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "none",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -488,13 +735,59 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "assistindo"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "transmissões"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pelo servidor de mídia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -504,12 +797,12 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 9,
+      "id": 8,
       "type": "row",
       "title": "Quem assiste",
       "collapsed": false,
@@ -517,12 +810,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 19
       },
       "panels": []
     },
     {
-      "id": 10,
+      "id": 9,
       "type": "timeseries",
       "title": "Travadas",
       "datasource": {
@@ -533,7 +826,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 20
       },
       "targets": [
         {
@@ -556,14 +849,18 @@
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 8,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "none",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -572,7 +869,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
@@ -596,6 +893,55 @@
               {
                 "id": "max",
                 "value": 100
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% dos minutos com travada"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "travadas por minuto"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "segundos parados por minuto"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
               }
             ]
           }
@@ -609,12 +955,12 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 11,
+      "id": 10,
       "type": "timeseries",
       "title": "FPS de quem assiste",
       "datasource": {
@@ -625,7 +971,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 13
+        "y": 20
       },
       "targets": [
         {
@@ -640,21 +986,26 @@
           "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(avg_fps) AS \"média\", percentile_cont(0.1) WITHIN GROUP (ORDER BY avg_fps::float8) AS \"pior 10%\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND avg_fps IS NOT NULL GROUP BY 1 ORDER BY 1"
         }
       ],
+      "description": "Os 10% piores minutos mostram quem está sofrendo, mesmo quando a média vai bem.",
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "suffix: fps",
           "decimals": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 8,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "none",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -663,13 +1014,44 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "média"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pior 10%"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -679,12 +1061,12 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 12,
+      "id": 11,
       "type": "barchart",
       "title": "Por que travou (minutos)",
       "datasource": {
@@ -693,9 +1075,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 10,
+        "w": 12,
         "x": 0,
-        "y": 21
+        "y": 28
       },
       "targets": [
         {
@@ -707,36 +1089,188 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT diagnosis AS motivo, count(*) AS minutos FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND diagnosis <> 'sem problema' GROUP BY 1 ORDER BY 2 DESC"
+          "rawSql": "SELECT diagnosis AS motivo, count(*) FILTER (WHERE diagnosis LIKE '%quem transmite%') AS \"lado de quem transmite\", count(*) FILTER (WHERE diagnosis LIKE '%quem assiste%') AS \"lado de quem assiste\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND diagnosis <> 'sem problema' GROUP BY 1 ORDER BY count(*) DESC"
         }
       ],
-      "description": "O diagnóstico que a própria página da sala faz: lado de quem transmite ou de quem assiste.",
+      "description": "O diagnóstico que a própria página da sala faz em cada minuto com travada.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "fillOpacity": 80,
-            "lineWidth": 0
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lado de quem transmite"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lado de quem assiste"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "orientation": "horizontal",
         "xField": "motivo",
         "showValue": "auto",
+        "stacking": "normal",
         "barWidth": 0.7,
         "groupWidth": 0.7,
         "legend": {
-          "showLegend": false,
+          "showLegend": true,
           "displayMode": "list",
           "placement": "bottom"
         },
         "tooltip": {
           "mode": "single",
           "sort": "none"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Atraso e perda",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(rtt_ms / 2.0 + buffer_ms) AS \"atraso até a tela\", avg(loss_pct) AS \"perda de pacotes\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Atraso: metade do ida e volta da rede mais o tempo no buffer de quem assiste. Perda acima de 2% já trava.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0,
+            "axisBorderShow": false
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "perda de pacotes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "atraso até a tela"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       }
     },
@@ -750,9 +1284,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 7,
-        "x": 10,
-        "y": 21
+        "w": 8,
+        "x": 0,
+        "y": 36
       },
       "targets": [
         {
@@ -764,27 +1298,77 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN via_sfu THEN 'servidor de mídia' WHEN via_relay THEN 'relay (TURN)' ELSE 'direto' END AS caminho, count(*) AS minutos FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 2 DESC"
+          "rawSql": "SELECT count(*) FILTER (WHERE NOT via_sfu AND NOT via_relay) AS \"direto\", count(*) FILTER (WHERE via_relay AND NOT via_sfu) AS \"relay (TURN)\", count(*) FILTER (WHERE via_sfu) AS \"servidor de mídia\" FROM monitoring.viewer_quality WHERE $__timeFilter(time)"
         }
       ],
+      "description": "Direto não custa nada. Relay e servidor de mídia passam pela Cloudflare e contam no limite do mês.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "noValue": "sem dados"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "direto"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "relay (TURN)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "servidor de mídia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
-          "values": true,
+          "values": false,
           "calcs": [
             "lastNotNull"
           ],
           "fields": ""
         },
         "pieType": "donut",
-        "displayLabels": [],
+        "displayLabels": [
+          "percent"
+        ],
         "legend": {
           "displayMode": "table",
           "placement": "right",
@@ -803,6 +1387,131 @@
     {
       "id": 14,
       "type": "piechart",
+      "title": "Resolução que chega",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) FILTER (WHERE h >= 1000) AS \"1080p ou mais\", count(*) FILTER (WHERE h >= 700 AND h < 1000) AS \"720p\", count(*) FILTER (WHERE h >= 500 AND h < 700) AS \"540p\", count(*) FILTER (WHERE h < 500) AS \"menor\" FROM (SELECT monitoring.num(split_part(resolution, 'x', 2)) AS h FROM monitoring.viewer_quality WHERE $__timeFilter(time)) r"
+        }
+      ],
+      "description": "Altura da imagem que chega a quem assiste. Ultrawide em 1080p chega com menos de 1080 de altura.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "sem dados"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "1080p ou mais"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "720p"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "540p"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "menor"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "pieType": "donut",
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "piechart",
       "title": "Navegadores de quem assiste",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -810,9 +1519,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 7,
-        "x": 17,
-        "y": 21
+        "w": 8,
+        "x": 16,
+        "y": 36
       },
       "targets": [
         {
@@ -831,7 +1540,8 @@
         "defaults": {
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "noValue": "sem dados"
         },
         "overrides": []
       },
@@ -844,7 +1554,9 @@
           "fields": ""
         },
         "pieType": "donut",
-        "displayLabels": [],
+        "displayLabels": [
+          "percent"
+        ],
         "legend": {
           "displayMode": "table",
           "placement": "right",
@@ -861,7 +1573,7 @@
       }
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "row",
       "title": "Quem transmite",
       "collapsed": false,
@@ -869,12 +1581,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 44
       },
       "panels": []
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "barchart",
       "title": "Versões em uso (minutos transmitidos)",
       "datasource": {
@@ -885,7 +1597,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 30
+        "y": 45
       },
       "targets": [
         {
@@ -897,7 +1609,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT coalesce(app_version, '?') AS versao, count(*) AS minutos FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 UNION ALL SELECT 'navegador', count(*) FROM monitoring.web_host_quality WHERE $__timeFilter(time) HAVING count(*) > 0 ORDER BY 2 DESC"
+          "rawSql": "SELECT versao, minutos FROM ( SELECT coalesce(app_version, '?') AS versao, count(*) AS minutos FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 UNION ALL SELECT 'navegador' AS versao, count(*) AS minutos FROM monitoring.web_host_quality WHERE $__timeFilter(time) ) v WHERE minutos > 0 ORDER BY minutos DESC"
         }
       ],
       "description": "Mostra se a atualização automática chegou em todo mundo.",
@@ -907,16 +1619,34 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "fillOpacity": 80,
-            "lineWidth": 0
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "minutos"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "orientation": "horizontal",
         "xField": "versao",
         "showValue": "auto",
+        "stacking": "none",
         "barWidth": 0.7,
         "groupWidth": 0.7,
         "legend": {
@@ -927,11 +1657,12 @@
         "tooltip": {
           "mode": "single",
           "sort": "none"
-        }
+        },
+        "xTickLabelRotation": 0
       }
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "timeseries",
       "title": "Codificação: placa de vídeo × processador",
       "datasource": {
@@ -942,7 +1673,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 30
+        "y": 45
       },
       "targets": [
         {
@@ -954,7 +1685,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), sum(links_gpu) / 15.0 AS \"placa de vídeo\", sum(links_cpu) / 15.0 AS \"processador\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), sum(links_gpu) / 15.0 AS \"placa de vídeo\", sum(links_cpu) / 15.0 AS \"processador\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao)) GROUP BY 1 ORDER BY 1"
         }
       ],
       "description": "Quantas cópias da imagem estão sendo codificadas ao mesmo tempo, em média. Pelo processador pesa no jogo.",
@@ -966,13 +1697,17 @@
             "drawStyle": "line",
             "lineWidth": 2,
             "fillOpacity": 35,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "normal",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -981,13 +1716,44 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "placa de vídeo"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "processador"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -997,14 +1763,14 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "timeseries",
-      "title": "FPS de quem transmite (app)",
+      "title": "FPS de quem transmite",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${DS_FROGSHARE}"
@@ -1013,7 +1779,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 30
+        "y": 45
       },
       "targets": [
         {
@@ -1025,24 +1791,29 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(capture_fps) AS \"captura\", avg(pipeline_fps) AS \"depois do redesenho\", avg(sent_fps) AS \"enviado\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(capture_fps) AS \"captura\", avg(pipeline_fps) AS \"depois do redesenho\", avg(sent_fps) AS \"enviado\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao)) GROUP BY 1 ORDER BY 1"
         }
       ],
+      "description": "Captura abaixo do enviado: tela parada ou jogo travando. Enviado bem abaixo do redesenho: o codificador não deu conta.",
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "suffix: fps",
           "decimals": 0,
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 8,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "none",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -1051,13 +1822,59 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "captura"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "depois do redesenho"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "enviado"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1067,12 +1884,12 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 19,
+      "id": 20,
       "type": "timeseries",
       "title": "Aperto no PC de quem transmite",
       "datasource": {
@@ -1081,9 +1898,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
-        "y": 38
+        "y": 53
       },
       "targets": [
         {
@@ -1095,7 +1912,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), 100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END) AS \"em 30 fps automático\", 100.0 * avg(CASE WHEN cpu_limited THEN 1 ELSE 0 END) AS \"limitado pelo processador\", 100.0 * avg(CASE WHEN bandwidth_limited THEN 1 ELSE 0 END) AS \"limitado pela internet\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), 100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END) AS \"em 30 fps automático\", 100.0 * avg(CASE WHEN cpu_limited THEN 1 ELSE 0 END) AS \"limitado pelo processador\", 100.0 * avg(CASE WHEN bandwidth_limited THEN 1 ELSE 0 END) AS \"limitado pela internet\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao)) GROUP BY 1 ORDER BY 1"
         }
       ],
       "description": "Parte dos minutos transmitidos em cada situação.",
@@ -1106,14 +1923,18 @@
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 8,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "none",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -1122,13 +1943,59 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "em 30 fps automático"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limitado pelo processador"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limitado pela internet"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1138,12 +2005,224 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 20,
+      "id": 21,
+      "type": "timeseries",
+      "title": "Upload de quem transmite",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(upload_kbps) * 1000 AS \"média por transmissão\", max(upload_kbps) * 1000 AS \"maior\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao)) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Somando as cópias que cada transmissão manda (uma por pessoa, ou uma só pelo servidor de mídia).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0,
+            "axisBorderShow": false
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "média por transmissão"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "maior"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Redesenho e codificação por quadro",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(draw_ms) AS \"redesenho\", avg(encode_ms) AS \"codificação\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao)) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Tempo de cada quadro no redesenho pela placa e no codificador. A 60 fps, cada quadro tem 16 ms ao todo.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0,
+            "axisBorderShow": false
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "redesenho"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "codificação"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 23,
       "type": "table",
       "title": "Placas de vídeo de quem transmite",
       "datasource": {
@@ -1153,8 +2232,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 38
+        "x": 0,
+        "y": 61
       },
       "targets": [
         {
@@ -1166,19 +2245,154 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT coalesce(gpu_model, '?') AS placa, count(*) AS minutos, round(100.0 * sum(links_cpu) / nullif(sum(links), 0), 0) AS \"% no processador\", round(avg(sent_fps), 0) AS \"fps enviado\", round(100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END), 0) AS \"% em 30 automático\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 2 DESC LIMIT 15"
+          "rawSql": "SELECT coalesce(gpu_model, '?') AS placa, count(*) AS minutos, round(100.0 * sum(links_cpu) / nullif(sum(links), 0), 0) AS \"% no processador\", round(avg(sent_fps), 0) AS \"fps enviado\", round(100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END), 0) AS \"% em 30 automático\", round(avg(encode_ms), 1) AS \"codificação (ms)\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao)) GROUP BY 1 ORDER BY 2 DESC LIMIT 15"
         }
       ],
+      "description": "Placas que codificam no processador ou vivem em 30 fps automático são as que mais sofrem.",
       "fieldConfig": {
         "defaults": {
           "custom": {
             "align": "auto",
             "cellOptions": {
               "type": "auto"
-            }
-          }
+            },
+            "inspect": false
+          },
+          "noValue": "—"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% no processador"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": 40
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% em 30 automático"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 20
+                    },
+                    {
+                      "color": "red",
+                      "value": 50
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fps enviado"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 30
+                    },
+                    {
+                      "color": "green",
+                      "value": 50
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -1193,18 +2407,18 @@
       }
     },
     {
-      "id": 21,
+      "id": 24,
       "type": "piechart",
-      "title": "Sistema de quem transmite pelo app",
+      "title": "Captura de tela",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 46
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 61
       },
       "targets": [
         {
@@ -1216,27 +2430,77 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT platform AS sistema, count(*) AS minutos FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 2 DESC"
+          "rawSql": "SELECT count(*) FILTER (WHERE capture = 'wgc') AS \"rápida (WGC)\", count(*) FILTER (WHERE capture = 'dxgi') AS \"antiga (DXGI)\", count(*) FILTER (WHERE capture IS NULL OR capture NOT IN ('wgc', 'dxgi')) AS \"outra (Mac, versões antigas)\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao))"
         }
       ],
+      "description": "A captura antiga (DXGI) fica em ~32 fps e pesa mais no jogo.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "noValue": "sem dados"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rápida (WGC)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "antiga (DXGI)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "outra (Mac, versões antigas)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
-          "values": true,
+          "values": false,
           "calcs": [
             "lastNotNull"
           ],
           "fields": ""
         },
         "pieType": "donut",
-        "displayLabels": [],
+        "displayLabels": [
+          "percent"
+        ],
         "legend": {
           "displayMode": "table",
           "placement": "right",
@@ -1253,18 +2517,18 @@
       }
     },
     {
-      "id": 22,
-      "type": "table",
-      "title": "Pelo navegador",
+      "id": 25,
+      "type": "piechart",
+      "title": "Sistema de quem transmite",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 7,
-        "w": 16,
-        "x": 8,
-        "y": 46
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 61
       },
       "targets": [
         {
@@ -1276,19 +2540,218 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT browser || ' (' || platform || ')' AS navegador, count(*) AS minutos, round(avg(sent_fps), 0) AS \"fps enviado\", round(100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END), 0) AS \"% em 30 automático\", round(100.0 * avg(CASE WHEN piped THEN 1 ELSE 0 END), 0) AS \"% pela placa de vídeo\", round(100.0 * avg(CASE WHEN mode = 'sfu' THEN 1 ELSE 0 END), 0) AS \"% no servidor de mídia\" FROM monitoring.web_host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 2 DESC"
+          "rawSql": "SELECT count(*) FILTER (WHERE platform = 'Windows') AS \"Windows\", count(*) FILTER (WHERE platform = 'Mac') AS \"Mac\", count(*) FILTER (WHERE platform NOT IN ('Windows', 'Mac')) AS \"outro\" FROM monitoring.host_quality WHERE $__timeFilter(time) AND ('__all' IN ($versao) OR coalesce(app_version, '?') IN ($versao))"
         }
       ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "sem dados"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Windows"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Mac"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "outro"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "pieType": "donut",
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "Pelo navegador",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT browser || ' (' || platform || ')' AS navegador, count(*) AS minutos, round(avg(sent_fps), 0) AS \"fps enviado\", round(100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END), 0) AS \"% em 30 automático\", round(100.0 * avg(CASE WHEN piped THEN 1 ELSE 0 END), 0) AS \"% pela placa de vídeo\", round(100.0 * avg(CASE WHEN mode = 'sfu' THEN 1 ELSE 0 END), 0) AS \"% no servidor de mídia\", round(avg(upload_kbps) / 1000.0, 1) AS \"upload (Mbps)\" FROM monitoring.web_host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ],
+      "description": "Transmissões feitas em transmitir.html, por navegador.",
       "fieldConfig": {
         "defaults": {
           "custom": {
             "align": "auto",
             "cellOptions": {
               "type": "auto"
-            }
-          }
+            },
+            "inspect": false
+          },
+          "noValue": "—"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% pela placa de vídeo"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fps enviado"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 30
+                    },
+                    {
+                      "color": "green",
+                      "value": 50
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -1303,7 +2766,7 @@
       }
     },
     {
-      "id": 23,
+      "id": 27,
       "type": "row",
       "title": "Erros",
       "collapsed": false,
@@ -1311,12 +2774,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 75
       },
       "panels": []
     },
     {
-      "id": 24,
+      "id": 28,
       "type": "timeseries",
       "title": "Erros por hora",
       "datasource": {
@@ -1324,10 +2787,10 @@
         "uid": "${DS_FROGSHARE}"
       },
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 76
       },
       "targets": [
         {
@@ -1347,16 +2810,20 @@
           "unit": "none",
           "decimals": 0,
           "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 35,
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "gradientMode": "none",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "normal",
               "group": "A"
             },
-            "axisSoftMin": 0
+            "axisSoftMin": 0,
+            "axisBorderShow": false
           },
           "color": {
             "mode": "palette-classic"
@@ -1365,13 +2832,74 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent",
+                "color": "green",
                 "value": null
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sala"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "app (tela)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "app (processo)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "transmitir pelo navegador"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1381,12 +2909,12 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     },
     {
-      "id": 25,
+      "id": 29,
       "type": "table",
       "title": "Erros mais comuns",
       "datasource": {
@@ -1397,7 +2925,7 @@
         "h": 10,
         "w": 14,
         "x": 0,
-        "y": 62
+        "y": 83
       },
       "targets": [
         {
@@ -1412,16 +2940,85 @@
           "rawSql": "SELECT message AS erro, origin AS onde, string_agg(DISTINCT coalesce(app_version, '?'), ', ') AS \"versões\", count(*) AS vezes, max(time) AS \"último\" FROM monitoring.errors WHERE $__timeFilter(time) GROUP BY 1, 2 ORDER BY 4 DESC LIMIT 30"
         }
       ],
+      "description": "Números e códigos viram N e # para erros iguais se juntarem.",
       "fieldConfig": {
         "defaults": {
           "custom": {
             "align": "auto",
             "cellOptions": {
               "type": "auto"
-            }
-          }
+            },
+            "inspect": false
+          },
+          "noValue": "—"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "último"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeFromNow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vezes"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 5
+                    },
+                    {
+                      "color": "red",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "erro"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 420
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -1436,7 +3033,7 @@
       }
     },
     {
-      "id": 26,
+      "id": 30,
       "type": "table",
       "title": "Erros novos",
       "datasource": {
@@ -1447,7 +3044,7 @@
         "h": 10,
         "w": 10,
         "x": 14,
-        "y": 62
+        "y": 83
       },
       "targets": [
         {
@@ -1459,7 +3056,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT e.message AS erro, e.origin AS onde, count(*) AS vezes, min(e.time) AS \"primeira vez\" FROM monitoring.errors e WHERE $__timeFilter(e.time) AND NOT EXISTS ( SELECT 1 FROM monitoring.errors o WHERE o.message = e.message AND o.time < $__timeFrom()::timestamptz AND o.time > $__timeFrom()::timestamptz - interval '30 days') GROUP BY 1, 2 ORDER BY 4 DESC LIMIT 30"
+          "rawSql": "SELECT e.message AS erro, e.origin AS onde, count(*) AS vezes, min(e.time) AS \"primeira vez\" FROM monitoring.errors e WHERE $__timeFilter(e.time) AND NOT EXISTS ( SELECT 1 FROM monitoring.errors o WHERE o.message = e.message AND o.time < $__timeFrom()::timestamptz AND o.time > $__timeFrom()::timestamptz - interval '30 days') GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 30"
         }
       ],
       "description": "Erros do período escolhido que não apareceram nos 30 dias antes dele: o que uma versão nova trouxe.",
@@ -1469,10 +3066,62 @@
             "align": "auto",
             "cellOptions": {
               "type": "auto"
-            }
-          }
+            },
+            "inspect": false
+          },
+          "noValue": "—"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "primeira vez"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeFromNow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vezes"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "orange",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -1487,7 +3136,7 @@
       }
     },
     {
-      "id": 27,
+      "id": 31,
       "type": "row",
       "title": "Cloudflare",
       "collapsed": false,
@@ -1495,12 +3144,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 72
+        "y": 93
       },
       "panels": []
     },
     {
-      "id": 28,
+      "id": 32,
       "type": "timeseries",
       "title": "Uso no mês",
       "datasource": {
@@ -1511,7 +3160,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 94
       },
       "targets": [
         {
@@ -1526,7 +3175,7 @@
           "rawSql": "SELECT $__timeGroupAlias(time, '1h', NULL), max(cloudflare_gb) AS \"total\", max(cloudflare_sfu_gb) AS \"servidor de mídia\", max(cloudflare_relay_gb) AS \"relay (TURN)\" FROM monitoring.server_stats WHERE $__timeFilter(time) AND cloudflare_gb IS NOT NULL GROUP BY 1 ORDER BY 1"
         }
       ],
-      "description": "Acumulado do mês, como a Cloudflare conta. A linha vermelha é o limite do servidor (900 GB).",
+      "description": "Acumulado do mês, como a Cloudflare conta. A linha tracejada é o limite do servidor (900 GB).",
       "fieldConfig": {
         "defaults": {
           "unit": "decgbytes",
@@ -1534,16 +3183,20 @@
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 8,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "showPoints": "never",
             "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
             "stacking": {
               "mode": "none",
               "group": "A"
             },
             "axisSoftMin": 0,
+            "axisBorderShow": false,
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "dashed"
             }
           },
           "color": {
@@ -1563,7 +3216,53 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "servidor de mídia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "relay (TURN)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1573,7 +3272,7 @@
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "none"
+          "sort": "desc"
         }
       }
     }
