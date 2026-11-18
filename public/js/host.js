@@ -599,7 +599,7 @@ async function ensureRoom() {
       if (roomLocked) socket.emit('lock-room', { locked: true });
     }
     // The server forgets the SFU session when the host socket drops
-    if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
+    if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks, main: sfu.main });
     viewerListPrimed = false;
     sendGame();
   };
@@ -1645,6 +1645,8 @@ async function startSfu() {
     const failed = (data.tracks || []).find(t => t.errorCode);
     if (failed) throw new Error(failed.errorDescription || failed.errorCode);
     const answerSdp = sfu.plainProfile ? data.sessionDescription.sdp : await hardwareProfileSdp(data.sessionDescription.sdp);
+    // Viewers whose decoder can't take "Main" go straight to a direct link when they know
+    sfu.main = answerSdp !== data.sessionDescription.sdp;
     await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswerSdp(preferH264(answerSdp)) });
     await waitConnected(pc, 10000);
     if (!isStreaming || !localStream) throw new Error('stream stopped during SFU start');
@@ -1668,10 +1670,11 @@ async function startSfu() {
         stopSfu();
       }
     });
-    socket.emit('sfu-start', { sessionId, tracks: sfu.tracks });
+    socket.emit('sfu-start', { sessionId, tracks: sfu.tracks, main: sfu.main });
 
-    // Viewers swap over on their own; drop the direct connections they no longer use.
-    // A viewer that fell back to P2P gets a fresh entry, which the identity check spares.
+    // Viewers swap over on their own once the new picture decodes there; drop the direct connections they no
+    // longer use. A viewer that fell back to P2P keeps its link (keepDirect) or gets a fresh entry, which the
+    // identity check spares. 15 s: a viewer checks the decoding for up to 6 s before giving up on the swap.
     const previous = [...peerConnections];
     setTimeout(() => {
       for (const [id, old] of previous) {
@@ -1680,7 +1683,7 @@ async function startSfu() {
           peerConnections.delete(id);
         }
       }
-    }, 6000);
+    }, 15000);
   } catch (err) {
     if (pc) pc.close();
     sfu.cooldownUntil = Date.now() + 300000;

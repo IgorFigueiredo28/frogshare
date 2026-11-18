@@ -90,6 +90,10 @@
     if (q && [30, 60].includes(Number(q.fps))) quality.fps = Number(q.fps);
   })();
   const BOX = { 720: [1280, 720], 1080: [1920, 1080] };
+  // The fps in use: the preset's, or 30 while the PC can't keep up with 60 (see "Load")
+  const autoFps = { active: false, overTicks: 0, retryAt: 0, backoffMs: 3 * 60000, lastOffAt: 0 };
+  const effFps = () => (autoFps.active ? Math.min(30, quality.fps) : quality.fps);
+  const workerQuality = () => ({ ...quality, fps: effFps() });
   // Fits a 16:9 box whatever the shape: an ultrawide 2560x1080 goes as 1920x810, not 2560x1080
   function targetSize(w, h) {
     const box = BOX[quality.res];
@@ -109,14 +113,15 @@
   function presetBitrate() {
     const [sw, sh] = sourceSize();
     const { w, h } = targetSize(sw, sh);
-    return Math.round(Math.min(20e6, Math.max(2e6, w * h * quality.fps * (quality.fps > 30 ? 0.1 : 0.13))));
+    const fps = effFps();
+    return Math.round(Math.min(20e6, Math.max(2e6, w * h * fps * (fps > 30 ? 0.1 : 0.13))));
   }
   const outHeight = () => pipeInfo.outH || targetSize(...sourceSize()).h || 1080;
   function videoConstraints() {
     const box = BOX[quality.res];
     return {
       ...(box ? { width: { max: box[0] }, height: { max: box[1] } } : {}),
-      frameRate: { ideal: quality.fps, max: quality.fps },
+      frameRate: { ideal: effFps(), max: effFps() },
       // As in the app: a fullscreen game shows only its own crosshair (where the browser supports it)
       cursor: 'never'
     };
@@ -124,14 +129,18 @@
   function renderQuality() {
     document.querySelectorAll('input[name="wh-res"]').forEach(r => { r.checked = r.value === quality.res; });
     document.querySelectorAll('input[name="wh-fps"]').forEach(r => { r.checked = Number(r.value) === quality.fps; });
-    $('wh-quality-hint').textContent = `até ~${Math.round(presetBitrate() / 1e6)} Mbps de upload por pessoa assistindo`;
+    $('wh-quality-hint').textContent = autoFps.active
+      ? 'Em 30 fps por enquanto: o PC está ocupado e assim a imagem fica estável. Volta a 60 sozinho.'
+      : `até ~${Math.round(presetBitrate() / 1e6)} Mbps de upload por pessoa assistindo`;
   }
   document.querySelectorAll('input[name="wh-res"], input[name="wh-fps"]').forEach(input => {
     input.addEventListener('change', async () => {
       if (input.name === 'wh-res') quality.res = input.value;
       else quality.fps = Number(input.value);
       storage.set(QUALITY_KEY, JSON.stringify(quality));
-      pipe?.worker.postMessage({ quality: { ...quality } });
+      // A choice made by hand starts over at the preset
+      if (input.name === 'wh-fps') Object.assign(autoFps, { active: false, overTicks: 0, backoffMs: 3 * 60000 });
+      pipe?.worker.postMessage({ quality: workerQuality() });
       if (current?.raw) await current.raw.applyConstraints(videoConstraints()).catch(() => {});
       renderQuality();
       applyAllSenders();
@@ -184,7 +193,7 @@
       if (m.error) reportError('Pipeline read failed: ' + m.error);
     };
     worker.onerror = (e) => reportError('Pipeline worker error: ' + (e.message || 'unknown'));
-    worker.postMessage({ quality: { ...quality }, camLayout: camLayout() });
+    worker.postMessage({ quality: workerQuality(), camLayout: camLayout() });
     return p;
   }
   function feedPipe(raw) {
@@ -252,7 +261,7 @@
     const h = outHeight();
     return {
       maxBitrate: isLow ? Math.min(LOW_BPS, presetBitrate()) : presetBitrate(),
-      maxFramerate: isLow ? Math.min(30, quality.fps) : quality.fps,
+      maxFramerate: isLow ? Math.min(30, effFps()) : effFps(),
       scaleResolutionDownBy: isLow && h > 540 ? +(h / 540).toFixed(3) : 1,
       active: isSfu || !watchOff.has(viewerId)
     };
@@ -442,6 +451,8 @@
       const failed = (data.tracks || []).find(t => t.errorCode);
       if (failed) throw new Error(failed.errorDescription || failed.errorCode);
       const answer = sfu.plainProfile ? data.sessionDescription.sdp : await hardwareProfileSdp(data.sessionDescription.sdp);
+      // Viewers whose decoder can't take "Main" go straight to a direct link when they know
+      sfu.main = answer !== data.sessionDescription.sdp;
       await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(answer) });
       await waitConnected(pc, 10000);
       if (!live || !stream) throw new Error('stream stopped during SFU start');
@@ -464,15 +475,16 @@
           stopSfu();
         }
       });
-      socket.emit('sfu-start', { sessionId, tracks: sfu.tracks });
-      // Viewers swap over on their own; drop the direct links they no longer use (a viewer that fell back
-      // to a direct link gets a fresh entry, which the identity check spares)
+      socket.emit('sfu-start', { sessionId, tracks: sfu.tracks, main: sfu.main });
+      // Viewers swap over on their own once the new picture decodes there; drop the direct links they no
+      // longer use (one that fell back keeps its link or gets a fresh entry, which the identity check
+      // spares). 15 s: a viewer checks the decoding for up to 6 s before giving up on the swap.
       const previous = [...pcs];
       setTimeout(() => {
         for (const [id, old] of previous) {
           if (sfu.active && !old.keepDirect && pcs.get(id) === old) { old.close(); pcs.delete(id); }
         }
-      }, 6000);
+      }, 15000);
       renderFacts();
     } catch (err) {
       if (pc) pc.close();
@@ -570,7 +582,7 @@
     }
     if (!live) return;
     // The server forgets the media server session when the socket drops
-    if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks });
+    if (sfu.active) socket.emit('sfu-start', { sessionId: sfu.sessionId, tracks: sfu.tracks, main: sfu.main });
     sendGame();
   }
 
@@ -948,7 +960,7 @@
     }
     renderPause();
     // Viewers hear about it at once: a still card mustn't read as a frozen stream
-    if (socket?.connected) socket.emit('host-health', { fps: null, target: quality.fps, limit: 'none', away: on });
+    if (socket?.connected) socket.emit('host-health', { fps: null, target: effFps(), limit: 'none', away: on });
   }
   function renderPause() {
     const btn = $('wh-pause');
@@ -1211,6 +1223,9 @@
     renderReactions();
     low.clear();
     watchOff.clear();
+    Object.assign(autoFps, { active: false, overTicks: 0, backoffMs: 3 * 60000, lastOffAt: 0 });
+    loadPipe = { outFrames: pipeInfo.outFrames, at: 0 };
+    lastReport = { inFrames: pipeInfo.inFrames, outFrames: pipeInfo.outFrames, drawMs: pipeInfo.drawMs || 0, at: performance.now() };
     sfu.plainProfile = false;
     sfu.silentFailures = 0;
     renderLink();
@@ -1308,7 +1323,7 @@
     const active = samples.filter(s => !s.idle);
     const main = active.find(s => s.sfu) || active.sort((a, b) => b.w * b.h - a.w * a.h)[0];
     if (!main) { video.textContent = '–'; enc.textContent = '–'; rate.textContent = '–'; delete enc.dataset.tone; return; }
-    video.textContent = `${main.w}x${main.h} a ${main.fps} fps`;
+    video.textContent = `${main.w}x${main.h} a ${main.fps} fps${autoFps.active ? ' (automático: o PC está ocupado)' : ''}`;
     enc.textContent = `${main.codec || 'vídeo'} ${main.gpu ? 'na placa de vídeo' : 'no processador'}`;
     enc.dataset.tone = main.gpu ? 'ok' : 'warn';
     const total = samples.reduce((sum, s) => sum + s.kbps, 0);
@@ -1330,7 +1345,7 @@
     }
     const limits = samples.filter(s => !s.idle).map(s => s.limit).filter(l => l && l !== 'none');
     const limit = limits.includes('cpu') ? 'cpu' : limits.includes('bandwidth') ? 'bandwidth' : limits.length ? 'other' : 'none';
-    socket.emit('host-health', { fps: Math.round(fps), target: quality.fps, limit, away: privacy.away });
+    socket.emit('host-health', { fps: Math.round(fps), target: effFps(), limit, away: privacy.away });
   }
   async function statsTick() {
     if (!live) return;
@@ -1338,9 +1353,79 @@
     lastSamples = await sampleSenders();
     if (!live) return;
     renderFacts(lastSamples);
+    updateAutoFps(lastSamples);
     updateSfuMode();
     watchSfuSilence(lastSamples);
     if (tick % 3 === 0) reportHealth(lastSamples);
+    if (tick % 30 === 0) reportQuality(lastSamples);
+  }
+
+  // ======== Load: 30 fps while the PC can't keep up with 60 (as in the app) ========
+  // A steady 30 looks smoother than an uneven 60 with frames thrown away, and halves the encoding. Tries 60
+  // again a few minutes later; struggling again right away keeps it at 30 longer (3, 6, 12 ... 30 min).
+  let loadPipe = { outFrames: 0, at: 0 };
+  function updateAutoFps(samples) {
+    const now = performance.now();
+    const secs = loadPipe.at ? (now - loadPipe.at) / 1000 : 0;
+    const outFps = secs && pipe ? (pipeInfo.outFrames - loadPipe.outFrames) / secs : 0;
+    loadPipe = { outFrames: pipeInfo.outFrames, at: now };
+    // Links capped on purpose ("Economizar dados", someone watching another stream) say nothing about the PC
+    const links = samples.filter(s => !s.idle && s.ageMs > 10000 && !low.has(s.id));
+    if (!secs || quality.fps <= 30 || privacy.away || !links.length) { autoFps.overTicks = 0; return; }
+    if (autoFps.active) {
+      if (Date.now() >= autoFps.retryAt) setAutoFps(false);
+      return;
+    }
+    const sent = Math.max(...links.map(s => s.fps || 0));
+    const cpu = links.some(s => s.limit === 'cpu');
+    // Without the worker there's no count of frames made, only the encoder's own word
+    const struggling = cpu || (pipe && outFps >= 40 && sent < outFps * 0.75);
+    autoFps.overTicks = struggling ? autoFps.overTicks + 1 : 0;
+    if (autoFps.overTicks >= 5) setAutoFps(true);
+  }
+  function setAutoFps(on) {
+    autoFps.active = on;
+    autoFps.overTicks = 0;
+    if (on) {
+      autoFps.backoffMs = Date.now() - autoFps.lastOffAt < 90000 ? Math.min(30 * 60000, autoFps.backoffMs * 2) : 3 * 60000;
+      autoFps.retryAt = Date.now() + autoFps.backoffMs;
+    } else {
+      autoFps.lastOffAt = Date.now();
+    }
+    pipe?.worker.postMessage({ quality: workerQuality() });
+    current?.raw?.applyConstraints(videoConstraints()).catch(() => {});
+    applyAllSenders();
+    renderQuality();
+    renderFacts();
+  }
+
+  // Each minute, what the links carried and how the picture's path kept up, like the app's report. No ids.
+  let lastReport = { inFrames: 0, outFrames: 0, drawMs: 0, at: 0 };
+  function reportQuality(samples) {
+    const now = performance.now();
+    const secs = lastReport.at ? (now - lastReport.at) / 1000 : 0;
+    const out = pipeInfo.outFrames - lastReport.outFrames;
+    const pipeline = pipe && secs ? {
+      srcFps: +((pipeInfo.inFrames - lastReport.inFrames) / secs).toFixed(1),
+      outFps: +(out / secs).toFixed(1),
+      drawMs: out ? +(((pipeInfo.drawMs || 0) - lastReport.drawMs) / out).toFixed(2) : null,
+      src: `${pipeInfo.srcW}x${pipeInfo.srcH}`,
+      out: `${pipeInfo.outW}x${pipeInfo.outH}`
+    } : null;
+    lastReport = { inFrames: pipeInfo.inFrames, outFrames: pipeInfo.outFrames, drawMs: pipeInfo.drawMs || 0, at: now };
+    if (!samples.length || !pipeline && pipe) return;
+    const context = {
+      viewers: samples.map(({ id, ...rest }) => rest),
+      pipeline, piped: !!pipe, mode: sfu.active ? 'sfu' : 'p2p', main: sfu.active ? !!sfu.main : null,
+      preset: `${quality.res}p${quality.fps}`, autoFps: autoFps.active, roomViewers: roomViewerCount
+    };
+    try {
+      fetch('/api/errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'web-host-stats', level: 'info', message: 'quality', context, room_id: roomId, app_version: 'web', user_agent: navigator.userAgent })
+      }).catch(() => {});
+    } catch {}
   }
   function startStats() {
     stopStats();
@@ -1382,7 +1467,9 @@
   // For the page's tests and for a look from the console: state only, nothing that isn't on this page already
   window.webHost = {
     sfu, pcs, pipeInfo, quality, privacy, low, watchOff,
-    get pipe() { return pipe; }, get live() { return live; }, get samples() { return lastSamples; }, statsTick
+    autoFps, effFps, updateAutoFps, sfuDecodeFails: sfu.decodeFails,
+    get pipe() { return pipe; }, get live() { return live; }, get samples() { return lastSamples; }, statsTick,
+    set loadPipe(v) { loadPipe = v; }
   };
 
   renderQuality();

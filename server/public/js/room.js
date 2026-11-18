@@ -680,12 +680,46 @@ function waitConnected(peer, timeoutMs) {
   });
 }
 
-socket.on('sfu-start', ({ hostId, sessionId, tracks } = {}) => {
+socket.on('sfu-start', ({ hostId, sessionId, tracks, main } = {}) => {
   if (!hostId || !Array.isArray(tracks)) return;
   const ch = channelFor(hostId);
-  ch.sfuInfo = { sessionId, tracks };
+  // main: the streamer sends H264 "Main" through it (apps up to 1.8.0 don't say, and mostly do)
+  ch.sfuInfo = { sessionId, tracks, main: main !== false };
   pullSfu(ch);
 });
+
+// What this browser decodes, known before asking the media server, which carries H264 only. Without H264 at
+// all (Firefox before its H264 plugin arrives, some Linux builds) the media server refuses the pull ("the
+// subscriber's SDP is missing the published track's codec"); with baseline only (OpenH264) a streamer's
+// "Main" arrives and never decodes. Both were seen in production after 1.8.0; such a viewer goes straight
+// to a direct link instead of a black picture first.
+function h264Decoding() {
+  const codecs = (window.RTCRtpReceiver?.getCapabilities?.('video')?.codecs || []).filter(c => /h264/i.test(c.mimeType));
+  return { any: codecs.length > 0, main: codecs.some(c => /profile-level-id=(4d|64)/i.test(c.sdpFmtpLine || '')) };
+}
+
+// Whether the media server's picture really decodes here: 'yes' once a frame decodes, 'no' when frames keep
+// arriving and none decodes, 'unknown' when nothing arrives (a still screen sends nothing; not the decoder)
+async function sfuDecodes(peer, ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    let got = 0, bytes = 0, decoded = 0;
+    try {
+      for (const r of (await peer.getStats()).values()) {
+        if (r.type !== 'inbound-rtp' || r.kind !== 'video') continue;
+        got = r.framesReceived || 0;
+        bytes = r.bytesReceived || 0;
+        decoded = r.framesDecoded || 0;
+      }
+    } catch {}
+    if (decoded > 0) return 'yes';
+    // A second or two of frames: well past the first keyframe
+    if (got >= 60 || bytes > 1500000) return 'no';
+    if (peer.connectionState === 'closed') return 'unknown';
+    await new Promise(r => setTimeout(r, 300));
+  }
+  return 'unknown';
+}
 
 // The media server bills every track it sends out, so a stream that isn't on stage pulls only
 // its sound; picking it pulls again with the video (the old connection plays until the new one is up)
@@ -715,6 +749,15 @@ async function pullSfu(ch) {
   const withVideo = sfuWantsVideo(ch) || !tracks.includes('audio');
   const wanted = withVideo ? tracks : tracks.filter(t => t !== 'video');
   const myToken = ++ch.sfuToken;
+  // A picture this browser can't decode: a direct link from the start (see h264Decoding)
+  if (wanted.includes('video')) {
+    const can = h264Decoding();
+    if (!can.any || (ch.sfuInfo.main && !can.main)) {
+      reportError('SFU skipped: this browser can\'t decode its picture', null, { h264: can.any, main: can.main });
+      socket.emit('sfu-fallback', { hostId: ch.hostId, reason: can.any ? 'decode' : 'codec' });
+      return;
+    }
+  }
   ch.sfuPulling = wanted.includes('video');
   ch.offerToken++;
   ch.paused = false;
@@ -750,6 +793,19 @@ async function pullSfu(ch) {
     await waitConnected(sfuPc, 10000);
     if (myToken !== ch.sfuToken) { sfuPc.close(); return; }
 
+    // The direct link keeps playing until the media server's picture decodes here. 1.8.0 swapped as soon
+    // as it connected: a picture that never decoded left viewers ~45 s without any (seen in production).
+    if (sfuPc.hasVideo && ch.pc && !ch.pc.isSfu) {
+      const verdict = await sfuDecodes(sfuPc, 6000);
+      if (myToken !== ch.sfuToken) { sfuPc.close(); return; }
+      if (verdict === 'no') {
+        sfuPc.close();
+        reportError('SFU video not decoding', null, { sessionId, beforeSwap: true });
+        socket.emit('sfu-fallback', { hostId: ch.hostId, reason: 'decode' });
+        return;
+      }
+    }
+
     // The previous direct connection kept playing until now, so the swap has no black gap
     const previous = ch.pc;
     ch.pc = sfuPc;
@@ -760,14 +816,18 @@ async function pullSfu(ch) {
     // take it shows a connected stream with no picture, so check that frames really decode.
     setTimeout(async () => {
       if (ch.pc !== sfuPc || ch.paused) return;
-      let decoded = 0;
+      let decoded = 0, got = 0, bytes = 0;
       try {
         for (const r of (await sfuPc.getStats()).values()) {
-          if (r.type === 'inbound-rtp' && r.kind === 'video') decoded = r.framesDecoded || 0;
+          if (r.type !== 'inbound-rtp' || r.kind !== 'video') continue;
+          decoded = r.framesDecoded || 0;
+          got = r.framesReceived || 0;
+          bytes = r.bytesReceived || 0;
         }
       } catch {}
-      // Off-stage channels may legitimately not decode video; only the one being watched counts
-      if (decoded === 0 && sfuPc.hasVideo && ch.pc === sfuPc && ch.hostId === selectedId) {
+      // Off-stage channels may legitimately not decode video; only the one being watched counts. And only
+      // frames that came and didn't decode: a still screen sends nothing, which isn't the decoder's fault.
+      if (decoded === 0 && (got >= 30 || bytes > 500000) && sfuPc.hasVideo && ch.pc === sfuPc && ch.hostId === selectedId) {
         reportError('SFU video not decoding', null, { sessionId });
         ch.sfuToken++;
         socket.emit('sfu-fallback', { hostId: ch.hostId, reason: 'decode' });

@@ -168,7 +168,31 @@ const collect = (s, ev) => { const arr = []; s.on(ev, d => arr.push(d)); return 
   const u3d = await u3;
   check('transmissão pelo navegador não aparece como versão antiga', u3d && u3d.hostOutdated === false && u3d.hosts[0].web === true, JSON.stringify(u3d));
 
-  for (const s of [host, v1, v2, v2again, web, v3]) s.disconnect();
+  // Media server: whether the picture goes as "Main" travels with the session, also to who arrives later;
+  // a viewer's reason for going direct reaches the streamer, and only the known reasons
+  const sfuNow = next(v3, 'sfu-start');
+  web.emit('sfu-start', { sessionId: 'abcdef0123456789', tracks: ['video', 'audio'], main: true });
+  const sd = await sfuNow;
+  check('servidor de mídia: quem assiste sabe que a imagem vai em "Main"', sd && sd.main === true && sd.hostId === web.id, JSON.stringify(sd));
+  const v4 = await connect();
+  const late = next(v4, 'sfu-start');
+  v4.emit('join-room', { roomId: r2, asHost: false, name: 'Bia', viewerKey: 'key-bia-1234567' });
+  const ld = await late;
+  check('quem chega depois também sabe', ld && ld.main === true, JSON.stringify(ld));
+  const old = next(v3, 'sfu-start');
+  web.emit('sfu-start', { sessionId: 'abcdef0123456789', tracks: ['video', 'audio'] });
+  const od = await old;
+  check('apps que não dizem (até 1.8.0) chegam sem o campo', od && !('main' in od), JSON.stringify(od));
+  const why = next(web, 'viewer-needs-p2p');
+  v3.emit('sfu-fallback', { hostId: web.id, reason: 'decode' });
+  const wd = await why;
+  check('motivo "não decodifica" chega a quem transmite', wd && wd.viewerId === v3.id && wd.reason === 'decode', JSON.stringify(wd));
+  const junk = next(web, 'viewer-needs-p2p');
+  v3.emit('sfu-fallback', { hostId: web.id, reason: '<script>' });
+  const jd = await junk;
+  check('motivo desconhecido não passa adiante', jd && jd.reason === undefined, JSON.stringify(jd));
+
+  for (const s of [host, v1, v2, v2again, web, v3, v4]) s.disconnect();
   console.log(`\n${pass} passaram, ${fail} falharam`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -124,6 +124,22 @@ app.whenReady().then(async () => {
     const og = await (await fetch(link)).text();
     check('prévia do link com o nome de quem transmite pelo navegador', /og:title" content="Navegador Teste está ao vivo no FrogShare"/.test(og));
 
+    // A busy PC: the worker makes ~55 frames a second, the encoder sends 30 -> 30 fps by itself, then 60 again
+    const auto = await js(host, `(() => {
+      const busy = [{ id: 'x', sfu: false, idle: false, ageMs: 60000, fps: 30, limit: 'none' }];
+      const tick = () => { webHost.loadPipe = { outFrames: webHost.pipeInfo.outFrames - 110, at: performance.now() - 2000 }; webHost.updateAutoFps(busy); };
+      Object.assign(webHost.autoFps, { active: false, overTicks: 0, backoffMs: 180000, lastOffAt: 0 });
+      for (let i = 0; i < 4; i++) tick();
+      const notYet = !webHost.autoFps.active;
+      tick();
+      const on = webHost.autoFps.active && webHost.effFps() === 30 && /30 fps/.test(document.getElementById('wh-quality-hint').textContent);
+      webHost.autoFps.retryAt = Date.now() - 1;
+      tick();
+      const back = !webHost.autoFps.active && webHost.effFps() === webHost.quality.fps;
+      return { notYet, on, back, preset: webHost.quality.fps };
+    })()`);
+    check('PC ocupado: a transmissão pelo navegador cai para 30 fps e depois tenta 60 de novo', auto.notYet && auto.on && auto.back && auto.preset === 60, JSON.stringify(auto));
+
     // The camera over the picture, dragged on the preview
     await js(host, FAKE_CAMERA);
     await js(host, `document.getElementById('wh-cam-toggle').click(); true`);

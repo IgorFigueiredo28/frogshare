@@ -1172,10 +1172,11 @@ io.on('connection', (socket) => {
   });
 
   // A streamer switched to the SFU: viewers pull its published tracks instead of a P2P offer
-  socket.on('sfu-start', ({ sessionId, tracks } = {}) => {
+  socket.on('sfu-start', ({ sessionId, tracks, main } = {}) => {
     const room = myRoom();
     if (!room || !isStreamer() || !SFU_ID_RE.test(String(sessionId)) || !Array.isArray(tracks)) return;
-    const sfu = { sessionId, tracks: tracks.slice(0, 4).map(t => String(t).slice(0, 32)) };
+    // main: the picture goes as H264 "Main" (viewers that can't decode it go direct); hosts up to 1.8.0 don't say
+    const sfu = { sessionId, tracks: tracks.slice(0, 4).map(t => String(t).slice(0, 32)), ...(typeof main === 'boolean' ? { main } : {}) };
     if (role === 'host') room.sfu = sfu;
     else if (room.cohosts.has(socket.id)) room.cohosts.get(socket.id).sfu = sfu;
     else return;

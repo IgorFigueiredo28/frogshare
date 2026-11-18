@@ -193,6 +193,46 @@ app.whenReady().then(async () => {
     })()`);
     check('travando com perda: explica que é a internet de quem assiste', d2.reason === 'network-loss' && /Sua internet/.test(d2.text), JSON.stringify(d2));
 
+    // The media server carries H264 only: a browser that can't decode what it would get goes direct at once
+    // (nothing reaches the real streamer here: the page's own calls are caught)
+    const sfuSkip = await js(v1, `(async () => {
+      const realCaps = RTCRtpReceiver.getCapabilities;
+      const realEmit = socket.emit;
+      const realFetch = window.fetch;
+      const sent = [];
+      let sfuCalls = 0;
+      socket.emit = function (ev, data) { if (ev === 'sfu-fallback') { sent.push(data.reason || 'pull'); return socket; } return realEmit.apply(socket, arguments); };
+      window.fetch = (u, o) => { if (String(u).includes('/api/sfu')) sfuCalls++; return realFetch(u, o); };
+      const only = (keep) => (kind) => ({ codecs: realCaps.call(RTCRtpReceiver, kind).codecs.filter(keep) });
+      const ch = { hostId: selectedId, sfuInfo: { sessionId: 'abcdef0123456789', tracks: ['video', 'audio'], main: true }, sfuToken: 0, offerToken: 0, paused: false };
+      const out = {};
+      try {
+        RTCRtpReceiver.getCapabilities = only(c => !/h264/i.test(c.mimeType));
+        await pullSfu(ch);
+        out.noH264 = sent.at(-1) + '/' + sfuCalls;
+        RTCRtpReceiver.getCapabilities = only(c => !/h264/i.test(c.mimeType) || /profile-level-id=42/i.test(c.sdpFmtpLine || ''));
+        await pullSfu(ch);
+        out.baselineMain = sent.at(-1) + '/' + sfuCalls;
+        ch.sfuInfo.main = false;
+        await pullSfu(ch);
+        out.baselinePlain = sent.at(-1) + '/' + sfuCalls;
+      } finally {
+        RTCRtpReceiver.getCapabilities = realCaps;
+        socket.emit = realEmit;
+        window.fetch = realFetch;
+      }
+      // Whether the media server's picture decodes, before letting go of the direct link
+      const peer = (s) => ({ connectionState: 'connected', getStats: async () => new Map([['v', { type: 'inbound-rtp', kind: 'video', ...s }]]) });
+      out.decodes = await sfuDecodes(peer({ framesReceived: 5, framesDecoded: 3, bytesReceived: 9000 }), 1000);
+      out.broken = await sfuDecodes(peer({ framesReceived: 90, framesDecoded: 0, bytesReceived: 900000 }), 1000);
+      out.still = await sfuDecodes(peer({ framesReceived: 0, framesDecoded: 0, bytesReceived: 0 }), 700);
+      return out;
+    })()`);
+    check('servidor de mídia: sem H264 vai direto, sem nem pedir', sfuSkip.noH264 === 'codec/0', JSON.stringify(sfuSkip));
+    check('servidor de mídia: só H264 básico e imagem "Main" vai direto', sfuSkip.baselineMain === 'decode/0', JSON.stringify(sfuSkip));
+    check('servidor de mídia: só H264 básico e imagem básica tenta o servidor de mídia', sfuSkip.baselinePlain === 'pull/1', JSON.stringify(sfuSkip));
+    check('troca para o servidor de mídia só depois de decodificar; tela parada não conta como defeito', sfuSkip.decodes === 'yes' && sfuSkip.broken === 'no' && sfuSkip.still === 'unknown', JSON.stringify(sfuSkip));
+
     // Removing someone, locking the room
     const v2id = await js(v2, `socket.id`);
     await js(host, `hostSocket.emit('kick-viewer', { viewerId: ${JSON.stringify(v2id)} }); true`);
