@@ -38,17 +38,38 @@ endereço direto do banco no plano grátis, que é só IPv6. Anote:
    - **Version:** 15
 4. Clique em **Save & test**. Tem que aparecer "Database Connection OK".
 
-## 4. O painel
+## 4. O painel e os alertas, pelo script
 
-**Dashboards > New > Import**, envie [`grafana-dashboard.json`](grafana-dashboard.json), escolha a conexão do
-passo 3 e clique em **Import**.
+Com um token do Grafana, [`grafana-sync.js`](grafana-sync.js) faz tudo sozinho:
 
-As partes "Agora", "Ao vivo ao longo do tempo" e "Cloudflare" se enchem com o retrato do servidor, que
-começa a ser gravado depois que esta versão do servidor está no Render. O resto já vem do histórico.
+- `node monitoring/grafana-sync.js check` roda a consulta de cada quadro e de cada alerta contra os dados de verdade (só lê).
+- `node monitoring/grafana-sync.js apply` faz o mesmo e, se tudo der certo:
+  - importa o painel na pasta FrogShare
+  - cria o contato do Discord, a não ser que já exista um chamado "FrogShare Discord"
+  - cria os alertas
 
-- **Filtro "Versão do app":** fica no topo e serve para comparar uma versão nova com a anterior nos quadros de quem transmite.
+O token: **Administration > Users and access > Service accounts > Add service account**, papel **Admin** (a API
+de alertas exige), e **Add service account token**. No `.env.local` (fica fora do GitHub):
+
+```
+GRAFANA_URL=https://<seu-stack>.grafana.net
+GRAFANA_TOKEN=<o token>
+DISCORD_WEBHOOK_URL=<o webhook do canal>   (opcional; sem ele os alertas vão para o e-mail da conta)
+```
+
+Sem token: **Dashboards > New > Import**, envie [`grafana-dashboard.json`](grafana-dashboard.json), escolha a
+conexão do passo 3 e clique em **Import** (para atualizar: **Import (Overwrite)**).
+
+**Como o painel é organizado:**
+- **No topo, sempre abertos:**
+  - os 6 números principais com a tendência: imagem fluida, fps, erros, transmissões e pessoas agora, Cloudflare
+  - os dois gráficos principais: qualidade e movimento
+  - o resumo de por que travou, como a imagem chega e a Cloudflare
+- **Embaixo, em seções que abrem com um clique:** os detalhes de quem assiste, de quem transmite, dos erros e do servidor. Elas só consultam o banco quando abertas.
+- **Filtro "Versão do app":** compara uma versão nova com a anterior nos quadros de quem transmite.
 - **Marcas roxas:** aparecem nos gráficos quando uma versão do app transmite pela primeira vez.
-- **Atualizar o painel:** importe o JSON de novo e escolha **Import (Overwrite)**.
+
+O retrato do servidor (o que está ao vivo e a Cloudflare) começou a ser gravado em 18/11; o resto vem do histórico.
 
 Na conexão do Grafana, em **Additional settings**:
 
@@ -62,16 +83,25 @@ mais de um servidor, e conexões paradas ficam abertas. Sem esses limites, algun
 
 Para mudar o painel: edite `dashboard.js` e rode `node monitoring/dashboard.js`, que gera o JSON de novo.
 
-## 5. Alertas (próximo passo)
+## 5. Alertas
 
-Os alertas ficam no próprio Grafana (**Alerting > Alert rules**), com aviso num canal do Discord:
+Ficam no grupo "frogshare" da pasta FrogShare (**Alerting > Alert rules**), avaliados a cada 5 minutos, e
+avisam no contato "FrogShare Discord":
 
-- **Erros:** erro novo depois de uma versão, ou muitos erros em uma hora
-- **Travadas:** subindo para quem assiste
-- **Cloudflare:** passando de 70% e de 90% do limite
+| Alerta | Quando |
+|---|---|
+| Erro novo | um erro que não aparecia há 30 dias surge na última hora (a mensagem do erro vai no aviso) |
+| Muitos erros | mais de 20 erros na última hora |
+| Quem assiste está travando | nos últimos 30 minutos, com pelo menos 20 minutos assistidos, a imagem ficou parada mais de 8 s por minuto em média, por 10 minutos seguidos |
+| Cloudflare passou de 70% do mês | o uso do mês passa de 630 GB |
+| Cloudflare passou de 90% do mês | o uso do mês passa de 810 GB (urgente: perto de 900 GB o servidor deixa de usar relay e servidor de mídia) |
 
-Para o Discord: no canal, **Editar canal > Integrações > Webhooks > Novo webhook > Copiar URL**, e no Grafana
-**Alerting > Contact points > Add contact point > Discord**. A URL fica só no Grafana.
+Para mudar um limite: edite `alertRules` em `grafana-sync.js` e rode o `apply` (ele refaz o grupo inteiro), ou
+mude no próprio Grafana.
+
+Para o Discord: no canal, **Editar canal > Integrações > Webhooks > Novo webhook > Copiar URL**. Depois, ou põe em
+`DISCORD_WEBHOOK_URL`, ou cria no Grafana em **Alerting > Contact points > Add contact point > Discord** com o
+nome "FrogShare Discord". Um só: dois com o mesmo nome mandam cada aviso duas vezes.
 
 ## Espaço no banco
 
