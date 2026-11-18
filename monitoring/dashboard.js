@@ -400,3 +400,56 @@ const dashboard = {
 const out = path.join(__dirname, 'grafana-dashboard.json');
 fs.writeFileSync(out, JSON.stringify(dashboard, null, 2) + '\n');
 console.log(`${panels.length} painéis no topo (${panels.reduce((n, p) => n + (p.panels?.length || 0), 0)} dentro de seções fechadas) -> ${out}`);
+
+// ================= The public showcase (portfolio) =================
+// Anyone with the link sees it, without logging in. Only overall numbers: no errors (their text can say too
+// much about the inside), no graphics cards, browsers or app versions, nothing per room or per person.
+// Its own dashboard, so the private one can keep everything.
+// Quality, for someone from outside, is the share of watched time the picture kept moving (what streaming
+// services call the rebuffering ratio). The private dashboard keeps the strict "minutes without a single
+// freeze" and the fps, which still screens (1 frame a second on purpose) and 24 fps videos pull down.
+const pick = (title, gridPos) => Object.assign(JSON.parse(JSON.stringify(panels.find(p => p.title === title && p.type !== 'row'))), gridPos ? { gridPos } : {});
+const showcase = [
+  pick('Transmissões agora', { h: 5, w: 4, x: 0, y: 0 }),
+  pick('Assistindo agora', { h: 5, w: 4, x: 4, y: 0 }),
+  tile('Horas assistidas', `
+    SELECT $__timeGroupAlias(time, '1h', 0), count(*) / 60.0 AS horas FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`,
+  { h: 5, w: 4, x: 8, y: 0 }, { calc: 'sum', decimals: 0, color: 'blue', description: 'Soma do tempo de todo mundo que assistiu no período.' }),
+  tile('Horas transmitidas', `
+    SELECT t AS time, sum(n) / 60.0 AS horas FROM (
+      SELECT $__timeGroup(time, '1h') AS t, count(*) AS n FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1
+      UNION ALL SELECT $__timeGroup(time, '1h'), count(*) FROM monitoring.web_host_quality WHERE $__timeFilter(time) GROUP BY 1
+    ) x GROUP BY 1 ORDER BY 1`,
+  { h: 5, w: 4, x: 12, y: 0 }, { calc: 'sum', decimals: 0, color: 'purple', description: 'Soma do tempo de todas as transmissões no período, pelo app e pelo navegador.' }),
+  tile('Imagem rodando', `
+    SELECT $__timeGroupAlias(time, '1h'), greatest(0, 100.0 * (1 - sum(frozen_s) / nullif(count(*) * 60.0, 0))) AS "imagem rodando"
+    FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`,
+  { h: 5, w: 4, x: 16, y: 0 }, { unit: 'percent', decimals: 1, thresholds: steps(['red', null], ['orange', 90], ['green', 97]), description: 'Parte do tempo assistido em que a imagem estava em movimento, sem travar (média das horas).' }),
+  pick('Cloudflare no mês', { h: 5, w: 4, x: 20, y: 0 }),
+  pick('Movimento', { h: 8, w: 12, x: 0, y: 5 }),
+  series('Imagem parada', `
+    SELECT $__timeGroupAlias(time, '1h', NULL), 100.0 * sum(frozen_s) / nullif(count(*) * 60.0, 0) AS "do tempo assistido"
+    FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`, { h: 8, w: 12, x: 12, y: 5 }, {
+    unit: 'percent', decimals: 1, description: 'Por hora, a parte do tempo assistido em que a imagem ficou parada. Quanto mais perto de zero, melhor.',
+    overrides: [fixed('do tempo assistido', 'orange')]
+  }),
+  pick('Por que travou (minutos)', { h: 8, w: 9, x: 0, y: 13 }),
+  pick('Como a imagem chega', { h: 8, w: 7, x: 9, y: 13 }),
+  pick('Limites do plano grátis', { h: 8, w: 8, x: 16, y: 13 })
+];
+showcase.forEach((p, i) => { p.id = 100 + i; });
+const publicDashboard = {
+  ...dashboard,
+  title: 'FrogShare ao vivo',
+  uid: 'frogshare-publico',
+  description: 'Os números do FrogShare em produção: quem assiste, como a imagem chega e o uso dos planos grátis. Só totais, sem dados de pessoas.',
+  tags: ['frogshare', 'publico'],
+  time: { from: 'now-7d', to: 'now' },
+  links: [{ title: 'FrogShare', type: 'link', url: 'https://frogshare.onrender.com', targetBlank: true, icon: 'external link', tooltip: 'O site do FrogShare' }],
+  templating: { list: [] },
+  annotations: { list: [dashboard.annotations.list[0]] },
+  panels: showcase
+};
+const outPublic = path.join(__dirname, 'grafana-public.json');
+fs.writeFileSync(outPublic, JSON.stringify(publicDashboard, null, 2) + '\n');
+console.log(`${showcase.length} quadros na vitrine pública -> ${outPublic}`);

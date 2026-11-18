@@ -1,0 +1,1041 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_FROGSHARE",
+      "label": "FrogShare (Supabase)",
+      "description": "O PostgreSQL do Supabase, com o login grafana_reader",
+      "type": "datasource",
+      "pluginId": "grafana-postgresql-datasource",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "datasource",
+      "id": "grafana-postgresql-datasource",
+      "name": "PostgreSQL",
+      "version": "1.0.0"
+    },
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.4.0"
+    }
+  ],
+  "title": "FrogShare ao vivo",
+  "uid": "frogshare-publico",
+  "description": "Os números do FrogShare em produção: quem assiste, como a imagem chega e o uso dos planos grátis. Só totais, sem dados de pessoas.",
+  "tags": [
+    "frogshare",
+    "publico"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "1m",
+      "5m",
+      "15m",
+      "1h"
+    ]
+  },
+  "schemaVersion": 39,
+  "version": 3,
+  "links": [
+    {
+      "title": "FrogShare",
+      "type": "link",
+      "url": "https://frogshare.onrender.com",
+      "targetBlank": true,
+      "icon": "external link",
+      "tooltip": "O site do FrogShare"
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "stat",
+      "title": "Transmissões agora",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '5m', 0), max(streams) AS \"transmissões\" FROM monitoring.server_stats WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Do retrato que o servidor grava a cada 5 minutos enquanto está acordado.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 13,
+          "valueSize": 30
+        }
+      }
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "Assistindo agora",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '5m', 0), max(viewers) AS assistindo FROM monitoring.server_stats WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Do retrato que o servidor grava a cada 5 minutos enquanto está acordado.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 13,
+          "valueSize": 30
+        }
+      }
+    },
+    {
+      "id": 102,
+      "type": "stat",
+      "title": "Horas assistidas",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '1h', 0), count(*) / 60.0 AS horas FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Soma do tempo de todo mundo que assistiu no período.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 13,
+          "valueSize": 30
+        }
+      }
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "Horas transmitidas",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT t AS time, sum(n) / 60.0 AS horas FROM ( SELECT $__timeGroup(time, '1h') AS t, count(*) AS n FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 UNION ALL SELECT $__timeGroup(time, '1h'), count(*) FROM monitoring.web_host_quality WHERE $__timeFilter(time) GROUP BY 1 ) x GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Soma do tempo de todas as transmissões no período, pelo app e pelo navegador.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 13,
+          "valueSize": 30
+        }
+      }
+    },
+    {
+      "id": 104,
+      "type": "stat",
+      "title": "Imagem rodando",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '1h'), greatest(0, 100.0 * (1 - sum(frozen_s) / nullif(count(*) * 60.0, 0))) AS \"imagem rodando\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Parte do tempo assistido em que a imagem estava em movimento, sem travar (média das horas).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 90
+              },
+              {
+                "color": "green",
+                "value": 97
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 13,
+          "valueSize": 30
+        }
+      }
+    },
+    {
+      "id": 105,
+      "type": "stat",
+      "title": "Cloudflare no mês",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '1h'), max(cloudflare_gb) AS usado FROM monitoring.server_stats WHERE $__timeFilter(time) AND cloudflare_gb IS NOT NULL AND time > date_trunc('month', now()) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Relay e servidor de mídia somados, como a Cloudflare cobra. O servidor deixa de usar os dois perto de 900 GB.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 630
+              },
+              {
+                "color": "red",
+                "value": 810
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 13,
+          "valueSize": 30
+        }
+      }
+    },
+    {
+      "id": 106,
+      "type": "timeseries",
+      "title": "Movimento",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT t AS time, sum(v) AS \"pessoas assistindo\", sum(s) AS \"transmissões\" FROM ( SELECT $__timeGroup(time, '1h') AS t, count(*) / 60.0 AS v, 0 AS s FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 UNION ALL SELECT $__timeGroup(time, '1h'), 0, count(*) / 60.0 FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 UNION ALL SELECT $__timeGroup(time, '1h'), 0, count(*) / 60.0 FROM monitoring.web_host_quality WHERE $__timeFilter(time) GROUP BY 1 ) x GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Por hora, quantas pessoas assistiam e quantas transmissões havia ao mesmo tempo, em média.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0,
+            "axisBorderShow": false,
+            "axisCenteredZero": false
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pessoas assistindo"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "transmissões"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 107,
+      "type": "timeseries",
+      "title": "Imagem parada",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(time, '1h', NULL), 100.0 * sum(frozen_s) / nullif(count(*) * 60.0, 0) AS \"do tempo assistido\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "description": "Por hora, a parte do tempo assistido em que a imagem ficou parada. Quanto mais perto de zero, melhor.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": 3600000,
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0,
+            "axisBorderShow": false,
+            "axisCenteredZero": false
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "do tempo assistido"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 108,
+      "type": "barchart",
+      "title": "Por que travou (minutos)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT diagnosis AS motivo, count(*) FILTER (WHERE diagnosis LIKE '%quem transmite%') AS \"lado de quem transmite\", count(*) FILTER (WHERE diagnosis LIKE '%quem assiste%') AS \"lado de quem assiste\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND diagnosis <> 'sem problema' GROUP BY 1 ORDER BY count(*) DESC"
+        }
+      ],
+      "description": "O diagnóstico que a página da sala faz em cada minuto com travada.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lado de quem transmite"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lado de quem assiste"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "motivo",
+        "showValue": "auto",
+        "stacking": "normal",
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0
+      }
+    },
+    {
+      "id": 109,
+      "type": "piechart",
+      "title": "Como a imagem chega",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 7,
+        "x": 9,
+        "y": 13
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) FILTER (WHERE NOT via_sfu AND NOT via_relay) AS \"direto\", count(*) FILTER (WHERE via_relay AND NOT via_sfu) AS \"relay (TURN)\", count(*) FILTER (WHERE via_sfu) AS \"servidor de mídia\" FROM monitoring.viewer_quality WHERE $__timeFilter(time)"
+        }
+      ],
+      "description": "Direto não custa nada. Relay e servidor de mídia passam pela Cloudflare e contam no limite do mês.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "sem dados"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "direto"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "relay (TURN)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "servidor de mídia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "pieType": "donut",
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 110,
+      "type": "bargauge",
+      "title": "Limites do plano grátis",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_FROGSHARE}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 13
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_FROGSHARE}"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH last AS (SELECT cloudflare_gb FROM monitoring.server_stats WHERE cloudflare_gb IS NOT NULL AND time > date_trunc('month', now()) ORDER BY time DESC LIMIT 1), k AS (SELECT greatest(extract(epoch FROM now() - date_trunc('month', now())) / 86400.0, 1) AS passed, extract(day FROM date_trunc('month', now()) + interval '1 month - 1 day') AS total) SELECT (SELECT round(cloudflare_gb, 0) FROM last) AS \"Cloudflare: usado no mês\", (SELECT round(cloudflare_gb / passed * total, 0) FROM last, k) AS \"Cloudflare: no fim do mês, neste ritmo\", round(pg_database_size(current_database()) / 1048576.0, 0) AS \"Banco do Supabase\""
+        }
+      ],
+      "description": "Cloudflare: o servidor para de usar relay e servidor de mídia em 900 GB por mês (ela cobra acima de 1.000). Supabase: 500 MB no plano grátis; cheio, o banco pode ficar só para leitura (a limpeza opcional de monitoring/supabase.sql resolve).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes",
+          "decimals": 0,
+          "min": 0,
+          "max": 900,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 630
+              },
+              {
+                "color": "red",
+                "value": 810
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Banco do Supabase"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decmbytes"
+              },
+              {
+                "id": "max",
+                "value": 500
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 400
+                    },
+                    {
+                      "color": "red",
+                      "value": 450
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "top",
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "maxVizHeight": 32
+      }
+    }
+  ]
+}

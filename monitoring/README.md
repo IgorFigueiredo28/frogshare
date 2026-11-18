@@ -44,12 +44,14 @@ Com um token do Grafana, [`grafana-sync.js`](grafana-sync.js) faz tudo sozinho:
 
 - `node monitoring/grafana-sync.js check` roda a consulta de cada quadro e de cada alerta contra os dados de verdade (só lê).
 - `node monitoring/grafana-sync.js apply` faz o mesmo e, se tudo der certo:
-  - importa o painel na pasta FrogShare
+  - importa o painel e a vitrine pública na pasta FrogShare
   - cria o contato do Discord, a não ser que já exista um chamado "FrogShare Discord"
   - cria os alertas
+- `node monitoring/grafana-sync.js publicar` liga o link público da vitrine, e `despublicar` desliga.
 
-O token: **Administration > Users and access > Service accounts > Add service account**, papel **Admin** (a API
-de alertas exige), e **Add service account token**. No `.env.local` (fica fora do GitHub):
+O token: **Administration > Users and access > Service accounts > Add service account**, papel **Editor** (basta
+para o painel e os alertas; só `publicar` exige **Admin**), e **Add service account token**. No `.env.local` (fica
+fora do GitHub):
 
 ```
 GRAFANA_URL=https://<seu-stack>.grafana.net
@@ -70,6 +72,12 @@ conexão do passo 3 e clique em **Import** (para atualizar: **Import (Overwrite)
 - **Marcas roxas:** aparecem nos gráficos quando uma versão do app transmite pela primeira vez.
 
 O retrato do servidor (o que está ao vivo e a Cloudflare) começou a ser gravado em 18/11; o resto vem do histórico.
+
+**A vitrine pública ("FrogShare ao vivo", [`grafana-public.json`](grafana-public.json)):** um segundo painel, para
+mostrar fora (o portfólio), só com números somados: horas assistidas e transmitidas, imagem rodando, movimento,
+por que travou, como a imagem chega e os limites do plano grátis. Não mostra erros, versões nem texto livre. O
+link público se liga no próprio painel, em **Share > Share externally** (papel Admin), ou com `publicar` e um
+token Admin. Quem tem o link vê os números sem login.
 
 Na conexão do Grafana, em **Additional settings**:
 

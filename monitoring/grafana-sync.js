@@ -1,7 +1,8 @@
 // Talks to the FrogShare Grafana with a service account token, so nothing has to be clicked by hand:
 //   node monitoring/grafana-sync.js check   runs every panel's query against the real data (reads only)
-//   node monitoring/grafana-sync.js apply   check, then import the dashboard into the "FrogShare" folder and
-//                                          create the alerts with their Discord contact point
+//   node monitoring/grafana-sync.js apply   check, then import the dashboard and the public showcase into the
+//                                          "FrogShare" folder and create the alerts with their Discord contact
+//   node monitoring/grafana-sync.js publicar | despublicar   turns the showcase's public link on or off
 // Reads GRAFANA_URL, GRAFANA_TOKEN and DISCORD_WEBHOOK_URL from .env.local (never printed). The alerting
 // API needs a service account with the Admin role.
 const fs = require('fs');
@@ -179,6 +180,13 @@ async function apply(ds) {
     inputs: [{ name: 'DS_FROGSHARE', type: 'datasource', pluginId: 'grafana-postgresql-datasource', value: ds.uid }]
   });
   console.log(`painel importado${folderOk ? ' na pasta FrogShare' : ' na pasta raiz'}: ${URL_}/d/${dash.uid}`);
+  // The public showcase too (it only goes public with "publicar")
+  const showcase = JSON.parse(fs.readFileSync(path.join(__dirname, 'grafana-public.json'), 'utf8'));
+  await api('POST', '/api/dashboards/import', {
+    dashboard: showcase, overwrite: true, ...(folderOk ? { folderUid: FOLDER.uid } : {}),
+    inputs: [{ name: 'DS_FROGSHARE', type: 'datasource', pluginId: 'grafana-postgresql-datasource', value: ds.uid }]
+  });
+  console.log(`vitrine importada: ${URL_}/d/${showcase.uid}`);
 
   // Contact point (editable in the UI afterwards)
   const noProvenance = { 'X-Disable-Provenance': 'true' };
@@ -221,7 +229,22 @@ async function apply(ds) {
   console.log(`alertas ok (${toDiscord ? 'avisam no Discord' : 'avisam no e-mail da conta; com DISCORD_WEBHOOK_URL passam para o Discord'}): ${rules.map(r => r.title).join(', ')}`);
 }
 
+// The showcase's public link (anyone with it sees the numbers, without logging in): on or off
+async function setPublic(on) {
+  const uid = 'frogshare-publico';
+  const current = await api('GET', `/api/dashboards/uid/${uid}/public-dashboards`).catch(err => (err.status === 404 ? null : Promise.reject(err)));
+  let pd;
+  if (current && current.uid) {
+    pd = await api('PATCH', `/api/dashboards/uid/${uid}/public-dashboards/${current.uid}`, { isEnabled: on, timeSelectionEnabled: true, annotationsEnabled: false });
+  } else if (on) {
+    pd = await api('POST', `/api/dashboards/uid/${uid}/public-dashboards`, { isEnabled: true, share: 'public', timeSelectionEnabled: true, annotationsEnabled: false });
+  }
+  if (!pd) { console.log('a vitrine não tinha link público'); return; }
+  console.log(on ? `vitrine pública: ${URL_}/public-dashboards/${pd.accessToken}` : 'link público da vitrine desligado');
+}
+
 (async () => {
+  if (mode === 'publicar' || mode === 'despublicar') { await setPublic(mode === 'publicar'); return; }
   const ds = await findDatasource();
   console.log(`conexão: ${ds.name}`);
   const failed = await check(ds);
