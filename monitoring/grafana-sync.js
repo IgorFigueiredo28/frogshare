@@ -24,6 +24,22 @@ if (!URL_ || !TOKEN) { console.error('Faltam GRAFANA_URL e GRAFANA_TOKEN no .env
 const FOLDER = { uid: 'frogshare', title: 'FrogShare' };
 const CONTACT = 'FrogShare Discord';
 
+// What a Discord message says: Grafana's default lists labels and annotations in English; this one says
+// which alert, what happened and where the dashboard is
+const TEMPLATE = `{{ define "frogshare.title" -}}
+{{ if eq .Status "firing" }}🔴 FrogShare: {{ len .Alerts.Firing }} alerta(s){{ else }}✅ FrogShare: resolvido{{ end }}
+{{- end }}
+{{ define "frogshare.message" -}}
+{{ range .Alerts.Firing -}}
+🔴 **{{ .Labels.alertname }}**{{ if eq .Labels.gravidade "urgente" }} (urgente){{ end }}
+{{ .Annotations.summary }}
+{{ end -}}
+{{ range .Alerts.Resolved -}}
+✅ **{{ .Labels.alertname }}**: voltou ao normal
+{{ end -}}
+Painel: {{ .ExternalURL }}/d/frogshare
+{{- end }}`;
+
 async function api(method, p, body, extraHeaders = {}) {
   const res = await fetch(URL_ + p, {
     method,
@@ -176,6 +192,17 @@ async function apply(ds) {
   } else if (handMade) {
     console.log('contato do Discord: usando o "FrogShare Discord" que já existe');
   }
+
+  // The message in Portuguese, on whichever "FrogShare Discord" there is (its webhook stays as it was: a
+  // hidden value sent back unchanged is kept by Grafana)
+  await api('PUT', '/api/v1/provisioning/templates/frogshare', { template: TEMPLATE }, noProvenance);
+  for (const p of (await api('GET', '/api/v1/provisioning/contact-points')).filter(p => p.name === CONTACT && p.type === 'discord')) {
+    await api('PUT', `/api/v1/provisioning/contact-points/${p.uid}`, {
+      uid: p.uid, name: p.name, type: p.type, disableResolveMessage: !!p.disableResolveMessage,
+      settings: { ...p.settings, title: '{{ template "frogshare.title" . }}', message: '{{ template "frogshare.message" . }}' }
+    }, noProvenance);
+  }
+  if (toDiscord) console.log('mensagem do Discord em português ok');
 
   // Alerts, as one group evaluated every 5 minutes. Without the Discord contact they follow the default
   // notification policy (the account's e-mail in a new Grafana Cloud stack).
