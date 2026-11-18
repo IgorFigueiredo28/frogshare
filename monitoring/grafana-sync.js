@@ -37,7 +37,7 @@ const TEMPLATE = `{{ define "frogshare.title" -}}
 {{ range .Alerts.Resolved -}}
 ✅ **{{ .Labels.alertname }}**: voltou ao normal
 {{ end -}}
-Painel: {{ .ExternalURL }}/d/frogshare
+Painel: {{ reReplaceAll "/+$" "" .ExternalURL }}/d/frogshare
 {{- end }}`;
 
 async function api(method, p, body, extraHeaders = {}) {
