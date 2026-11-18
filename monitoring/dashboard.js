@@ -98,19 +98,19 @@ add(
 );
 y += 4;
 add(series('Ao vivo ao longo do tempo', `
-  SELECT $__timeGroupAlias(time, '5m'), max(streams) AS "transmissões", max(viewers) AS "assistindo", max(sfu_streams) AS "pelo servidor de mídia"
+  SELECT $__timeGroupAlias(time, '5m', NULL), max(streams) AS "transmissões", max(viewers) AS "assistindo", max(sfu_streams) AS "pelo servidor de mídia"
   FROM monitoring.server_stats WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`, { h: 7, w: 24, x: 0, y }, { decimals: 0 }));
 y += 7;
 
 // ---------------- Quem assiste ----------------
 add(row('Quem assiste'));
 add(series('Travadas', `
-  SELECT $__timeGroupAlias(time, '15m'), avg(freezes) AS "travadas por minuto", avg(frozen_s) AS "segundos parados por minuto",
+  SELECT $__timeGroupAlias(time, '15m', NULL), avg(freezes) AS "travadas por minuto", avg(frozen_s) AS "segundos parados por minuto",
     100.0 * avg(CASE WHEN freezes > 0 THEN 1 ELSE 0 END) AS "% dos minutos com travada"
   FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`, { h: 8, w: 12, x: 0, y },
 { decimals: 1, overrides: [percentRight('% dos minutos com travada')], description: 'Média por pessoa, de minuto em minuto, como a página da sala mede.' }));
 add(series('FPS de quem assiste', `
-  SELECT $__timeGroupAlias(time, '15m'), avg(avg_fps) AS "média", percentile_cont(0.1) WITHIN GROUP (ORDER BY avg_fps::float8) AS "pior 10%"
+  SELECT $__timeGroupAlias(time, '15m', NULL), avg(avg_fps) AS "média", percentile_cont(0.1) WITHIN GROUP (ORDER BY avg_fps::float8) AS "pior 10%"
   FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND avg_fps IS NOT NULL GROUP BY 1 ORDER BY 1`, { h: 8, w: 12, x: 12, y }, { decimals: 0 }));
 y += 8;
 add(bars('Por que travou (minutos)', `
@@ -132,15 +132,15 @@ add(bars('Versões em uso (minutos transmitidos)', `
   UNION ALL SELECT 'navegador', count(*) FROM monitoring.web_host_quality WHERE $__timeFilter(time) HAVING count(*) > 0
   ORDER BY 2 DESC`, { h: 8, w: 8, x: 0, y }, 'versao', { description: 'Mostra se a atualização automática chegou em todo mundo.' }));
 add(series('Codificação: placa de vídeo × processador', `
-  SELECT $__timeGroupAlias(time, '15m'), sum(links_gpu) / 15.0 AS "placa de vídeo", sum(links_cpu) / 15.0 AS "processador"
+  SELECT $__timeGroupAlias(time, '15m', NULL), sum(links_gpu) / 15.0 AS "placa de vídeo", sum(links_cpu) / 15.0 AS "processador"
   FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`, { h: 8, w: 8, x: 8, y },
 { stacked: true, decimals: 1, description: 'Quantas cópias da imagem estão sendo codificadas ao mesmo tempo, em média. Pelo processador pesa no jogo.' }));
 add(series('FPS de quem transmite (app)', `
-  SELECT $__timeGroupAlias(time, '15m'), avg(capture_fps) AS "captura", avg(pipeline_fps) AS "depois do redesenho", avg(sent_fps) AS "enviado"
+  SELECT $__timeGroupAlias(time, '15m', NULL), avg(capture_fps) AS "captura", avg(pipeline_fps) AS "depois do redesenho", avg(sent_fps) AS "enviado"
   FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`, { h: 8, w: 8, x: 16, y }, { decimals: 0 }));
 y += 8;
 add(series('Aperto no PC de quem transmite', `
-  SELECT $__timeGroupAlias(time, '15m'), 100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END) AS "em 30 fps automático",
+  SELECT $__timeGroupAlias(time, '15m', NULL), 100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END) AS "em 30 fps automático",
     100.0 * avg(CASE WHEN cpu_limited THEN 1 ELSE 0 END) AS "limitado pelo processador",
     100.0 * avg(CASE WHEN bandwidth_limited THEN 1 ELSE 0 END) AS "limitado pela internet"
   FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1`, { h: 8, w: 12, x: 0, y },
@@ -164,7 +164,7 @@ y += 7;
 // ---------------- Erros ----------------
 add(row('Erros'));
 add(series('Erros por hora', `
-  SELECT $__timeGroupAlias(time, '1h'), origin AS metric, count(*) AS value FROM monitoring.errors
+  SELECT $__timeGroupAlias(time, '1h', 0), origin AS metric, count(*) AS value FROM monitoring.errors
   WHERE $__timeFilter(time) GROUP BY 1, 2 ORDER BY 1`, { h: 8, w: 24, x: 0, y }, { stacked: true, decimals: 0 }));
 y += 8;
 add(table('Erros mais comuns', `
@@ -182,7 +182,7 @@ y += 10;
 // ---------------- Cloudflare ----------------
 add(row('Cloudflare'));
 add(series('Uso no mês', `
-  SELECT $__timeGroupAlias(time, '1h'), max(cloudflare_gb) AS "total", max(cloudflare_sfu_gb) AS "servidor de mídia", max(cloudflare_relay_gb) AS "relay (TURN)"
+  SELECT $__timeGroupAlias(time, '1h', NULL), max(cloudflare_gb) AS "total", max(cloudflare_sfu_gb) AS "servidor de mídia", max(cloudflare_relay_gb) AS "relay (TURN)"
   FROM monitoring.server_stats WHERE $__timeFilter(time) AND cloudflare_gb IS NOT NULL GROUP BY 1 ORDER BY 1`, { h: 8, w: 24, x: 0, y },
 { unit: 'decgbytes', decimals: 1, thresholdLine: 900, description: 'Acumulado do mês, como a Cloudflare conta. A linha vermelha é o limite do servidor (900 GB).' }));
 y += 8;

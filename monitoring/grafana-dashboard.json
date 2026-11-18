@@ -462,7 +462,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '5m'), max(streams) AS \"transmissões\", max(viewers) AS \"assistindo\", max(sfu_streams) AS \"pelo servidor de mídia\" FROM monitoring.server_stats WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '5m', NULL), max(streams) AS \"transmissões\", max(viewers) AS \"assistindo\", max(sfu_streams) AS \"pelo servidor de mídia\" FROM monitoring.server_stats WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
         }
       ],
       "fieldConfig": {
@@ -545,7 +545,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m'), avg(freezes) AS \"travadas por minuto\", avg(frozen_s) AS \"segundos parados por minuto\", 100.0 * avg(CASE WHEN freezes > 0 THEN 1 ELSE 0 END) AS \"% dos minutos com travada\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(freezes) AS \"travadas por minuto\", avg(frozen_s) AS \"segundos parados por minuto\", 100.0 * avg(CASE WHEN freezes > 0 THEN 1 ELSE 0 END) AS \"% dos minutos com travada\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
         }
       ],
       "description": "Média por pessoa, de minuto em minuto, como a página da sala mede.",
@@ -637,7 +637,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m'), avg(avg_fps) AS \"média\", percentile_cont(0.1) WITHIN GROUP (ORDER BY avg_fps::float8) AS \"pior 10%\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND avg_fps IS NOT NULL GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(avg_fps) AS \"média\", percentile_cont(0.1) WITHIN GROUP (ORDER BY avg_fps::float8) AS \"pior 10%\" FROM monitoring.viewer_quality WHERE $__timeFilter(time) AND avg_fps IS NOT NULL GROUP BY 1 ORDER BY 1"
         }
       ],
       "fieldConfig": {
@@ -954,7 +954,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m'), sum(links_gpu) / 15.0 AS \"placa de vídeo\", sum(links_cpu) / 15.0 AS \"processador\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), sum(links_gpu) / 15.0 AS \"placa de vídeo\", sum(links_cpu) / 15.0 AS \"processador\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
         }
       ],
       "description": "Quantas cópias da imagem estão sendo codificadas ao mesmo tempo, em média. Pelo processador pesa no jogo.",
@@ -1025,7 +1025,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m'), avg(capture_fps) AS \"captura\", avg(pipeline_fps) AS \"depois do redesenho\", avg(sent_fps) AS \"enviado\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), avg(capture_fps) AS \"captura\", avg(pipeline_fps) AS \"depois do redesenho\", avg(sent_fps) AS \"enviado\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
         }
       ],
       "fieldConfig": {
@@ -1095,7 +1095,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '15m'), 100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END) AS \"em 30 fps automático\", 100.0 * avg(CASE WHEN cpu_limited THEN 1 ELSE 0 END) AS \"limitado pelo processador\", 100.0 * avg(CASE WHEN bandwidth_limited THEN 1 ELSE 0 END) AS \"limitado pela internet\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '15m', NULL), 100.0 * avg(CASE WHEN auto_fps THEN 1 ELSE 0 END) AS \"em 30 fps automático\", 100.0 * avg(CASE WHEN cpu_limited THEN 1 ELSE 0 END) AS \"limitado pelo processador\", 100.0 * avg(CASE WHEN bandwidth_limited THEN 1 ELSE 0 END) AS \"limitado pela internet\" FROM monitoring.host_quality WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1"
         }
       ],
       "description": "Parte dos minutos transmitidos em cada situação.",
@@ -1339,7 +1339,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '1h'), origin AS metric, count(*) AS value FROM monitoring.errors WHERE $__timeFilter(time) GROUP BY 1, 2 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '1h', 0), origin AS metric, count(*) AS value FROM monitoring.errors WHERE $__timeFilter(time) GROUP BY 1, 2 ORDER BY 1"
         }
       ],
       "fieldConfig": {
@@ -1523,7 +1523,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT $__timeGroupAlias(time, '1h'), max(cloudflare_gb) AS \"total\", max(cloudflare_sfu_gb) AS \"servidor de mídia\", max(cloudflare_relay_gb) AS \"relay (TURN)\" FROM monitoring.server_stats WHERE $__timeFilter(time) AND cloudflare_gb IS NOT NULL GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(time, '1h', NULL), max(cloudflare_gb) AS \"total\", max(cloudflare_sfu_gb) AS \"servidor de mídia\", max(cloudflare_relay_gb) AS \"relay (TURN)\" FROM monitoring.server_stats WHERE $__timeFilter(time) AND cloudflare_gb IS NOT NULL GROUP BY 1 ORDER BY 1"
         }
       ],
       "description": "Acumulado do mês, como a Cloudflare conta. A linha vermelha é o limite do servidor (900 GB).",
