@@ -192,7 +192,9 @@ select
   case when jsonb_typeof(j.c->'versions') = 'object' then j.c->'versions' else '{}'::jsonb end as versions
 from public.error_logs l
 cross join lateral (select l.context::jsonb as c) j
-where l.source = 'server-stats';
+-- Só os retratos do servidor ("live"): um registro de teste ("teste") entrou em 18/11 antes de o tipo
+-- ser reservado
+where l.source = 'server-stats' and l.message = 'live';
 
 -- Login do Grafana: só lê as visões acima. Não enxerga a tabela error_logs nem mais nada do banco, e
 -- cada consulta tem no máximo 20 s.
