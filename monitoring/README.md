@@ -47,11 +47,12 @@ Com um token do Grafana, [`grafana-sync.js`](grafana-sync.js) faz tudo sozinho:
   - importa o painel e a vitrine pública na pasta FrogShare
   - cria o contato do Discord, a não ser que já exista um chamado "FrogShare Discord"
   - cria os alertas
-- `node monitoring/grafana-sync.js publicar` liga o link público da vitrine, e `despublicar` desliga.
+- `node monitoring/grafana-sync.js publicar` liga o link público da vitrine, e `despublicar` desliga. Precisam da
+  permissão de compartilhar painéis fora do Grafana (`dashboards.public:write`, do papel Admin); sem ela, o link se
+  liga na mão (veja a vitrine, abaixo).
 
-O token: **Administration > Users and access > Service accounts > Add service account**, papel **Editor** (basta
-para o painel e os alertas; só `publicar` exige **Admin**), e **Add service account token**. No `.env.local` (fica
-fora do GitHub):
+O token: **Administration > Users and access > Service accounts > Add service account**, papel **Admin** (a API
+de alertas exige), e **Add service account token**. No `.env.local` (fica fora do GitHub):
 
 ```
 GRAFANA_URL=https://<seu-stack>.grafana.net
