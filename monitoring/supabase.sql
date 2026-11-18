@@ -208,7 +208,9 @@ $$;
 -- >>> TROQUE a senha abaixo por uma sua, longa, antes de clicar em Run (e não salve ela em arquivo) <<<
 alter role grafana_reader with password 'TROQUE_ESTA_SENHA';
 alter role grafana_reader set statement_timeout = '20s';
-alter role grafana_reader connection limit 5;
+-- Até 15 conexões: o Grafana Cloud pode consultar de mais de um servidor ao mesmo tempo, e com 5 os quadros
+-- falhavam com "too many connections for role grafana_reader" (18/11). Na conexão do Grafana: Max open 5.
+alter role grafana_reader connection limit 15;
 grant usage on schema monitoring to grafana_reader;
 grant select on all tables in schema monitoring to grafana_reader;
 grant execute on all functions in schema monitoring to grafana_reader;

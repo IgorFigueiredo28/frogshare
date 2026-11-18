@@ -50,8 +50,15 @@ começa a ser gravado depois que esta versão do servidor está no Render. O res
 - **Marcas roxas:** aparecem nos gráficos quando uma versão do app transmite pela primeira vez.
 - **Atualizar o painel:** importe o JSON de novo e escolha **Import (Overwrite)**.
 
-Na conexão do Grafana, deixe **Max open** em 5: o login só pode abrir 5 conexões ao mesmo tempo, e o painel
-carrega vários quadros juntos. Com mais, alguns quadros falham com "too many connections".
+Na conexão do Grafana, em **Additional settings**:
+
+- **Max open:** `5`
+- **Auto max idle:** desligado, com **Max idle** em `2`
+- **Max lifetime:** `600`
+
+O login pode ter até 15 conexões, e o painel carrega vários quadros juntos. O Grafana Cloud pode consultar de
+mais de um servidor, e conexões paradas ficam abertas. Sem esses limites, alguns quadros falham com
+"too many connections for role grafana_reader".
 
 Para mudar o painel: edite `dashboard.js` e rode `node monitoring/dashboard.js`, que gera o JSON de novo.
 
