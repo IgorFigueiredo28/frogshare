@@ -356,6 +356,55 @@ app.get('/api/usage', async (req, res) => {
   });
 });
 
+// ======== Monitoring (Grafana) ========
+// Every 5 minutes while this server is awake: what's live right now, in counts only (no rooms, no names),
+// and Cloudflare's usage figure. Grafana reads it from the database (see monitoring/README.md); polling
+// this server instead would wake it on Render's free plan and spend the month's free hours.
+const SERVER_STATS_MS = Number(process.env.SERVER_STATS_MS) || 5 * 60 * 1000;
+
+function liveSnapshot() {
+  const out = { rooms: 0, streams: 0, viewers: 0, sfu: 0, web: 0, groups: 0, versions: {} };
+  for (const room of rooms.values()) {
+    const hostLive = !!room.host && !room.hostPaused;
+    const cohostsLive = [...(room.cohosts || new Map()).values()].filter(c => !c.paused);
+    const live = (hostLive ? 1 : 0) + cohostsLive.length;
+    if (!live) continue;
+    out.rooms++;
+    out.streams += live;
+    out.viewers += room.viewers.size;
+    if (cohostsLive.length) out.groups++;
+    out.sfu += (hostLive && room.sfu ? 1 : 0) + cohostsLive.filter(c => c.sfu).length;
+    if (!hostLive) continue;
+    if (room.hostWeb) out.web++;
+    const version = room.hostWeb ? 'navegador' : (room.hostVersion || 'antiga');
+    out.versions[version] = (out.versions[version] || 0) + 1;
+  }
+  return out;
+}
+
+async function storeServerStats() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  await loadRelayUsage().catch(() => {});
+  await refreshOfficialUsage().catch(() => {});
+  const gb = (b) => (b == null ? null : +(b / 1e9).toFixed(3));
+  const officialBytes = official.turnBytes == null || official.error ? null : official.turnBytes + (official.sfuBytes || 0);
+  const context = {
+    ...liveSnapshot(),
+    cloudflare: {
+      usedGb: gb(officialBytes), capGb: TURN_CAP_BYTES / 1e9, turnGb: gb(official.turnBytes), sfuGb: gb(official.sfuBytes),
+      estimateGb: relayUsage.loaded ? gb(relayTotal()) : null
+    }
+  };
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/error_logs`, {
+      method: 'POST',
+      headers: { ...supabaseHeaders(), Prefer: 'return=minimal' },
+      body: JSON.stringify({ source: 'server-stats', level: 'info', message: 'live', context })
+    });
+  } catch {}
+}
+setInterval(() => { storeServerStats().catch(() => {}); }, SERVER_STATS_MS).unref();
+
 app.post('/api/relay-usage', rateLimit(12, 60000), async (req, res) => {
   const bytes = Number(req.body?.bytes);
   if (!Number.isFinite(bytes) || bytes <= 0 || bytes > 5e9) {
@@ -576,19 +625,20 @@ app.get('/api/admin/telemetry', rateLimit(20, 60000), async (req, res) => {
   }
 });
 
-// Rows the server itself writes and later trusts (usage totals, room blocks) must not be forgeable here
-const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room', 'room-name', 'room-ban', 'room-unban']);
+// Rows the server itself writes and later trusts (usage totals, room blocks, the monitoring snapshot)
+// must not be forgeable here
+const INTERNAL_LOG_SOURCES = new Set(['turn-usage', 'blocked-room', 'room-name', 'room-ban', 'room-unban', 'server-stats']);
 
 // Error logging proxy — clients POST here, server forwards to Supabase
 app.post('/api/errors', rateLimit(60, 60000), async (req, res) => {
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
-    return res.status(503).json({ error: 'Logging not configured' });
-  }
-  const { source, level, message, stack, context, room_id, app_version, user_agent } = req.body;
+  const { source, level, message, stack, context, room_id, app_version, user_agent } = req.body || {};
   if (!source || !message) {
     return res.status(400).json({ error: 'source and message required' });
   }
   if (INTERNAL_LOG_SOURCES.has(String(source))) return res.status(403).json({ error: 'reserved source' });
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return res.status(503).json({ error: 'Logging not configured' });
+  }
   const contextJson = context == null ? null : JSON.stringify(context);
   if (contextJson && contextJson.length > 16000) return res.status(413).json({ error: 'context too large' });
   try {
