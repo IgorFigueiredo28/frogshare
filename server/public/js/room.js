@@ -951,8 +951,8 @@ socket.on('ice-candidate', ({ from, candidate, sid }) => {
 // One row per streamer with its frog colour; picking one puts it on stage. The speaker button
 // mutes just that streamer. With the group open and a free slot, viewers can join in from here.
 const SHARE_URL = () => `frogshare://share?room=${encodeURIComponent(roomId)}`;
-// The same group from this browser, in a tab of its own (transmitir.html), with nothing to install
-const SHARE_WEB_URL = () => `/transmitir.html?grupo=${encodeURIComponent(roomId)}`;
+// The same group from this browser, in a tab of its own (/transmitir), with nothing to install
+const SHARE_WEB_URL = () => `/transmitir?grupo=${encodeURIComponent(roomId)}`;
 // The app runs on Windows and Mac only; on a phone the button would lead nowhere
 const canRunApp = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 const canShareHere = canRunApp && !!navigator.mediaDevices?.getDisplayMedia;

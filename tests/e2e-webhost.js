@@ -1,4 +1,4 @@
-// transmitir.html checks: the browser picker is replaced by a small canvas stream (nothing on the real
+// /transmitir checks: the browser picker is replaced by a small canvas stream (nothing on the real
 // screen is captured), viewers watch through the fixed link, react, get paused, locked out and removed;
 // the media server is a stand-in peer inside the host page (nothing leaves this machine).
 // Every window is muted. Usage: npx electron tests/e2e-webhost.js [base url]
@@ -89,9 +89,17 @@ const watching = `document.body.dataset.state === 'live' && remoteVideo.videoWid
 
 app.whenReady().then(async () => {
   try {
+    // The address: /transmitir. The old one (with .html), a trailing slash or capitals lead there, the group kept
+    const moved = async p => { const r = await fetch(BASE + p, { redirect: 'manual' }); return `${r.status} ${r.headers.get('location')}`; };
+    const olds = [await moved('/transmitir.html?grupo=abc'), await moved('/transmitir/'), await moved('/Transmitir')];
+    check('o endereço antigo leva para /transmitir, com o grupo', olds.join(' | ') === '301 /transmitir?grupo=abc | 301 /transmitir | 301 /transmitir', olds.join(' | '));
+    const pagePolicy = (await fetch(BASE + '/transmitir')).headers.get('permissions-policy') || '';
+    const homePolicy = (await fetch(BASE + '/')).headers.get('permissions-policy') || '';
+    check('a câmera continua liberada só em /transmitir', pagePolicy.includes('camera=(self)') && homePolicy.includes('camera=()'), `${pagePolicy} | ${homePolicy}`);
+
     const PH = 'wh-' + Date.now();
     const host = mk(PH);
-    await host.loadURL(BASE + '/transmitir.html');
+    await host.loadURL(BASE + '/transmitir');
     check('a página de transmitir abre', await until(host, `document.body.dataset.state === 'setup' && !document.getElementById('wh-start').disabled`, 5000));
     check('o link fixo aparece antes de começar, como no app', await until(host, `/\\/s\\/[0-9a-f]{8}$/.test(document.getElementById('wh-link-text').textContent)`, 5000),
       await js(host, `document.getElementById('wh-link-text').textContent`));
@@ -184,7 +192,7 @@ app.whenReady().then(async () => {
 
     // ======== A still screen: whoever arrives later still gets the picture ========
     const still = mk('whs-' + Date.now());
-    await still.loadURL(BASE + '/transmitir.html');
+    await still.loadURL(BASE + '/transmitir');
     await until(still, `document.body.dataset.state === 'setup' && !!document.getElementById('wh-link-text').textContent.match(/\\/s\\//)`, 5000);
     await js(still, FAKE_STILL);
     await js(still, `document.getElementById('wh-start').click(); true`);
@@ -199,7 +207,7 @@ app.whenReady().then(async () => {
 
     // ======== Three viewers: one copy to the media server (a stand-in), direct for whoever can't reach it ========
     const big = mk('whb-' + Date.now());
-    await big.loadURL(BASE + '/transmitir.html');
+    await big.loadURL(BASE + '/transmitir');
     await until(big, `document.body.dataset.state === 'setup' && !!document.getElementById('wh-link-text').textContent.match(/\\/s\\//)`, 5000);
     await js(big, FAKE_DISPLAY);
     await js(big, FAKE_SFU);
@@ -228,11 +236,13 @@ app.whenReady().then(async () => {
     await js(owner, OWNER_JS(groupId, groupKey));
     const gv = mk('whgv-' + Date.now());
     await gv.loadURL(`${BASE}/s/${groupId}`);
-    check('grupo aberto: o botão de compartilhar oferece entrar pelo navegador', await until(gv, `!document.getElementById('share-dot').hidden && !document.getElementById('share-group').hidden && document.getElementById('btn-share-web').getAttribute('href') === '/transmitir.html?grupo=${groupId}' && document.getElementById('share-owner').textContent === 'Dono'`, 15000));
+    check('grupo aberto: o botão de compartilhar oferece entrar pelo navegador', await until(gv, `!document.getElementById('share-dot').hidden && !document.getElementById('share-group').hidden && document.getElementById('btn-share-web').getAttribute('href') === '/transmitir?grupo=${groupId}' && document.getElementById('share-owner').textContent === 'Dono'`, 15000));
     check('com uma pessoa só transmitindo, não há lista do lado', await js(gv, `document.getElementById('stream-list').hidden`));
     const guest = mk('whg-' + Date.now());
+    // An invite saved before the address changed still works
     await guest.loadURL(`${BASE}/transmitir.html?grupo=${groupId}`);
     check('a página de transmitir abre no modo grupo, sem os controles do dono', await until(guest, `document.getElementById('wh-title').textContent === 'Transmitir no grupo' && getComputedStyle(document.getElementById('wh-link-card')).display === 'none'`, 5000));
+    check('um convite com o endereço antigo cai em /transmitir', guest.webContents.getURL() === `${BASE}/transmitir?grupo=${groupId}`, guest.webContents.getURL());
     await js(guest, FAKE_DISPLAY);
     await js(guest, `document.getElementById('wh-name').value = 'Tutu'; document.getElementById('wh-start').click(); true`);
     check('entra no grupo do amigo, com o link da sala dele', await until(guest, `document.body.dataset.state === 'live' && document.getElementById('wh-link').value.endsWith('/s/${groupId}') && document.getElementById('wh-link-fine').textContent.startsWith('No grupo de Dono')`, 10000),

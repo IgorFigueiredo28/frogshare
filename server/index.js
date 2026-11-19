@@ -23,7 +23,7 @@ app.use((req, res, next) => {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Frame-Options': 'DENY',
     // The camera only on the page that streams, where it can go over the picture
-    'Permissions-Policy': req.path === '/transmitir.html' ? 'camera=(self), microphone=(), geolocation=()' : 'camera=(), microphone=(), geolocation=()',
+    'Permissions-Policy': req.path === '/transmitir' ?'camera=(self), microphone=(), geolocation=()' : 'camera=(), microphone=(), geolocation=()',
     'Content-Security-Policy': [
       "default-src 'self'",
       "script-src 'self'",
@@ -102,6 +102,14 @@ function roomPage(req, res) {
   res.type('html').send(html);
 }
 app.get(['/room.html', '/s/:id'], roomPage);
+
+// Streaming from the browser lives at /transmitir. The old address (/transmitir.html), a trailing slash or
+// other capitals move there for good, keeping the query: a group invite carries ?grupo=
+app.get(['/transmitir', '/transmitir.html'], (req, res) => {
+  if (req.path === '/transmitir') return res.sendFile(path.join(__dirname, 'public', 'transmitir.html'));
+  const q = req.originalUrl.indexOf('?');
+  res.redirect(301, '/transmitir' + (q >= 0 ? req.originalUrl.slice(q) : ''));
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -786,7 +794,7 @@ function offerLooksLegacy(sdp) {
 
 function hostOutdated(room) {
   if (!room.host) return false;
-  // Streaming from the site itself (transmitir.html) is always the current version
+  // Streaming from the site itself (/transmitir) is always the current version
   if (room.hostWeb) return false;
   if (room.hostVersion) return versionOlder(room.hostVersion, LATEST_APP.minimum);
   return room.hostLegacy === true;
